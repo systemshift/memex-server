@@ -1,31 +1,29 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
 	"os"
-	"strings"
 	"time"
 )
 
 func main() {
 	fmt.Println("Welcome to memex editor")
-	fmt.Println("Enter your text (type ':wq' on a new line to save and quit)")
+	fmt.Println("Press any key to start editing (Ctrl-S to save, Ctrl-Q to quit)")
 
-	scanner := bufio.NewScanner(os.Stdin)
-	var lines []string
+	// Create a new editor instance
+	editor := NewEditor()
 
-	for scanner.Scan() {
-		line := scanner.Text()
-		if line == ":wq" {
-			break
-		}
-		lines = append(lines, line)
+	// Run the editor and get content
+	content, err := editor.Run()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "editor error: %v\n", err)
+		os.Exit(1)
 	}
 
-	if err := scanner.Err(); err != nil {
-		fmt.Fprintf(os.Stderr, "reading standard input: %v\n", err)
-		os.Exit(1)
+	// If no content or user quit, exit
+	if content == "" {
+		fmt.Println("\nNo content saved")
+		return
 	}
 
 	// Create notes directory if it doesn't exist
@@ -46,11 +44,10 @@ func main() {
 	}
 	defer file.Close()
 
-	content := strings.Join(lines, "\n")
 	if _, err := file.WriteString(content); err != nil {
 		fmt.Fprintf(os.Stderr, "writing to file: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("Saved to %s\n", filename)
+	fmt.Printf("\nSaved to %s\n", filename)
 }
