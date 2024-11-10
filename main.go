@@ -63,6 +63,12 @@ func initCommand(dir string) error {
 		return fmt.Errorf("creating notes directory: %w", err)
 	}
 
+	// Initialize repository
+	repo := NewRepository(absDir)
+	if err := repo.Initialize(); err != nil {
+		return fmt.Errorf("initializing repository: %w", err)
+	}
+
 	// Save config
 	config := &Config{
 		NotesDirectory: absDir,
@@ -109,9 +115,94 @@ func editCommand() error {
 	return nil
 }
 
+func commitCommand(message string) error {
+	config, err := loadConfig()
+	if err != nil {
+		return fmt.Errorf("no memex directory configured, run 'memex init <directory>' first")
+	}
+
+	repo := NewRepository(config.NotesDirectory)
+
+	// Read all files in notes directory
+	files, err := os.ReadDir(config.NotesDirectory)
+	if err != nil {
+		return fmt.Errorf("reading notes directory: %w", err)
+	}
+
+	// Combine all files into one content block for the commit
+	var content string
+	for _, file := range files {
+		if file.IsDir() || file.Name() == ".memex" {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(config.NotesDirectory, file.Name()))
+		if err != nil {
+			return fmt.Errorf("reading file %s: %w", file.Name(), err)
+		}
+		content += fmt.Sprintf("--- %s ---\n", file.Name())
+		content += string(data)
+		content += "\n\n"
+	}
+
+	if err := repo.CreateCommit([]byte(content), message); err != nil {
+		return fmt.Errorf("creating commit: %w", err)
+	}
+
+	fmt.Println("Created commit:", message)
+	return nil
+}
+
+func logCommand() error {
+	config, err := loadConfig()
+	if err != nil {
+		return fmt.Errorf("no memex directory configured, run 'memex init <directory>' first")
+	}
+
+	repo := NewRepository(config.NotesDirectory)
+	commits, err := repo.GetCommits()
+	if err != nil {
+		return fmt.Errorf("getting commits: %w", err)
+	}
+
+	if len(commits) == 0 {
+		fmt.Println("No commits yet")
+		return nil
+	}
+
+	fmt.Println("Commit history:")
+	for _, commit := range commits {
+		fmt.Printf("Hash: %s\n", commit.Hash[:8])
+		fmt.Printf("Date: %s\n", commit.Timestamp.Format(time.RFC822))
+		fmt.Printf("Message: %s\n", commit.Message)
+		fmt.Println("---")
+	}
+
+	return nil
+}
+
+func restoreCommand(hash string) error {
+	config, err := loadConfig()
+	if err != nil {
+		return fmt.Errorf("no memex directory configured, run 'memex init <directory>' first")
+	}
+
+	repo := NewRepository(config.NotesDirectory)
+	content, err := repo.RestoreCommit(hash)
+	if err != nil {
+		return fmt.Errorf("restoring commit: %w", err)
+	}
+
+	fmt.Println("Restored content:")
+	fmt.Println(string(content))
+	return nil
+}
+
 func main() {
 	// Subcommands
 	initCmd := flag.NewFlagSet("init", flag.ExitOnError)
+	commitCmd := flag.NewFlagSet("commit", flag.ExitOnError)
+	commitMsg := commitCmd.String("m", "", "Commit message")
+	restoreCmd := flag.NewFlagSet("restore", flag.ExitOnError)
 
 	// Parse command
 	if len(os.Args) < 2 {
@@ -131,6 +222,34 @@ func main() {
 			os.Exit(1)
 		}
 		if err := initCommand(initCmd.Arg(0)); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+
+	case "commit":
+		commitCmd.Parse(os.Args[2:])
+		if *commitMsg == "" {
+			fmt.Fprintf(os.Stderr, "Usage: memex commit -m \"commit message\"\n")
+			os.Exit(1)
+		}
+		if err := commitCommand(*commitMsg); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+
+	case "log":
+		if err := logCommand(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+
+	case "restore":
+		restoreCmd.Parse(os.Args[2:])
+		if restoreCmd.NArg() != 1 {
+			fmt.Fprintf(os.Stderr, "Usage: memex restore <commit-hash>\n")
+			os.Exit(1)
+		}
+		if err := restoreCommand(restoreCmd.Arg(0)); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
