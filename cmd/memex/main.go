@@ -4,6 +4,8 @@ import (
 	"flag"
 	"fmt"
 	"os"
+
+	"memex/internal/memex"
 )
 
 func main() {
@@ -17,7 +19,7 @@ func main() {
 	// Parse command
 	if len(os.Args) < 2 {
 		// No command provided, default to edit
-		if err := editCommand(); err != nil {
+		if err := memex.EditCommand(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
@@ -31,7 +33,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Usage: memex init <directory>\n")
 			os.Exit(1)
 		}
-		if err := initCommand(initCmd.Arg(0)); err != nil {
+		if err := memex.InitCommand(initCmd.Arg(0)); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
@@ -42,7 +44,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Usage: memex add <file>\n")
 			os.Exit(1)
 		}
-		if err := addCommand(addCmd.Arg(0)); err != nil {
+		if err := memex.AddCommand(addCmd.Arg(0)); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
@@ -53,13 +55,13 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Usage: memex commit -m \"commit message\"\n")
 			os.Exit(1)
 		}
-		if err := commitCommand(*commitMsg); err != nil {
+		if err := memex.CommitCommand(*commitMsg); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
 
 	case "log":
-		if err := logCommand(); err != nil {
+		if err := memex.LogCommand(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
@@ -70,14 +72,14 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Usage: memex restore <commit-hash>\n")
 			os.Exit(1)
 		}
-		if err := restoreCommand(restoreCmd.Arg(0)); err != nil {
+		if err := memex.RestoreCommand(restoreCmd.Arg(0)); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
 
 	default:
 		// Unknown command, default to edit
-		if err := editCommand(); err != nil {
+		if err := memex.EditCommand(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
