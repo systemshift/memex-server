@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -78,6 +79,43 @@ func initCommand(dir string) error {
 	}
 
 	fmt.Printf("Initialized memex in %s\n", absDir)
+	return nil
+}
+
+func addCommand(path string) error {
+	config, err := loadConfig()
+	if err != nil {
+		return fmt.Errorf("no memex directory configured, run 'memex init <directory>' first")
+	}
+
+	// Check if source file exists
+	srcFile, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("opening source file: %w", err)
+	}
+	defer srcFile.Close()
+
+	// Get the base filename
+	filename := filepath.Base(path)
+
+	// Create destination path with timestamp prefix
+	timestamp := time.Now().Unix() % 100000
+	timeStr := time.Now().Format("1504") // HHMM format
+	destPath := filepath.Join(config.NotesDirectory, fmt.Sprintf("%d_%s_%s", timestamp, timeStr, filename))
+
+	// Create destination file
+	destFile, err := os.Create(destPath)
+	if err != nil {
+		return fmt.Errorf("creating destination file: %w", err)
+	}
+	defer destFile.Close()
+
+	// Copy the file
+	if _, err := io.Copy(destFile, srcFile); err != nil {
+		return fmt.Errorf("copying file: %w", err)
+	}
+
+	fmt.Printf("Added %s to memex\n", filename)
 	return nil
 }
 
@@ -203,6 +241,7 @@ func main() {
 	commitCmd := flag.NewFlagSet("commit", flag.ExitOnError)
 	commitMsg := commitCmd.String("m", "", "Commit message")
 	restoreCmd := flag.NewFlagSet("restore", flag.ExitOnError)
+	addCmd := flag.NewFlagSet("add", flag.ExitOnError)
 
 	// Parse command
 	if len(os.Args) < 2 {
@@ -222,6 +261,17 @@ func main() {
 			os.Exit(1)
 		}
 		if err := initCommand(initCmd.Arg(0)); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+
+	case "add":
+		addCmd.Parse(os.Args[2:])
+		if addCmd.NArg() != 1 {
+			fmt.Fprintf(os.Stderr, "Usage: memex add <file>\n")
+			os.Exit(1)
+		}
+		if err := addCommand(addCmd.Arg(0)); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
