@@ -3,6 +3,7 @@ package memex
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"golang.org/x/term"
 )
@@ -48,9 +49,16 @@ func (e *Editor) Run() (string, error) {
 
 		switch buf[0] {
 		case Ctrl('q'): // Ctrl-Q to quit
+			fmt.Print("\x1b[2J") // Clear screen
+			fmt.Print("\x1b[H")  // Move cursor to top
+			fmt.Print("\n")      // Add newline for clean exit
 			return "", nil
 		case Ctrl('s'): // Ctrl-S to save
-			return e.getContent(), nil
+			content := e.getContent()
+			fmt.Print("\x1b[2J") // Clear screen
+			fmt.Print("\x1b[H")  // Move cursor to top
+			fmt.Print("\n")      // Add newline for clean exit
+			return content, nil
 		case 13: // Enter
 			e.insertNewline()
 		case 127: // Backspace
@@ -134,13 +142,24 @@ func (e *Editor) handleBackspace() {
 }
 
 func (e *Editor) getContent() string {
+	// Create timestamp header
+	timestamp := fmt.Sprintf("Created: %s\n\n", time.Now().Format("2006-01-02 15:04:05"))
+
+	// Combine content
 	var result string
+	result += timestamp // Add timestamp at the top
+
+	// Add the actual content
 	for i, line := range e.content {
 		if i > 0 {
 			result += "\n"
 		}
 		result += string(line)
 	}
+
+	// Add final newline
+	result += "\n"
+
 	return result
 }
 
