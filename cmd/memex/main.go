@@ -49,6 +49,12 @@ func main() {
 			os.Exit(1)
 		}
 
+	case "status":
+		if err := memex.StatusCommand(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+
 	case "commit":
 		commitCmd.Parse(os.Args[2:])
 		if *commitMsg == "" {

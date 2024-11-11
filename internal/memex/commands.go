@@ -2,11 +2,25 @@ package memex
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
+
+// GetFilesFromCommit extracts filenames from commit content
+func GetFilesFromCommit(content string) map[string]struct{} {
+	files := make(map[string]struct{})
+	lines := strings.Split(content, "\n")
+	for _, line := range lines {
+		if strings.HasPrefix(line, "--- ") && strings.HasSuffix(line, " ---") {
+			filename := strings.TrimPrefix(line, "--- ")
+			filename = strings.TrimSuffix(filename, " ---")
+			files[filename] = struct{}{}
+		}
+	}
+	return files
+}
 
 // InitCommand initializes a new memex repository
 func InitCommand(dir string) error {
@@ -69,8 +83,13 @@ func AddCommand(path string) error {
 	defer destFile.Close()
 
 	// Copy the file
-	if _, err := io.Copy(destFile, srcFile); err != nil {
-		return fmt.Errorf("copying file: %w", err)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("reading source file: %w", err)
+	}
+
+	if _, err := destFile.Write(data); err != nil {
+		return fmt.Errorf("writing to destination file: %w", err)
 	}
 
 	fmt.Printf("Added %s to memex\n", filename)
@@ -109,6 +128,77 @@ func EditCommand() error {
 	}
 
 	fmt.Printf("\nSaved to %s\n", filename)
+	return nil
+}
+
+// StatusCommand shows current repository status
+func StatusCommand() error {
+	config, err := LoadConfig()
+	if err != nil {
+		return fmt.Errorf("no memex directory configured, run 'memex init <directory>' first")
+	}
+
+	repo := NewRepository(config.NotesDirectory)
+
+	// Get last commit
+	commits, err := repo.GetCommits()
+	if err != nil {
+		return fmt.Errorf("getting commits: %w", err)
+	}
+
+	// Print repository status
+	fmt.Println("=== Memex Status ===")
+
+	var committedFiles map[string]struct{}
+
+	// Show last commit if exists and get its files
+	if len(commits) > 0 {
+		lastCommit := commits[len(commits)-1]
+		fmt.Printf("\nLast commit: %s\n", lastCommit.Hash[:8])
+		fmt.Printf("Message: %s\n", lastCommit.Message)
+		fmt.Printf("Date: %s\n", lastCommit.Timestamp.Format(time.RFC822))
+
+		// Get committed content
+		content, err := repo.RestoreCommit(lastCommit.Hash)
+		if err != nil {
+			return fmt.Errorf("getting last commit content: %w", err)
+		}
+		committedFiles = GetFilesFromCommit(string(content))
+	} else {
+		fmt.Println("\nNo commits yet")
+		committedFiles = make(map[string]struct{})
+	}
+
+	// List current files
+	files, err := os.ReadDir(config.NotesDirectory)
+	if err != nil {
+		return fmt.Errorf("reading notes directory: %w", err)
+	}
+
+	var uncommittedFiles []string
+	for _, file := range files {
+		if !file.IsDir() && file.Name() != ".memex" {
+			// Check if file was in last commit
+			if _, exists := committedFiles[file.Name()]; !exists {
+				uncommittedFiles = append(uncommittedFiles, file.Name())
+			}
+		}
+	}
+
+	if len(uncommittedFiles) > 0 {
+		fmt.Println("\nUncommitted files:")
+		for _, filename := range uncommittedFiles {
+			info, err := os.Stat(filepath.Join(config.NotesDirectory, filename))
+			if err != nil {
+				continue
+			}
+			fmt.Printf("  %s (%s)\n", filename, info.ModTime().Format(time.RFC822))
+		}
+		fmt.Printf("\nTotal uncommitted files: %d\n", len(uncommittedFiles))
+	} else {
+		fmt.Println("\nNo uncommitted files")
+	}
+
 	return nil
 }
 
