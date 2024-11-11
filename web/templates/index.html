@@ -1,0 +1,44 @@
+{{define "content"}}
+<div class="container">
+    <h1>Welcome to Memex</h1>
+    
+    <section class="status-section">
+        <h2>Repository Status</h2>
+        {{if .LastCommit}}
+            <div class="last-commit">
+                <h3>Last Commit</h3>
+                <p>Hash: {{.LastCommit.Hash}}</p>
+                <p>Message: {{.LastCommit.Message}}</p>
+                <p>Date: {{.LastCommit.Timestamp}}</p>
+            </div>
+        {{else}}
+            <p>No commits yet</p>
+        {{end}}
+
+        <div class="uncommitted-files">
+            <h3>Uncommitted Files</h3>
+            {{if .UncommittedFiles}}
+                <ul>
+                {{range .UncommittedFiles}}
+                    <li>
+                        <span class="filename">{{.Name}}</span>
+                        <span class="modified">{{.Modified}}</span>
+                    </li>
+                {{end}}
+                </ul>
+            {{else}}
+                <p>No uncommitted files</p>
+            {{end}}
+        </div>
+    </section>
+
+    <section class="actions-section">
+        <h2>Actions</h2>
+        <div class="action-buttons">
+            <a href="/add" class="button">Add File</a>
+            <a href="/commit" class="button">Create Commit</a>
+            <a href="/history" class="button">View History</a>
+        </div>
+    </section>
+</div>
+{{end}}
