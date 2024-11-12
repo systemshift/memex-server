@@ -3,7 +3,8 @@ package memex
 import (
 	"fmt"
 	"os"
-	"time"
+
+	"memex/internal/memex/mx"
 
 	"golang.org/x/term"
 )
@@ -142,25 +143,27 @@ func (e *Editor) handleBackspace() {
 }
 
 func (e *Editor) getContent() string {
-	// Create timestamp header
-	timestamp := fmt.Sprintf("Created: %s\n\n", time.Now().Format("2006-01-02 15:04:05"))
-
-	// Combine content
-	var result string
-	result += timestamp // Add timestamp at the top
-
-	// Add the actual content
+	// Get raw content
+	var content string
 	for i, line := range e.content {
 		if i > 0 {
-			result += "\n"
+			content += "\n"
 		}
-		result += string(line)
+		content += string(line)
 	}
 
-	// Add final newline
-	result += "\n"
+	// Create MX document
+	doc := mx.New(content)
 
-	return result
+	// Try to use first non-empty line as title
+	for _, line := range e.content {
+		if len(line) > 0 {
+			doc.SetTitle(string(line))
+			break
+		}
+	}
+
+	return doc.String()
 }
 
 // Ctrl converts a character to its control sequence value

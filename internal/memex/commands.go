@@ -4,23 +4,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
-)
 
-// GetFilesFromCommit extracts filenames from commit content
-func GetFilesFromCommit(content string) map[string]struct{} {
-	files := make(map[string]struct{})
-	lines := strings.Split(content, "\n")
-	for _, line := range lines {
-		if strings.HasPrefix(line, "--- ") && strings.HasSuffix(line, " ---") {
-			filename := strings.TrimPrefix(line, "--- ")
-			filename = strings.TrimSuffix(filename, " ---")
-			files[filename] = struct{}{}
-		}
-	}
-	return files
-}
+	"memex/internal/memex/mx"
+)
 
 // InitCommand initializes a new memex repository
 func InitCommand(dir string) error {
@@ -73,7 +60,7 @@ func AddCommand(path string) error {
 	// Create destination path with timestamp prefix
 	timestamp := time.Now().Unix() % 100000
 	timeStr := time.Now().Format("1504") // HHMM format
-	destPath := filepath.Join(config.NotesDirectory, fmt.Sprintf("%d_%s_%s", timestamp, timeStr, filename))
+	destPath := filepath.Join(config.NotesDirectory, fmt.Sprintf("%d_%s_%s.mx", timestamp, timeStr, filename))
 
 	// Create destination file
 	destFile, err := os.Create(destPath)
@@ -121,7 +108,7 @@ func EditCommand() error {
 	// Use shorter timestamp (last 5 digits) plus hour/minute for uniqueness
 	timestamp := time.Now().Unix() % 100000
 	timeStr := time.Now().Format("1504") // HHMM format
-	filename := filepath.Join(config.NotesDirectory, fmt.Sprintf("%d_%s", timestamp, timeStr))
+	filename := filepath.Join(config.NotesDirectory, fmt.Sprintf("%d_%s.mx", timestamp, timeStr))
 
 	if err := os.WriteFile(filename, []byte(content), 0644); err != nil {
 		return fmt.Errorf("writing to file: %v", err)
@@ -163,7 +150,7 @@ func StatusCommand() error {
 		if err != nil {
 			return fmt.Errorf("getting last commit content: %w", err)
 		}
-		committedFiles = GetFilesFromCommit(string(content))
+		committedFiles = mx.GetFilesFromCommit(string(content))
 	} else {
 		fmt.Println("\nNo commits yet")
 		committedFiles = make(map[string]struct{})
