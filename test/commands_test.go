@@ -3,9 +3,11 @@ package test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"memex/internal/memex"
+	"memex/internal/memex/mx"
 )
 
 func TestCommands(t *testing.T) {
@@ -62,15 +64,15 @@ func TestCommands(t *testing.T) {
 
 		found := false
 		for _, file := range files {
-			if filepath.Ext(file.Name()) == ".txt" {
+			if strings.HasSuffix(file.Name(), ".mx") {
 				found = true
 				// Verify content
 				content, err := os.ReadFile(filepath.Join(config.NotesDirectory, file.Name()))
 				if err != nil {
 					t.Fatalf("Reading added file failed: %v", err)
 				}
-				if string(content) != "test content" {
-					t.Errorf("Added file content mismatch.\nGot: %q\nWant: %q",
+				if !strings.Contains(string(content), "test content") {
+					t.Errorf("Added file content mismatch.\nGot: %q\nWant to contain: %q",
 						string(content), "test content")
 				}
 				break
@@ -246,7 +248,7 @@ func TestGetFilesFromCommit(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			files := memex.GetFilesFromCommit(tt.content)
+			files := mx.GetFilesFromCommit(tt.content)
 
 			// Convert map to slice for comparison
 			var got []string
@@ -264,7 +266,7 @@ func TestGetFilesFromCommit(t *testing.T) {
 					}
 				}
 				if !found {
-					t.Errorf("Missing expected file %q in result", want)
+					t.Errorf("Missing expected file %q", want)
 				}
 			}
 
