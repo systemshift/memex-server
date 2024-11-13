@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	"memex/internal/memex"
 )
@@ -13,8 +14,13 @@ func main() {
 	initCmd := flag.NewFlagSet("init", flag.ExitOnError)
 	commitCmd := flag.NewFlagSet("commit", flag.ExitOnError)
 	commitMsg := commitCmd.String("m", "", "Commit message")
-	restoreCmd := flag.NewFlagSet("restore", flag.ExitOnError)
 	addCmd := flag.NewFlagSet("add", flag.ExitOnError)
+	showCmd := flag.NewFlagSet("show", flag.ExitOnError)
+	linkCmd := flag.NewFlagSet("link", flag.ExitOnError)
+	linkType := linkCmd.String("type", "references", "Type of link")
+	linkNote := linkCmd.String("note", "", "Note about the link")
+	searchCmd := flag.NewFlagSet("search", flag.ExitOnError)
+	searchQuery := searchCmd.String("q", "", "Search query (key=value,...)")
 
 	// Parse command
 	if len(os.Args) < 2 {
@@ -49,6 +55,46 @@ func main() {
 			os.Exit(1)
 		}
 
+	case "show":
+		showCmd.Parse(os.Args[2:])
+		if showCmd.NArg() != 1 {
+			fmt.Fprintf(os.Stderr, "Usage: memex show <id>\n")
+			os.Exit(1)
+		}
+		if err := memex.ShowCommand(showCmd.Arg(0)); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+
+	case "link":
+		linkCmd.Parse(os.Args[2:])
+		if linkCmd.NArg() != 2 {
+			fmt.Fprintf(os.Stderr, "Usage: memex link [-type <type>] [-note <note>] <source-id> <target-id>\n")
+			os.Exit(1)
+		}
+		if err := memex.LinkCommand(linkCmd.Arg(0), linkCmd.Arg(1), *linkType, *linkNote); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+
+	case "search":
+		searchCmd.Parse(os.Args[2:])
+		query := make(map[string]any)
+		if *searchQuery != "" {
+			// Parse key=value pairs
+			pairs := strings.Split(*searchQuery, ",")
+			for _, pair := range pairs {
+				kv := strings.SplitN(pair, "=", 2)
+				if len(kv) == 2 {
+					query[strings.TrimSpace(kv[0])] = strings.TrimSpace(kv[1])
+				}
+			}
+		}
+		if err := memex.SearchCommand(query); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+
 	case "status":
 		if err := memex.StatusCommand(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -73,12 +119,11 @@ func main() {
 		}
 
 	case "restore":
-		restoreCmd.Parse(os.Args[2:])
-		if restoreCmd.NArg() != 1 {
+		if len(os.Args) != 3 {
 			fmt.Fprintf(os.Stderr, "Usage: memex restore <commit-hash>\n")
 			os.Exit(1)
 		}
-		if err := memex.RestoreCommand(restoreCmd.Arg(0)); err != nil {
+		if err := memex.RestoreCommand(os.Args[2]); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}

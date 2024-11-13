@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"os"
 
-	"memex/internal/memex/mx"
-
 	"golang.org/x/term"
 )
 
@@ -143,7 +141,6 @@ func (e *Editor) handleBackspace() {
 }
 
 func (e *Editor) getContent() string {
-	// Get raw content
 	var content string
 	for i, line := range e.content {
 		if i > 0 {
@@ -151,19 +148,7 @@ func (e *Editor) getContent() string {
 		}
 		content += string(line)
 	}
-
-	// Create MX document
-	doc := mx.New(content)
-
-	// Try to use first non-empty line as title
-	for _, line := range e.content {
-		if len(line) > 0 {
-			doc.SetTitle(string(line))
-			break
-		}
-	}
-
-	return doc.String()
+	return content
 }
 
 // Ctrl converts a character to its control sequence value
