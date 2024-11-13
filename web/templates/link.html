@@ -1,0 +1,72 @@
+{{define "content"}}
+<div class="link-form">
+    <form action="/link" method="POST">
+        <div class="form-group">
+            <label for="source">Source Object</label>
+            <select id="source" name="source" required {{if .Source}}disabled{{end}}>
+                {{if .Source}}
+                    <option value="{{.Source.ID}}" selected>{{.Source.ID | printf "%.8s"}} - {{or .Source.Meta.title "Untitled"}}</option>
+                {{else}}
+                    <option value="">Select source object</option>
+                    {{range .Objects}}
+                    <option value="{{.ID}}">{{.ID | printf "%.8s"}} - {{or .Meta.title "Untitled"}}</option>
+                    {{end}}
+                {{end}}
+            </select>
+            {{if .Source}}
+            <input type="hidden" name="source" value="{{.Source.ID}}">
+            {{end}}
+        </div>
+
+        <div class="form-group">
+            <label for="target">Target Object</label>
+            <select id="target" name="target" required>
+                <option value="">Select target object</option>
+                {{range .Objects}}
+                <option value="{{.ID}}">{{.ID | printf "%.8s"}} - {{or .Meta.title "Untitled"}}</option>
+                {{end}}
+            </select>
+        </div>
+
+        <div class="form-group">
+            <label for="type">Link Type</label>
+            <select id="type" name="type" required>
+                <option value="references">References</option>
+                <option value="related">Related</option>
+                <option value="parent">Parent</option>
+                <option value="child">Child</option>
+                <option value="previous">Previous</option>
+                <option value="next">Next</option>
+            </select>
+        </div>
+
+        <div class="form-group">
+            <label for="note">Note (optional)</label>
+            <textarea id="note" name="note" rows="3" placeholder="Add a note about this link"></textarea>
+        </div>
+
+        <button type="submit" class="button">Create Link</button>
+    </form>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const sourceSelect = document.getElementById('source');
+    const targetSelect = document.getElementById('target');
+    
+    // Prevent selecting same object as source and target
+    targetSelect.addEventListener('change', function() {
+        if (this.value === sourceSelect.value) {
+            alert('Cannot link an object to itself');
+            this.value = '';
+        }
+    });
+
+    sourceSelect.addEventListener('change', function() {
+        if (this.value === targetSelect.value) {
+            targetSelect.value = '';
+        }
+    });
+});
+</script>
+{{end}}

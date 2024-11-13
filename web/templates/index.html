@@ -1,44 +1,43 @@
 {{define "content"}}
-<div class="container">
-    <h1>Welcome to Memex</h1>
-    
-    <section class="status-section">
-        <h2>Repository Status</h2>
-        {{if .LastCommit}}
-            <div class="last-commit">
-                <h3>Last Commit</h3>
-                <p>Hash: {{.LastCommit.Hash}}</p>
-                <p>Message: {{.LastCommit.Message}}</p>
-                <p>Date: {{.LastCommit.Timestamp}}</p>
-            </div>
-        {{else}}
-            <p>No commits yet</p>
-        {{end}}
-
-        <div class="uncommitted-files">
-            <h3>Uncommitted Files</h3>
-            {{if .UncommittedFiles}}
-                <ul>
-                {{range .UncommittedFiles}}
-                    <li>
-                        <span class="filename">{{.Name}}</span>
-                        <span class="modified">{{.Modified}}</span>
-                    </li>
+<div class="notes-grid">
+    {{range .Notes}}
+    <div class="note-card">
+        <div class="note-header">
+            <h3>
+                {{if .Meta.title}}
+                    {{.Meta.title}}
+                {{else}}
+                    {{.ID | printf "%.8s"}}
                 {{end}}
-                </ul>
-            {{else}}
-                <p>No uncommitted files</p>
+            </h3>
+            <span class="note-type">{{.Type}}</span>
+        </div>
+        <div class="note-meta">
+            {{if .Meta.tags}}
+            <div class="tags">
+                {{range .Meta.tags}}
+                <span class="tag">{{.}}</span>
+                {{end}}
+            </div>
+            {{end}}
+            <time>{{.Modified.Format "Jan 02, 2006 15:04"}}</time>
+        </div>
+        <div class="note-preview">
+            {{if eq .Type "note"}}
+                {{printf "%.200s" .Content}}...
+            {{else if eq .Type "file"}}
+                {{.Meta.filename}}
             {{end}}
         </div>
-    </section>
-
-    <section class="actions-section">
-        <h2>Actions</h2>
-        <div class="action-buttons">
-            <a href="/add" class="button">Add File</a>
-            <a href="/commit" class="button">Create Commit</a>
-            <a href="/history" class="button">View History</a>
+        <div class="note-actions">
+            <a href="/show/{{.ID}}" class="button">View</a>
+            <a href="/link?source={{.ID}}" class="button">Link</a>
         </div>
-    </section>
+    </div>
+    {{else}}
+    <div class="empty-state">
+        <p>No notes found. Create one by clicking "Add" above.</p>
+    </div>
+    {{end}}
 </div>
 {{end}}

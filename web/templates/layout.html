@@ -13,17 +13,22 @@
             <div class="nav-links">
                 <a href="/">Home</a>
                 <a href="/add">Add</a>
-                <a href="/history">History</a>
+                <a href="/search">Search</a>
             </div>
         </div>
     </nav>
 
     <main>
-        {{template "content" .}}
+        <div class="container">
+            <h1>{{.Title}}</h1>
+            {{template "content" .}}
+        </div>
     </main>
 
     <footer>
-        <p>Memex - Content-Addressable Storage System</p>
+        <div class="container">
+            <p>Memex - Content-Addressable Storage System</p>
+        </div>
     </footer>
 
     <script src="/static/js/main.js"></script>

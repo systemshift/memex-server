@@ -1,0 +1,119 @@
+{{define "content"}}
+<div class="add-content">
+    <div class="tabs">
+        <button class="tab-button active" data-tab="note">Create Note</button>
+        <button class="tab-button" data-tab="file">Upload File</button>
+    </div>
+
+    <div class="tab-content active" id="note-tab">
+        <form action="/add" method="POST" class="note-form">
+            <div class="form-group">
+                <label for="title">Title</label>
+                <input type="text" id="title" name="title" required>
+            </div>
+
+            <div class="form-group">
+                <label for="content">Content</label>
+                <textarea id="content" name="content" rows="10" required></textarea>
+            </div>
+
+            <div class="form-group">
+                <label for="tags">Tags (comma separated)</label>
+                <input type="text" id="tags" name="tags" placeholder="tag1, tag2, tag3">
+            </div>
+
+            <button type="submit" class="button">Create Note</button>
+        </form>
+    </div>
+
+    <div class="tab-content" id="file-tab">
+        <form action="/add" method="POST" enctype="multipart/form-data" class="file-form">
+            <div class="form-group">
+                <label for="file">Select File</label>
+                <input type="file" id="file" name="file" required>
+            </div>
+
+            <div class="form-group">
+                <label for="file-tags">Tags (comma separated)</label>
+                <input type="text" id="file-tags" name="tags" placeholder="tag1, tag2, tag3">
+            </div>
+
+            <button type="submit" class="button">Upload File</button>
+        </form>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Tab switching
+    const tabs = document.querySelectorAll('.tab-button');
+    tabs.forEach(tab => {
+        tab.addEventListener('click', () => {
+            // Update active tab button
+            tabs.forEach(t => t.classList.remove('active'));
+            tab.classList.add('active');
+
+            // Update active content
+            const tabContents = document.querySelectorAll('.tab-content');
+            tabContents.forEach(content => content.classList.remove('active'));
+            document.getElementById(tab.dataset.tab + '-tab').classList.add('active');
+        });
+    });
+
+    // Form submission handling
+    const noteTags = document.getElementById('tags');
+    const fileTags = document.getElementById('file-tags');
+
+    function processTags(input) {
+        return input.split(',')
+            .map(tag => tag.trim())
+            .filter(tag => tag.length > 0);
+    }
+
+    document.querySelector('.note-form').addEventListener('submit', function(e) {
+        e.preventDefault();
+        const formData = new FormData(this);
+        const tags = processTags(noteTags.value);
+        
+        // Add metadata
+        formData.append('type', 'note');
+        formData.append('tags', JSON.stringify(tags));
+
+        fetch('/api/add', {
+            method: 'POST',
+            body: formData
+        })
+        .then(response => response.json())
+        .then(data => {
+            window.location.href = '/show/' + data.id;
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('Error creating note');
+        });
+    });
+
+    document.querySelector('.file-form').addEventListener('submit', function(e) {
+        e.preventDefault();
+        const formData = new FormData(this);
+        const tags = processTags(fileTags.value);
+        
+        // Add metadata
+        formData.append('tags', JSON.stringify(tags));
+
+        fetch('/api/add', {
+            method: 'POST',
+            body: formData
+        })
+        .then(response => response.json())
+        .then(data => {
+            window.location.href = '/show/' + data.id;
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('Error uploading file');
+        });
+    });
+});
+</script>
+{{end}}
