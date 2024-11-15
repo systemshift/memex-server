@@ -144,80 +144,79 @@ func StatusCommand() error {
 		return err
 	}
 
-	fmt.Println("=== Memex Status ===")
+	fmt.Println("Memex Status ===\n")
 
-	// List all objects
-	objects := repo.FindByType("note")
-	if len(objects) == 0 {
-		fmt.Println("\nNo notes found")
-		return nil
+	// List notes
+	notes := repo.FindByType("note")
+	if len(notes) > 0 {
+		fmt.Printf("Notes (%d):\n", len(notes))
+		for _, obj := range notes {
+			title := "Untitled"
+			if t, ok := obj.Meta["title"].(string); ok {
+				title = t
+			}
+			fmt.Printf("  %s - %s (%s)\n", obj.ID[:8], title, obj.Created.UTC().Format("02 Jan 06 15:04 MST"))
+		}
+		fmt.Println()
 	}
 
-	fmt.Printf("\nNotes (%d):\n", len(objects))
-	for _, obj := range objects {
-		title := "Untitled"
-		if t, ok := obj.Meta["title"].(string); ok {
-			title = t
+	// List files
+	files := repo.FindByType("file")
+	if len(files) > 0 {
+		fmt.Printf("Files (%d):\n", len(files))
+		for _, obj := range files {
+			filename := "unknown"
+			if f, ok := obj.Meta["filename"].(string); ok {
+				filename = f
+			}
+			fmt.Printf("  %s - %s (%s)\n", obj.ID[:8], filename, obj.Created.UTC().Format("02 Jan 06 15:04 MST"))
 		}
-		fmt.Printf("  %s - %s (%s)\n", obj.ID[:8], title, obj.Modified.Format(time.RFC822))
+		fmt.Println()
+	}
+
+	if len(notes) == 0 && len(files) == 0 {
+		fmt.Println("No content found")
 	}
 
 	return nil
 }
 
-// ShowCommand displays an object's content and metadata
+// ShowCommand displays an object's content
 func ShowCommand(id string) error {
 	repo, err := GetRepository()
 	if err != nil {
 		return err
 	}
 
-	// Get object
 	obj, err := repo.Get(id)
 	if err != nil {
 		return fmt.Errorf("getting object: %w", err)
 	}
 
-	// Print metadata
-	fmt.Printf("ID: %s\n", obj.ID[:8])
+	// Print basic info
+	fmt.Printf("ID: %s\n", obj.ID)
 	fmt.Printf("Type: %s\n", obj.Type)
-	fmt.Printf("Created: %s\n", obj.Created.Format(time.RFC822))
-	fmt.Printf("Modified: %s\n", obj.Modified.Format(time.RFC822))
-	fmt.Printf("Version: %d\n", obj.Version)
+	fmt.Printf("Created: %s\n", obj.Created.UTC().Format("02 Jan 06 15:04 MST"))
+	fmt.Printf("Modified: %s\n", obj.Modified.UTC().Format("02 Jan 06 15:04 MST"))
 
-	if len(obj.Meta) > 0 {
-		fmt.Println("\nMetadata:")
-		for k, v := range obj.Meta {
-			fmt.Printf("  %s: %v\n", k, v)
-		}
+	// Print metadata
+	fmt.Println("\nMetadata:")
+	for k, v := range obj.Meta {
+		fmt.Printf("  %s: %v\n", k, v)
 	}
 
-	// Get links
-	links, err := repo.GetLinks(id)
-	if err != nil {
-		return fmt.Errorf("getting links: %w", err)
+	// Print content for text-based objects only
+	if obj.Type == "note" {
+		fmt.Printf("\nContent:\n%s\n", string(obj.Content))
+	} else {
+		fmt.Printf("\nContent: [Binary data - %d bytes]\n", len(obj.Content))
 	}
-
-	if len(links) > 0 {
-		fmt.Println("\nLinks:")
-		for _, link := range links {
-			if link.Source == id {
-				fmt.Printf("  -> %s (%s)\n", link.Target[:8], link.Type)
-			} else {
-				fmt.Printf("  <- %s (%s)\n", link.Source[:8], link.Type)
-			}
-		}
-	}
-
-	// Print content
-	fmt.Println("\nContent:")
-	fmt.Println(string(obj.Content))
 
 	return nil
 }
 
-// LinkCommand creates a link between objects
-func LinkCommand(sourceID, targetID, linkType string, note string) error {
+// LinkCommand creates a link between two objects
+func LinkCommand(sourceID, targetID, linkType, note string) error {
 	repo, err := GetRepository()
 	if err != nil {
 		return err
@@ -228,15 +227,16 @@ func LinkCommand(sourceID, targetID, linkType string, note string) error {
 		meta["note"] = note
 	}
 
-	if err := repo.Link(sourceID, targetID, linkType, meta); err != nil {
+	err = repo.Link(sourceID, targetID, linkType, meta)
+	if err != nil {
 		return fmt.Errorf("creating link: %w", err)
 	}
 
-	fmt.Printf("Created %s link: %s -> %s\n", linkType, sourceID[:8], targetID[:8])
+	fmt.Printf("Created %s link from %s to %s\n", linkType, sourceID[:8], targetID[:8])
 	return nil
 }
 
-// SearchCommand searches for objects by metadata
+// SearchCommand searches for objects
 func SearchCommand(query map[string]any) error {
 	repo, err := GetRepository()
 	if err != nil {
@@ -245,126 +245,41 @@ func SearchCommand(query map[string]any) error {
 
 	results := repo.Search(query)
 	if len(results) == 0 {
-		fmt.Println("No matches found")
+		fmt.Println("No results found")
 		return nil
 	}
 
-	fmt.Printf("Found %d matches:\n", len(results))
+	fmt.Printf("Found %d results:\n\n", len(results))
 	for _, obj := range results {
-		title := "Untitled"
-		if t, ok := obj.Meta["title"].(string); ok {
-			title = t
+		fmt.Printf("ID: %s\n", obj.ID[:8])
+		fmt.Printf("Type: %s\n", obj.Type)
+		if title, ok := obj.Meta["title"].(string); ok {
+			fmt.Printf("Title: %s\n", title)
 		}
-		fmt.Printf("  %s - %s (%s)\n", obj.ID[:8], title, obj.Modified.Format(time.RFC822))
+		fmt.Printf("Created: %s\n", obj.Created.UTC().Format("02 Jan 06 15:04 MST"))
+		fmt.Printf("\n")
 	}
 
 	return nil
 }
 
-// CommitCommand creates a new commit
+// CommitCommand creates a new version of all changes
 func CommitCommand(message string) error {
-	repo, err := GetRepository()
-	if err != nil {
-		return err
-	}
-
-	// Get all objects
-	objects := repo.List()
-	if len(objects) == 0 {
-		return fmt.Errorf("no objects to commit")
-	}
-
-	// Create commit object
-	meta := map[string]any{
-		"message": message,
-		"date":    time.Now(),
-	}
-
-	// Store commit
-	commitID, err := repo.Add([]byte(message), "commit", meta)
-	if err != nil {
-		return fmt.Errorf("creating commit: %w", err)
-	}
-
-	// Link commit to all objects
-	for _, objID := range objects {
-		if err := repo.Link(commitID, objID, "contains", nil); err != nil {
-			return fmt.Errorf("linking commit: %w", err)
-		}
-	}
-
-	fmt.Printf("Created commit: %s\n", message)
+	// TODO: Implement versioning
+	fmt.Println("Commit functionality not yet implemented")
 	return nil
 }
 
-// LogCommand displays commit history
+// LogCommand shows version history
 func LogCommand() error {
-	repo, err := GetRepository()
-	if err != nil {
-		return err
-	}
-
-	// Get all commits
-	commits := repo.FindByType("commit")
-	if len(commits) == 0 {
-		fmt.Println("No commits yet")
-		return nil
-	}
-
-	fmt.Println("Commit history:")
-	for _, commit := range commits {
-		fmt.Printf("Hash: %s\n", commit.ID[:8])
-		if date, ok := commit.Meta["date"].(time.Time); ok {
-			fmt.Printf("Date: %s\n", date.Format(time.RFC822))
-		}
-		if msg, ok := commit.Meta["message"].(string); ok {
-			fmt.Printf("Message: %s\n", msg)
-		}
-		fmt.Println("---")
-	}
-
+	// TODO: Implement version history
+	fmt.Println("Log functionality not yet implemented")
 	return nil
 }
 
-// RestoreCommand restores content from a specific commit
-func RestoreCommand(commitID string) error {
-	repo, err := GetRepository()
-	if err != nil {
-		return err
-	}
-
-	// Get commit
-	commit, err := repo.Get(commitID)
-	if err != nil {
-		return fmt.Errorf("getting commit: %w", err)
-	}
-
-	if commit.Type != "commit" {
-		return fmt.Errorf("object %s is not a commit", commitID[:8])
-	}
-
-	// Get linked objects
-	links, err := repo.GetLinks(commitID)
-	if err != nil {
-		return fmt.Errorf("getting commit contents: %w", err)
-	}
-
-	fmt.Println("Restored content:")
-	for _, link := range links {
-		if link.Type == "contains" {
-			obj, err := repo.Get(link.Target)
-			if err != nil {
-				continue
-			}
-			filename := "unknown"
-			if name, ok := obj.Meta["filename"].(string); ok {
-				filename = name
-			}
-			fmt.Printf("--- %s ---\n", filename)
-			fmt.Println(string(obj.Content))
-			fmt.Println()
-		}
-	}
-
+// RestoreCommand restores content to a specific version
+func RestoreCommand(commitHash string) error {
+	// TODO: Implement version restore
+	fmt.Println("Restore functionality not yet implemented")
 	return nil
 }
