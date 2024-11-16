@@ -110,7 +110,7 @@ func EditCommand() error {
 
 	// If no content or user quit, exit
 	if content == "" {
-		fmt.Println("\nNo content saved")
+		fmt.Println("No content saved")
 		return nil
 	}
 
@@ -144,7 +144,8 @@ func StatusCommand() error {
 		return err
 	}
 
-	fmt.Println("Memex Status ===\n")
+	fmt.Println("Memex Status ===")
+	fmt.Println()
 
 	// List notes
 	notes := repo.FindByType("note")
@@ -257,7 +258,7 @@ func SearchCommand(query map[string]any) error {
 			fmt.Printf("Title: %s\n", title)
 		}
 		fmt.Printf("Created: %s\n", obj.Created.UTC().Format("02 Jan 06 15:04 MST"))
-		fmt.Printf("\n")
+		fmt.Println()
 	}
 
 	return nil
