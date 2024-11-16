@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Memex</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <nav>
+        <div class="container">
+            <a href="/" class="logo">Memex</a>
+            <div class="search">
+                <form action="/search" method="GET">
+                    <input type="search" name="q" placeholder="Search..." value="{{.Query}}">
+                    <button type="submit">Search</button>
+                </form>
+            </div>
+        </div>
+    </nav>
+
+    <main class="container">
+        <div class="actions">
+            <form action="/add" method="POST" enctype="multipart/form-data" class="add-form">
+                <input type="file" name="file" required>
+                <button type="submit">Add File</button>
+            </form>
+        </div>
+
+        <div class="content-grid">
+            {{range .Objects}}
+            <article class="content-card">
+                <header>
+                    <h3>
+                        {{if .Meta.filename}}
+                            {{.Meta.filename}}
+                        {{else if .Meta.title}}
+                            {{.Meta.title}}
+                        {{else}}
+                            {{.ID | printf "%.8s"}}
+                        {{end}}
+                    </h3>
+                    <span class="type">{{.Type}}</span>
+                </header>
+                <div class="meta">
+                    <time datetime="{{.Modified.Format "2006-01-02T15:04:05Z07:00"}}">
+                        {{.Modified.Format "Jan 02, 2006 15:04"}}
+                    </time>
+                </div>
+                <div class="preview">
+                    {{if eq .Type "note"}}
+                        {{if .Content}}
+                            {{printf "%.200s" .Content}}...
+                        {{else}}
+                            No content
+                        {{end}}
+                    {{else}}
+                        {{.Meta.filename}}
+                    {{end}}
+                </div>
+                <footer>
+                    <form action="/link" method="POST" class="link-form">
+                        <input type="hidden" name="source" value="{{.ID}}">
+                        <select name="target" required>
+                            <option value="">Link to...</option>
+                            {{range $.Objects}}
+                                {{if ne .ID $.ID}}
+                                    <option value="{{.ID}}">
+                                        {{if .Meta.filename}}{{.Meta.filename}}
+                                        {{else if .Meta.title}}{{.Meta.title}}
+                                        {{else}}{{.ID | printf "%.8s"}}
+                                        {{end}}
+                                    </option>
+                                {{end}}
+                            {{end}}
+                        </select>
+                        <input type="text" name="type" placeholder="Link type" required>
+                        <input type="text" name="note" placeholder="Note (optional)">
+                        <button type="submit">Link</button>
+                    </form>
+                </footer>
+            </article>
+            {{else}}
+            <div class="empty-state">
+                <p>No content found. Add some files to get started!</p>
+            </div>
+            {{end}}
+        </div>
+    </main>
+
+    <script src="/static/js/script.js"></script>
+</body>
+</html>
