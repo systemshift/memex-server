@@ -5,19 +5,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
-	"time"
 )
 
-// VersionInfo stores metadata about a version
-type VersionInfo struct {
-	Version  int       `json:"version"`
-	Created  time.Time `json:"created"`
-	Message  string    `json:"message"`
-	Previous string    `json:"previous"` // ID of previous version
-}
-
-// BinaryVersionStore implements version tracking
+// BinaryVersionStore implements version storage
 type BinaryVersionStore struct {
 	rootDir string
 }
@@ -32,142 +22,85 @@ func NewVersionStore(rootDir string) (*BinaryVersionStore, error) {
 	return &BinaryVersionStore{rootDir: rootDir}, nil
 }
 
-// Store stores a version of an object
-func (s *BinaryVersionStore) Store(id string, version int, content []byte, message string) error {
-	// Create version directory
-	versionDir := filepath.Join(s.rootDir, "versions", id)
-	if err := os.MkdirAll(versionDir, 0755); err != nil {
-		return fmt.Errorf("creating version directory: %w", err)
+// Version represents a version of an object
+type Version struct {
+	ID      string   // Object ID
+	Number  int      // Version number
+	Chunks  []string // Chunk hashes for this version
+	Message string   // Version message
+}
+
+// getVersionPath returns the path for a version file
+func (s *BinaryVersionStore) getVersionPath(id string, version int) string {
+	return filepath.Join(s.rootDir, "versions", fmt.Sprintf("%s.%d.json", id, version))
+}
+
+// Store stores a version
+func (s *BinaryVersionStore) Store(id string, version int, chunks []string) error {
+	v := Version{
+		ID:      id,
+		Number:  version,
+		Chunks:  chunks,
+		Message: fmt.Sprintf("Version %d", version),
 	}
 
-	// Store content
-	contentPath := filepath.Join(versionDir, fmt.Sprintf("v%d", version))
-	if err := os.WriteFile(contentPath, content, 0644); err != nil {
-		return fmt.Errorf("writing version content: %w", err)
-	}
-
-	// Get previous version info
-	var previousID string
-	if version > 1 {
-		prevVersions, err := s.List(id)
-		if err != nil {
-			return fmt.Errorf("getting previous versions: %w", err)
-		}
-		if len(prevVersions) > 0 {
-			previousID = prevVersions[len(prevVersions)-1]
-		}
-	}
-
-	// Store version info
-	info := VersionInfo{
-		Version:  version,
-		Created:  time.Now(),
-		Message:  message,
-		Previous: previousID,
-	}
-
-	infoPath := filepath.Join(versionDir, fmt.Sprintf("v%d.json", version))
-	infoData, err := json.MarshalIndent(info, "", "  ")
+	// Marshal version data
+	data, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
-		return fmt.Errorf("marshaling version info: %w", err)
+		return fmt.Errorf("marshaling version: %w", err)
 	}
 
-	if err := os.WriteFile(infoPath, infoData, 0644); err != nil {
-		return fmt.Errorf("writing version info: %w", err)
+	// Write version file
+	versionPath := s.getVersionPath(id, version)
+	if err := os.WriteFile(versionPath, data, 0644); err != nil {
+		return fmt.Errorf("writing version file: %w", err)
 	}
 
 	return nil
 }
 
-// Load retrieves a specific version
-func (s *BinaryVersionStore) Load(id string, version int) ([]byte, error) {
-	contentPath := filepath.Join(s.rootDir, "versions", id, fmt.Sprintf("v%d", version))
-	content, err := os.ReadFile(contentPath)
+// Load retrieves chunk hashes for a specific version
+func (s *BinaryVersionStore) Load(id string, version int) ([]string, error) {
+	versionPath := s.getVersionPath(id, version)
+	data, err := os.ReadFile(versionPath)
 	if err != nil {
-		return nil, fmt.Errorf("reading version content: %w", err)
+		return nil, fmt.Errorf("reading version file: %w", err)
 	}
 
-	return content, nil
-}
-
-// GetInfo retrieves version information
-func (s *BinaryVersionStore) GetInfo(id string, version int) (VersionInfo, error) {
-	var info VersionInfo
-
-	infoPath := filepath.Join(s.rootDir, "versions", id, fmt.Sprintf("v%d.json", version))
-	infoData, err := os.ReadFile(infoPath)
-	if err != nil {
-		return info, fmt.Errorf("reading version info: %w", err)
+	var v Version
+	if err := json.Unmarshal(data, &v); err != nil {
+		return nil, fmt.Errorf("unmarshaling version: %w", err)
 	}
 
-	if err := json.Unmarshal(infoData, &info); err != nil {
-		return info, fmt.Errorf("unmarshaling version info: %w", err)
-	}
-
-	return info, nil
+	return v.Chunks, nil
 }
 
 // List returns all versions of an object
-func (s *BinaryVersionStore) List(id string) ([]string, error) {
-	var versions []string
-	versionDir := filepath.Join(s.rootDir, "versions", id)
+func (s *BinaryVersionStore) List(id string) []int {
+	var versions []int
+	versionsDir := filepath.Join(s.rootDir, "versions")
 
-	// Check if directory exists
-	if _, err := os.Stat(versionDir); os.IsNotExist(err) {
-		return versions, nil
-	}
-
-	// Walk through version directory
-	err := filepath.Walk(versionDir, func(path string, info os.FileInfo, err error) error {
+	// Walk through versions directory
+	filepath.Walk(versionsDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
 		}
-		// Only look at content files (not .json metadata)
-		if !info.IsDir() && filepath.Ext(path) == "" {
-			versions = append(versions, filepath.Base(path))
+		if !info.IsDir() && filepath.Ext(path) == ".json" {
+			// Parse version number from filename
+			var v Version
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return nil
+			}
+			if err := json.Unmarshal(data, &v); err != nil {
+				return nil
+			}
+			if v.ID == id {
+				versions = append(versions, v.Number)
+			}
 		}
 		return nil
 	})
 
-	if err != nil {
-		return nil, fmt.Errorf("walking version directory: %w", err)
-	}
-
-	// Sort versions
-	sort.Strings(versions)
-	return versions, nil
-}
-
-// GetHistory returns the version history chain
-func (s *BinaryVersionStore) GetHistory(id string) ([]VersionInfo, error) {
-	var history []VersionInfo
-
-	versions, err := s.List(id)
-	if err != nil {
-		return nil, fmt.Errorf("listing versions: %w", err)
-	}
-
-	for _, v := range versions {
-		// Extract version number from filename (v1, v2, etc)
-		var version int
-		fmt.Sscanf(v, "v%d", &version)
-
-		info, err := s.GetInfo(id, version)
-		if err != nil {
-			return nil, fmt.Errorf("getting version info: %w", err)
-		}
-
-		history = append(history, info)
-	}
-
-	return history, nil
-}
-
-// Delete removes all versions of an object
-func (s *BinaryVersionStore) Delete(id string) error {
-	versionDir := filepath.Join(s.rootDir, "versions", id)
-	if err := os.RemoveAll(versionDir); err != nil {
-		return fmt.Errorf("removing version directory: %w", err)
-	}
-	return nil
+	return versions
 }

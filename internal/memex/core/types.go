@@ -7,7 +7,8 @@ import (
 // Object represents stored content with metadata
 type Object struct {
 	ID       string         // Unique identifier
-	Content  []byte         // Raw content
+	Content  []byte         // Raw content (for backward compatibility)
+	Chunks   []string       // List of chunk hashes that make up the content
 	Type     string         // Content type
 	Version  int            // Version number
 	Created  time.Time      // Creation timestamp
@@ -21,6 +22,9 @@ type Link struct {
 	Target string         // Target object ID
 	Type   string         // Relationship type
 	Meta   map[string]any // Link metadata
+	// New fields for chunk-level linking
+	SourceChunk string // Optional: specific chunk in source object
+	TargetChunk string // Optional: specific chunk in target object
 }
 
 // Repository manages objects and their relationships
@@ -49,6 +53,11 @@ type Repository interface {
 	List() []string
 	FindByType(contentType string) []Object
 	Search(query map[string]any) []Object
+
+	// Chunk Operations
+	GetChunk(hash string) ([]byte, error)
+	GetObjectChunks(id string) ([][]byte, error)
+	LinkChunks(sourceID, sourceChunk, targetID, targetChunk string, linkType string, meta map[string]any) error
 }
 
 // ObjectStore handles the storage and retrieval of objects
@@ -64,6 +73,12 @@ type ObjectStore interface {
 
 	// List returns all object IDs
 	List() []string
+
+	// StoreChunk stores a content chunk
+	StoreChunk(hash string, content []byte) error
+
+	// LoadChunk retrieves a content chunk
+	LoadChunk(hash string) ([]byte, error)
 }
 
 // LinkStore handles the storage and retrieval of links
@@ -79,15 +94,18 @@ type LinkStore interface {
 
 	// GetByTarget returns all links to a target
 	GetByTarget(target string) []Link
+
+	// GetByChunk returns all links involving a specific chunk
+	GetByChunk(hash string) []Link
 }
 
 // VersionStore handles version tracking
 type VersionStore interface {
 	// Store stores a version of an object
-	Store(id string, version int, content []byte) error
+	Store(id string, version int, chunks []string) error
 
 	// Load retrieves a specific version
-	Load(id string, version int) ([]byte, error)
+	Load(id string, version int) ([]string, error)
 
 	// List returns all versions of an object
 	List(id string) []int

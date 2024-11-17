@@ -2,7 +2,6 @@ package storage
 
 import (
 	"fmt"
-	"reflect"
 	"time"
 
 	"memex/internal/memex/core"
@@ -68,13 +67,29 @@ func (r *Repository) Close() error {
 
 // Add adds new content to the repository
 func (r *Repository) Add(content []byte, contentType string, meta map[string]any) (string, error) {
+	// Split content into chunks
+	chunks, err := ChunkContent(content)
+	if err != nil {
+		return "", fmt.Errorf("chunking content: %w", err)
+	}
+
+	// Store each chunk
+	var chunkHashes []string
+	for _, chunk := range chunks {
+		if err := r.objects.StoreChunk(chunk.Hash, chunk.Content); err != nil {
+			return "", fmt.Errorf("storing chunk: %w", err)
+		}
+		chunkHashes = append(chunkHashes, chunk.Hash)
+	}
+
+	// Create object
 	obj := core.Object{
-		Content:  content,
 		Type:     contentType,
 		Version:  1,
 		Created:  time.Now(),
 		Modified: time.Now(),
 		Meta:     meta,
+		Chunks:   chunkHashes,
 	}
 
 	// Store object
@@ -84,8 +99,7 @@ func (r *Repository) Add(content []byte, contentType string, meta map[string]any
 	}
 
 	// Store initial version
-	err = r.versions.Store(id, 1, content, "Initial version")
-	if err != nil {
+	if err := r.versions.Store(id, 1, chunkHashes); err != nil {
 		return "", fmt.Errorf("storing version: %w", err)
 	}
 
@@ -94,7 +108,25 @@ func (r *Repository) Add(content []byte, contentType string, meta map[string]any
 
 // Get retrieves an object by ID
 func (r *Repository) Get(id string) (core.Object, error) {
-	return r.objects.Load(id)
+	obj, err := r.objects.Load(id)
+	if err != nil {
+		return obj, fmt.Errorf("loading object: %w", err)
+	}
+
+	// If object uses chunks, load and assemble content
+	if len(obj.Chunks) > 0 {
+		var chunks []Chunk
+		for _, hash := range obj.Chunks {
+			content, err := r.objects.LoadChunk(hash)
+			if err != nil {
+				return obj, fmt.Errorf("loading chunk %s: %w", hash, err)
+			}
+			chunks = append(chunks, Chunk{Hash: hash, Content: content})
+		}
+		obj.Content = ReassembleContent(chunks)
+	}
+
+	return obj, nil
 }
 
 // Update updates an object's content
@@ -105,20 +137,33 @@ func (r *Repository) Update(id string, content []byte) error {
 		return fmt.Errorf("loading object: %w", err)
 	}
 
+	// Split new content into chunks
+	chunks, err := ChunkContent(content)
+	if err != nil {
+		return fmt.Errorf("chunking content: %w", err)
+	}
+
+	// Store each chunk
+	var chunkHashes []string
+	for _, chunk := range chunks {
+		if err := r.objects.StoreChunk(chunk.Hash, chunk.Content); err != nil {
+			return fmt.Errorf("storing chunk: %w", err)
+		}
+		chunkHashes = append(chunkHashes, chunk.Hash)
+	}
+
 	// Update object
-	obj.Content = content
+	obj.Chunks = chunkHashes
 	obj.Version++
 	obj.Modified = time.Now()
 
 	// Store updated object
-	_, err = r.objects.Store(obj)
-	if err != nil {
+	if _, err = r.objects.Store(obj); err != nil {
 		return fmt.Errorf("storing updated object: %w", err)
 	}
 
 	// Store new version
-	err = r.versions.Store(id, obj.Version, content, "Update")
-	if err != nil {
+	if err := r.versions.Store(id, obj.Version, chunkHashes); err != nil {
 		return fmt.Errorf("storing version: %w", err)
 	}
 
@@ -127,28 +172,11 @@ func (r *Repository) Update(id string, content []byte) error {
 
 // Delete removes an object
 func (r *Repository) Delete(id string) error {
-	// Delete object
-	if err := r.objects.Delete(id); err != nil {
-		return fmt.Errorf("deleting object: %w", err)
-	}
-
-	// Delete versions
-	if err := r.versions.Delete(id); err != nil {
-		return fmt.Errorf("deleting versions: %w", err)
-	}
-
-	// Delete related links
-	links := r.links.GetLinked(id)
-	for _, linkedID := range links {
-		r.links.Delete(id, linkedID)
-		r.links.Delete(linkedID, id)
-	}
-
-	return nil
+	return r.objects.Delete(id)
 }
 
 // Link creates a link between objects
-func (r *Repository) Link(source, target string, linkType string, meta map[string]any) error {
+func (r *Repository) Link(source, target, linkType string, meta map[string]any) error {
 	link := core.Link{
 		Source: source,
 		Target: target,
@@ -165,54 +193,7 @@ func (r *Repository) Unlink(source, target string) error {
 
 // GetLinks returns all links for an object
 func (r *Repository) GetLinks(id string) ([]core.Link, error) {
-	outgoing := r.links.GetBySource(id)
-	incoming := r.links.GetByTarget(id)
-	return append(outgoing, incoming...), nil
-}
-
-// GetVersion retrieves a specific version of an object
-func (r *Repository) GetVersion(id string, version int) (core.Object, error) {
-	// Get current object for metadata
-	obj, err := r.objects.Load(id)
-	if err != nil {
-		return obj, fmt.Errorf("loading object: %w", err)
-	}
-
-	// Get version content
-	content, err := r.versions.Load(id, version)
-	if err != nil {
-		return obj, fmt.Errorf("loading version: %w", err)
-	}
-
-	// Get version info
-	info, err := r.versions.GetInfo(id, version)
-	if err != nil {
-		return obj, fmt.Errorf("loading version info: %w", err)
-	}
-
-	// Update object with version info
-	obj.Content = content
-	obj.Version = info.Version
-	obj.Modified = info.Created
-
-	return obj, nil
-}
-
-// ListVersions returns all versions of an object
-func (r *Repository) ListVersions(id string) ([]int, error) {
-	versions, err := r.versions.List(id)
-	if err != nil {
-		return nil, fmt.Errorf("listing versions: %w", err)
-	}
-
-	var nums []int
-	for _, v := range versions {
-		var num int
-		fmt.Sscanf(v, "v%d", &num)
-		nums = append(nums, num)
-	}
-
-	return nums, nil
+	return r.links.GetBySource(id), nil
 }
 
 // List returns all object IDs
@@ -220,63 +201,22 @@ func (r *Repository) List() []string {
 	return r.objects.List()
 }
 
-// FindByType returns objects of a specific type
+// FindByType returns all objects of a specific type
 func (r *Repository) FindByType(contentType string) []core.Object {
-	var results []core.Object
+	var objects []core.Object
 	for _, id := range r.List() {
 		obj, err := r.Get(id)
 		if err != nil {
 			continue
 		}
 		if obj.Type == contentType {
-			results = append(results, obj)
+			objects = append(objects, obj)
 		}
 	}
-	return results
+	return objects
 }
 
-// deepEqual compares two values, handling slices and maps
-func deepEqual(a, b interface{}) bool {
-	if a == nil || b == nil {
-		return a == b
-	}
-
-	va := reflect.ValueOf(a)
-	vb := reflect.ValueOf(b)
-
-	if va.Kind() != vb.Kind() {
-		return false
-	}
-
-	switch va.Kind() {
-	case reflect.Slice:
-		if va.Len() != vb.Len() {
-			return false
-		}
-		for i := 0; i < va.Len(); i++ {
-			if !deepEqual(va.Index(i).Interface(), vb.Index(i).Interface()) {
-				return false
-			}
-		}
-		return true
-	case reflect.Map:
-		if va.Len() != vb.Len() {
-			return false
-		}
-		for _, k := range va.MapKeys() {
-			va1 := va.MapIndex(k)
-			vb1 := vb.MapIndex(k)
-			if !vb1.IsValid() || !deepEqual(va1.Interface(), vb1.Interface()) {
-				return false
-			}
-		}
-		return true
-	default:
-		return reflect.DeepEqual(a, b)
-	}
-}
-
-// Search finds objects matching metadata criteria
+// Search finds objects matching criteria
 func (r *Repository) Search(query map[string]any) []core.Object {
 	var results []core.Object
 	for _, id := range r.List() {
@@ -287,7 +227,7 @@ func (r *Repository) Search(query map[string]any) []core.Object {
 		// Check if object matches query
 		matches := true
 		for k, v := range query {
-			if objVal, ok := obj.Meta[k]; !ok || !deepEqual(objVal, v) {
+			if objVal, ok := obj.Meta[k]; !ok || objVal != v {
 				matches = false
 				break
 			}
@@ -297,4 +237,79 @@ func (r *Repository) Search(query map[string]any) []core.Object {
 		}
 	}
 	return results
+}
+
+// GetChunk retrieves a chunk by hash
+func (r *Repository) GetChunk(hash string) ([]byte, error) {
+	return r.objects.LoadChunk(hash)
+}
+
+// GetObjectChunks retrieves all chunks for an object
+func (r *Repository) GetObjectChunks(id string) ([][]byte, error) {
+	obj, err := r.objects.Load(id)
+	if err != nil {
+		return nil, fmt.Errorf("loading object: %w", err)
+	}
+
+	var chunks [][]byte
+	for _, hash := range obj.Chunks {
+		content, err := r.objects.LoadChunk(hash)
+		if err != nil {
+			return nil, fmt.Errorf("loading chunk %s: %w", hash, err)
+		}
+		chunks = append(chunks, content)
+	}
+
+	return chunks, nil
+}
+
+// LinkChunks creates a link between specific chunks
+func (r *Repository) LinkChunks(sourceID, sourceChunk, targetID, targetChunk, linkType string, meta map[string]any) error {
+	link := core.Link{
+		Source:      sourceID,
+		Target:      targetID,
+		Type:        linkType,
+		Meta:        meta,
+		SourceChunk: sourceChunk,
+		TargetChunk: targetChunk,
+	}
+	return r.links.Store(link)
+}
+
+// GetVersion retrieves a specific version of an object
+func (r *Repository) GetVersion(id string, version int) (core.Object, error) {
+	// Get base object
+	obj, err := r.objects.Load(id)
+	if err != nil {
+		return obj, fmt.Errorf("loading object: %w", err)
+	}
+
+	// Get version chunks
+	chunkHashes, err := r.versions.Load(id, version)
+	if err != nil {
+		return obj, fmt.Errorf("loading version: %w", err)
+	}
+
+	// Load chunks
+	var chunks []Chunk
+	for _, hash := range chunkHashes {
+		content, err := r.objects.LoadChunk(hash)
+		if err != nil {
+			return obj, fmt.Errorf("loading chunk %s: %w", hash, err)
+		}
+		chunks = append(chunks, Chunk{Hash: hash, Content: content})
+	}
+
+	// Update object with version data
+	obj.Version = version
+	obj.Chunks = chunkHashes
+	obj.Content = ReassembleContent(chunks)
+
+	return obj, nil
+}
+
+// ListVersions returns all versions of an object
+func (r *Repository) ListVersions(id string) ([]int, error) {
+	versions := r.versions.List(id)
+	return versions, nil
 }
