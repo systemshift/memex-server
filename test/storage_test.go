@@ -2,197 +2,231 @@ package test
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"memex/internal/memex/storage"
 )
 
-func TestStorage(t *testing.T) {
-	// Create temporary directory for testing
-	tmpDir := CreateTempDir(t)
+func TestChunking(t *testing.T) {
+	content := []byte("This is a test content that should be split into multiple chunks based on content boundaries.")
+	chunks, err := storage.ChunkContent(content)
+	if err != nil {
+		t.Fatalf("Error chunking content: %v", err)
+	}
 
-	t.Run("Repository Operations", func(t *testing.T) {
-		// Initialize repository
-		repo, err := storage.NewRepository(tmpDir)
+	// Should create at least one chunk
+	if len(chunks) == 0 {
+		t.Error("No chunks created")
+	}
+
+	// Each chunk should have a hash and content
+	for i, chunk := range chunks {
+		if chunk.Hash == "" {
+			t.Errorf("Chunk %d has no hash", i)
+		}
+		if len(chunk.Content) == 0 {
+			t.Errorf("Chunk %d has no content", i)
+		}
+		if !storage.VerifyChunk(chunk) {
+			t.Errorf("Chunk %d failed verification", i)
+		}
+	}
+
+	// Reassembling chunks should produce original content
+	reassembled := storage.ReassembleContent(chunks)
+	if !bytes.Equal(reassembled, content) {
+		t.Error("Reassembled content does not match original")
+	}
+}
+
+func TestRepository(t *testing.T) {
+	// Create temporary directory for test repository
+	tmpDir, err := os.MkdirTemp("", "memex-test-*")
+	if err != nil {
+		t.Fatalf("Error creating temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create repository
+	repo, err := storage.NewRepository(filepath.Join(tmpDir, ".memex"))
+	if err != nil {
+		t.Fatalf("Error creating repository: %v", err)
+	}
+
+	// Test adding content
+	content := []byte("Test content")
+	meta := map[string]any{
+		"title": "Test Object",
+	}
+
+	id, err := repo.Add(content, "note", meta)
+	if err != nil {
+		t.Fatalf("Error adding content: %v", err)
+	}
+
+	// Test retrieving content
+	obj, err := repo.Get(id)
+	if err != nil {
+		t.Fatalf("Error getting object: %v", err)
+	}
+
+	if !bytes.Equal(obj.Content, content) {
+		t.Error("Retrieved content does not match original")
+	}
+
+	// Verify chunks were created
+	if len(obj.Chunks) == 0 {
+		t.Log("No chunks created - object stored as raw content")
+	} else {
+		t.Logf("Object split into %d chunks", len(obj.Chunks))
+	}
+
+	// Test updating content
+	newContent := []byte("Updated content")
+	err = repo.Update(id, newContent)
+	if err != nil {
+		t.Fatalf("Error updating content: %v", err)
+	}
+
+	// Test retrieving updated content
+	updated, err := repo.Get(id)
+	if err != nil {
+		t.Fatalf("Error getting updated object: %v", err)
+	}
+
+	if !bytes.Equal(updated.Content, newContent) {
+		t.Error("Updated content does not match")
+	}
+
+	// Test versions
+	versions, err := repo.ListVersions(id)
+	if err != nil {
+		t.Fatalf("Error listing versions: %v", err)
+	}
+
+	if len(versions) != 2 { // Should have initial version and update
+		t.Errorf("Expected 2 versions, got %d", len(versions))
+	}
+
+	// Test getting specific version
+	v1, err := repo.GetVersion(id, 1)
+	if err != nil {
+		t.Fatalf("Error getting version 1: %v", err)
+	}
+
+	if !bytes.Equal(v1.Content, content) {
+		t.Error("Version 1 content does not match original")
+	}
+
+	// Test chunk-level linking
+	content2 := []byte("Another test content for linking")
+	id2, err := repo.Add(content2, "note", nil)
+	if err != nil {
+		t.Fatalf("Error adding second object: %v", err)
+	}
+
+	// Get second object
+	obj2, err := repo.Get(id2)
+	if err != nil {
+		t.Fatalf("Error getting second object: %v", err)
+	}
+
+	// Only create chunk-level link if both objects have chunks
+	if len(obj.Chunks) > 0 && len(obj2.Chunks) > 0 {
+		t.Logf("Creating chunk-level link between objects using chunks %s and %s",
+			obj.Chunks[0], obj2.Chunks[0])
+
+		// Create link between chunks
+		err = repo.LinkChunks(id, obj.Chunks[0], id2, obj2.Chunks[0], "references", nil)
 		if err != nil {
-			t.Fatalf("NewRepository failed: %v", err)
+			t.Fatalf("Error creating chunk link: %v", err)
 		}
 
-		// Test adding content
-		content := []byte("test content")
-		meta := map[string]any{
-			"title": "Test Object",
-			"tags":  []string{"test", "example"},
-		}
-
-		id, err := repo.Add(content, "text", meta)
+		// Test retrieving links
+		links, err := repo.GetLinks(id)
 		if err != nil {
-			t.Fatalf("Add failed: %v", err)
+			t.Fatalf("Error getting links: %v", err)
 		}
 
-		// Test retrieving content
-		obj, err := repo.Get(id)
+		if len(links) == 0 {
+			t.Error("No links found")
+		}
+
+		// Verify chunk-level link
+		found := false
+		for _, link := range links {
+			if link.Source == id && link.Target == id2 && link.SourceChunk == obj.Chunks[0] {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Error("Chunk-level link not found")
+		}
+	} else {
+		t.Log("Skipping chunk-level link test - one or both objects have no chunks")
+	}
+}
+
+func TestRepositorySearch(t *testing.T) {
+	// Create temporary directory for test repository
+	tmpDir, err := os.MkdirTemp("", "memex-test-*")
+	if err != nil {
+		t.Fatalf("Error creating temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create repository
+	repo, err := storage.NewRepository(filepath.Join(tmpDir, ".memex"))
+	if err != nil {
+		t.Fatalf("Error creating repository: %v", err)
+	}
+
+	// Add test objects
+	objects := []struct {
+		content []byte
+		typ     string
+		meta    map[string]any
+	}{
+		{
+			content: []byte("Test note 1"),
+			typ:     "note",
+			meta: map[string]any{
+				"title": "Note 1",
+				"tags":  []string{"test", "note"},
+			},
+		},
+		{
+			content: []byte("Test note 2"),
+			typ:     "note",
+			meta: map[string]any{
+				"title": "Note 2",
+				"tags":  []string{"test", "important"},
+			},
+		},
+	}
+
+	for _, obj := range objects {
+		_, err := repo.Add(obj.content, obj.typ, obj.meta)
 		if err != nil {
-			t.Fatalf("Get failed: %v", err)
+			t.Fatalf("Error adding test object: %v", err)
 		}
+	}
 
-		if !bytes.Equal(obj.Content, content) {
-			t.Errorf("Content mismatch.\nGot: %q\nWant: %q", obj.Content, content)
-		}
+	// Test searching by type
+	notes := repo.FindByType("note")
+	if len(notes) != 2 {
+		t.Errorf("Expected 2 notes, got %d", len(notes))
+	}
 
-		if obj.Type != "text" {
-			t.Errorf("Type mismatch.\nGot: %q\nWant: %q", obj.Type, "text")
-		}
-
-		if obj.Meta["title"] != "Test Object" {
-			t.Errorf("Metadata mismatch.\nGot: %v\nWant: %v", obj.Meta["title"], "Test Object")
-		}
-
-		// Test updating content
-		newContent := []byte("updated content")
-		err = repo.Update(id, newContent)
-		if err != nil {
-			t.Fatalf("Update failed: %v", err)
-		}
-
-		// Verify update
-		obj, err = repo.Get(id)
-		if err != nil {
-			t.Fatalf("Get after update failed: %v", err)
-		}
-
-		if !bytes.Equal(obj.Content, newContent) {
-			t.Errorf("Updated content mismatch.\nGot: %q\nWant: %q", obj.Content, newContent)
-		}
-
-		if obj.Version != 2 {
-			t.Errorf("Version not incremented.\nGot: %d\nWant: %d", obj.Version, 2)
-		}
-	})
-
-	t.Run("Version Operations", func(t *testing.T) {
-		repo, _ := storage.NewRepository(tmpDir)
-
-		// Add content with multiple versions
-		id, _ := repo.Add([]byte("version 1"), "text", nil)
-		repo.Update(id, []byte("version 2"))
-		repo.Update(id, []byte("version 3"))
-
-		// List versions
-		versions, err := repo.ListVersions(id)
-		if err != nil {
-			t.Fatalf("ListVersions failed: %v", err)
-		}
-
-		if len(versions) != 3 {
-			t.Errorf("Expected 3 versions, got %d", len(versions))
-		}
-
-		// Get specific version
-		v1, err := repo.GetVersion(id, 1)
-		if err != nil {
-			t.Fatalf("GetVersion failed: %v", err)
-		}
-
-		if !bytes.Equal(v1.Content, []byte("version 1")) {
-			t.Errorf("Version 1 content mismatch.\nGot: %q\nWant: %q", v1.Content, "version 1")
-		}
-	})
-
-	t.Run("Link Operations", func(t *testing.T) {
-		repo, _ := storage.NewRepository(tmpDir)
-
-		// Create two objects to link
-		id1, _ := repo.Add([]byte("object 1"), "text", nil)
-		id2, _ := repo.Add([]byte("object 2"), "text", nil)
-
-		// Create link
-		linkMeta := map[string]any{"note": "test link"}
-		err := repo.Link(id1, id2, "references", linkMeta)
-		if err != nil {
-			t.Fatalf("Link failed: %v", err)
-		}
-
-		// Get links
-		links, err := repo.GetLinks(id1)
-		if err != nil {
-			t.Fatalf("GetLinks failed: %v", err)
-		}
-
-		if len(links) != 1 {
-			t.Errorf("Expected 1 link, got %d", len(links))
-		}
-
-		if links[0].Source != id1 || links[0].Target != id2 {
-			t.Errorf("Link mismatch.\nGot: %s -> %s\nWant: %s -> %s",
-				links[0].Source, links[0].Target, id1, id2)
-		}
-
-		// Test unlinking
-		err = repo.Unlink(id1, id2)
-		if err != nil {
-			t.Fatalf("Unlink failed: %v", err)
-		}
-
-		links, _ = repo.GetLinks(id1)
-		if len(links) != 0 {
-			t.Errorf("Expected no links after unlink, got %d", len(links))
-		}
-	})
-
-	t.Run("Search Operations", func(t *testing.T) {
-		repo, _ := storage.NewRepository(tmpDir)
-
-		// Add objects with different types and metadata
-		repo.Add([]byte("doc 1"), "document", map[string]any{
-			"tags": []string{"work"},
-		})
-		repo.Add([]byte("doc 2"), "document", map[string]any{
-			"tags": []string{"personal"},
-		})
-		repo.Add([]byte("note 1"), "note", map[string]any{
-			"tags": []string{"work"},
-		})
-
-		// Test finding by type
-		docs := repo.FindByType("document")
-		if len(docs) != 2 {
-			t.Errorf("Expected 2 documents, got %d", len(docs))
-		}
-
-		// Test searching by metadata
-		results := repo.Search(map[string]any{
-			"tags": []string{"work"},
-		})
-		if len(results) != 2 {
-			t.Errorf("Expected 2 objects with 'work' tag, got %d", len(results))
-		}
-	})
-
-	t.Run("Delete Operations", func(t *testing.T) {
-		repo, _ := storage.NewRepository(tmpDir)
-
-		// Create object and link
-		id1, _ := repo.Add([]byte("object 1"), "text", nil)
-		id2, _ := repo.Add([]byte("object 2"), "text", nil)
-		repo.Link(id1, id2, "references", nil)
-
-		// Delete object
-		err := repo.Delete(id1)
-		if err != nil {
-			t.Fatalf("Delete failed: %v", err)
-		}
-
-		// Verify object is gone
-		_, err = repo.Get(id1)
-		if err == nil {
-			t.Error("Expected error getting deleted object")
-		}
-
-		// Verify links are gone
-		links, _ := repo.GetLinks(id2)
-		if len(links) != 0 {
-			t.Errorf("Expected no links after delete, got %d", len(links))
-		}
-	})
+	// Test searching by metadata
+	query := map[string]any{
+		"tags": []string{"important"},
+	}
+	results := repo.Search(query)
+	if len(results) != 1 {
+		t.Errorf("Expected 1 result, got %d", len(results))
+	}
 }

@@ -2,6 +2,8 @@ package storage
 
 import (
 	"fmt"
+	"log"
+	"reflect"
 	"time"
 
 	"memex/internal/memex/core"
@@ -90,6 +92,7 @@ func (r *Repository) Add(content []byte, contentType string, meta map[string]any
 		Modified: time.Now(),
 		Meta:     meta,
 		Chunks:   chunkHashes,
+		Content:  content, // Store original content for backward compatibility
 	}
 
 	// Store object
@@ -113,8 +116,8 @@ func (r *Repository) Get(id string) (core.Object, error) {
 		return obj, fmt.Errorf("loading object: %w", err)
 	}
 
-	// If object uses chunks, load and assemble content
-	if len(obj.Chunks) > 0 {
+	// If object has chunks but no content, reassemble it
+	if len(obj.Chunks) > 0 && len(obj.Content) == 0 {
 		var chunks []Chunk
 		for _, hash := range obj.Chunks {
 			content, err := r.objects.LoadChunk(hash)
@@ -154,6 +157,7 @@ func (r *Repository) Update(id string, content []byte) error {
 
 	// Update object
 	obj.Chunks = chunkHashes
+	obj.Content = content // Update raw content for backward compatibility
 	obj.Version++
 	obj.Modified = time.Now()
 
@@ -177,6 +181,7 @@ func (r *Repository) Delete(id string) error {
 
 // Link creates a link between objects
 func (r *Repository) Link(source, target, linkType string, meta map[string]any) error {
+	log.Printf("Creating file-level link: source=%s target=%s type=%s", source, target, linkType)
 	link := core.Link{
 		Source: source,
 		Target: target,
@@ -193,7 +198,13 @@ func (r *Repository) Unlink(source, target string) error {
 
 // GetLinks returns all links for an object
 func (r *Repository) GetLinks(id string) ([]core.Link, error) {
-	return r.links.GetBySource(id), nil
+	links := r.links.GetBySource(id)
+	log.Printf("Found %d links for object %s", len(links), id)
+	for i, link := range links {
+		log.Printf("Link %d: Source=%s Target=%s Type=%s SourceChunk=%s TargetChunk=%s",
+			i, link.Source, link.Target, link.Type, link.SourceChunk, link.TargetChunk)
+	}
+	return links, nil
 }
 
 // List returns all object IDs
@@ -227,9 +238,42 @@ func (r *Repository) Search(query map[string]any) []core.Object {
 		// Check if object matches query
 		matches := true
 		for k, v := range query {
-			if objVal, ok := obj.Meta[k]; !ok || objVal != v {
+			if objVal, ok := obj.Meta[k]; !ok {
 				matches = false
 				break
+			} else {
+				// Handle different types of values
+				switch val := v.(type) {
+				case []string:
+					// For string arrays, check if any value matches
+					if objArr, ok := objVal.([]string); ok {
+						found := false
+						for _, s := range val {
+							for _, os := range objArr {
+								if s == os {
+									found = true
+									break
+								}
+							}
+							if found {
+								break
+							}
+						}
+						if !found {
+							matches = false
+							break
+						}
+					} else {
+						matches = false
+						break
+					}
+				default:
+					// For other types, use reflect.DeepEqual
+					if !reflect.DeepEqual(objVal, v) {
+						matches = false
+						break
+					}
+				}
 			}
 		}
 		if matches {
@@ -265,14 +309,28 @@ func (r *Repository) GetObjectChunks(id string) ([][]byte, error) {
 
 // LinkChunks creates a link between specific chunks
 func (r *Repository) LinkChunks(sourceID, sourceChunk, targetID, targetChunk, linkType string, meta map[string]any) error {
+	// Verify chunks exist
+	if _, err := r.GetChunk(sourceChunk); err != nil {
+		return fmt.Errorf("source chunk not found: %w", err)
+	}
+	if _, err := r.GetChunk(targetChunk); err != nil {
+		return fmt.Errorf("target chunk not found: %w", err)
+	}
+
+	log.Printf("Creating chunk-level link: source=%s sourceChunk=%s target=%s targetChunk=%s type=%s",
+		sourceID, sourceChunk, targetID, targetChunk, linkType)
+
+	// Create a new link with chunk references
 	link := core.Link{
 		Source:      sourceID,
 		Target:      targetID,
-		Type:        linkType,
+		Type:        linkType + "-chunk", // Use different type for chunk links
 		Meta:        meta,
 		SourceChunk: sourceChunk,
 		TargetChunk: targetChunk,
 	}
+
+	// Store the link
 	return r.links.Store(link)
 }
 

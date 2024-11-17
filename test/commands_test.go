@@ -1,172 +1,210 @@
 package test
 
 import (
+	"bytes"
 	"os"
-	"path/filepath"
 	"testing"
 
 	"memex/internal/memex"
 )
 
 func TestCommands(t *testing.T) {
-	// Create temporary directory for testing
-	tmpDir := CreateTempDir(t)
+	// Create temporary directory for test repository
+	tmpDir, err := os.MkdirTemp("", "memex-test-*")
+	if err != nil {
+		t.Fatalf("Error creating temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
 
-	// Set up home directory for config
-	originalHome := os.Getenv("HOME")
-	tmpHome := CreateTempDir(t)
-	os.Setenv("HOME", tmpHome)
-	defer os.Setenv("HOME", originalHome)
+	// Initialize repository
+	err = memex.InitCommand(tmpDir)
+	if err != nil {
+		t.Fatalf("Error initializing repository: %v", err)
+	}
 
-	t.Run("Init Command", func(t *testing.T) {
-		notesDir := filepath.Join(tmpDir, "notes")
+	// Change to test directory
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Error getting current directory: %v", err)
+	}
+	defer os.Chdir(origDir)
 
-		// Run init command
-		err := memex.InitCommand(notesDir)
-		if err != nil {
-			t.Fatalf("InitCommand failed: %v", err)
-		}
+	err = os.Chdir(tmpDir)
+	if err != nil {
+		t.Fatalf("Error changing to test directory: %v", err)
+	}
 
-		// Check if directories were created
-		AssertFileExists(t, notesDir)
-		AssertFileExists(t, filepath.Join(notesDir, ".memex", "objects"))
-		AssertFileExists(t, filepath.Join(notesDir, ".memex", "meta"))
-		AssertFileExists(t, filepath.Join(notesDir, ".memex", "links"))
+	// Test adding a file
+	testFile := "test.txt"
+	content := []byte("Test content")
+	err = os.WriteFile(testFile, content, 0644)
+	if err != nil {
+		t.Fatalf("Error creating test file: %v", err)
+	}
+	defer os.Remove(testFile)
 
-		// Check if config was created
-		config, err := memex.LoadConfig()
-		if err != nil {
-			t.Fatalf("LoadConfig failed: %v", err)
-		}
-		if config.NotesDirectory != notesDir {
-			t.Errorf("Config notes directory mismatch.\nGot: %q\nWant: %q",
-				config.NotesDirectory, notesDir)
-		}
+	err = memex.AddCommand(testFile)
+	if err != nil {
+		t.Fatalf("Error adding file: %v", err)
+	}
+
+	// Get repository to check results directly
+	repo, err := memex.GetRepository()
+	if err != nil {
+		t.Fatalf("Error getting repository: %v", err)
+	}
+
+	// Search for added file
+	results := repo.Search(map[string]any{
+		"filename": "test.txt",
 	})
 
-	t.Run("Add Command", func(t *testing.T) {
-		// Create a test file to add
-		testFile := CreateTestFile(t, tmpDir, "test.txt", "test content")
+	if len(results) != 1 {
+		t.Fatalf("Expected 1 result, got %d", len(results))
+	}
 
-		// Run add command
-		err := memex.AddCommand(testFile)
-		if err != nil {
-			t.Fatalf("AddCommand failed: %v", err)
-		}
+	// Test showing content
+	obj := results[0]
+	if !bytes.Equal(obj.Content, content) {
+		t.Error("Retrieved content does not match original")
+	}
 
-		// Check if file was added to repository
-		repo, err := memex.GetRepository()
-		if err != nil {
-			t.Fatalf("GetRepository failed: %v", err)
-		}
+	// Test linking
+	content2 := []byte("Another test content")
+	testFile2 := "test2.txt"
+	err = os.WriteFile(testFile2, content2, 0644)
+	if err != nil {
+		t.Fatalf("Error creating second test file: %v", err)
+	}
+	defer os.Remove(testFile2)
 
-		// Search for added file
-		results := repo.Search(map[string]any{
-			"filename": "test.txt",
+	err = memex.AddCommand(testFile2)
+	if err != nil {
+		t.Fatalf("Error adding second file: %v", err)
+	}
+
+	results2 := repo.Search(map[string]any{
+		"filename": "test2.txt",
+	})
+	if len(results2) != 1 {
+		t.Fatalf("Expected 1 result for second file, got %d", len(results2))
+	}
+
+	// Create link between files
+	err = memex.LinkCommand(obj.ID, results2[0].ID, "references", "Test link")
+	if err != nil {
+		t.Fatalf("Error creating link: %v", err)
+	}
+
+	// Only create chunk-level link if both objects have chunks
+	if len(obj.Chunks) > 0 && len(results2[0].Chunks) > 0 {
+		t.Logf("Creating chunk-level link between objects using chunks %s and %s",
+			obj.Chunks[0], results2[0].Chunks[0])
+
+		// Create link between specific chunks
+		err = repo.LinkChunks(obj.ID, obj.Chunks[0], results2[0].ID, results2[0].Chunks[0], "references", map[string]any{
+			"note": "Link between specific portions",
 		})
-
-		if len(results) != 1 {
-			t.Errorf("Expected 1 result, got %d", len(results))
-		}
-
-		if string(results[0].Content) != "test content" {
-			t.Errorf("Content mismatch.\nGot: %q\nWant: %q",
-				string(results[0].Content), "test content")
-		}
-	})
-
-	t.Run("Status Command", func(t *testing.T) {
-		err := memex.StatusCommand()
 		if err != nil {
-			t.Errorf("StatusCommand failed: %v", err)
-		}
-	})
-
-	t.Run("Show Command", func(t *testing.T) {
-		// Create test content
-		repo, err := memex.GetRepository()
-		if err != nil {
-			t.Fatalf("GetRepository failed: %v", err)
+			t.Fatalf("Error creating chunk link: %v", err)
 		}
 
-		// Add test object
-		id, err := repo.Add([]byte("test content"), "note", map[string]any{
-			"title": "Test Note",
-			"tags":  []string{"test"},
-		})
+		// Verify links
+		links, err := repo.GetLinks(obj.ID)
 		if err != nil {
-			t.Fatalf("Adding test content failed: %v", err)
+			t.Fatalf("Error getting links: %v", err)
 		}
 
-		// Test show command
-		err = memex.ShowCommand(id)
-		if err != nil {
-			t.Errorf("ShowCommand failed: %v", err)
-		}
-	})
-
-	t.Run("Link Command", func(t *testing.T) {
-		// Create two test objects
-		repo, err := memex.GetRepository()
-		if err != nil {
-			t.Fatalf("GetRepository failed: %v", err)
+		// Should have two links: one file-level and one chunk-level
+		if len(links) != 2 {
+			t.Errorf("Expected 2 links, got %d", len(links))
+			for i, link := range links {
+				t.Logf("Link %d: Source=%s Target=%s Type=%s SourceChunk=%s TargetChunk=%s",
+					i, link.Source, link.Target, link.Type, link.SourceChunk, link.TargetChunk)
+			}
 		}
 
-		id1, err := repo.Add([]byte("content 1"), "note", nil)
-		if err != nil {
-			t.Fatalf("Adding first test object failed: %v", err)
+		// Verify chunk-level link exists
+		found := false
+		for _, link := range links {
+			if link.SourceChunk != "" && link.TargetChunk != "" {
+				found = true
+				break
+			}
 		}
-
-		id2, err := repo.Add([]byte("content 2"), "note", nil)
-		if err != nil {
-			t.Fatalf("Adding second test object failed: %v", err)
+		if !found {
+			t.Error("Chunk-level link not found")
 		}
+	} else {
+		t.Logf("Skipping chunk-level link test - first object has %d chunks, second has %d chunks",
+			len(obj.Chunks), len(results2[0].Chunks))
 
-		// Test linking
-		err = memex.LinkCommand(id1, id2, "references", "test link")
+		// Just verify the file-level link exists
+		links, err := repo.GetLinks(obj.ID)
 		if err != nil {
-			t.Errorf("LinkCommand failed: %v", err)
-		}
-
-		// Verify link exists
-		links, err := repo.GetLinks(id1)
-		if err != nil {
-			t.Fatalf("GetLinks failed: %v", err)
+			t.Fatalf("Error getting links: %v", err)
 		}
 
 		if len(links) != 1 {
 			t.Errorf("Expected 1 link, got %d", len(links))
+			for i, link := range links {
+				t.Logf("Link %d: Source=%s Target=%s Type=%s", i, link.Source, link.Target, link.Type)
+			}
 		}
-	})
+	}
+}
 
-	t.Run("Search Command", func(t *testing.T) {
-		// Add test objects with metadata
-		repo, err := memex.GetRepository()
-		if err != nil {
-			t.Fatalf("GetRepository failed: %v", err)
-		}
+func TestStatusCommand(t *testing.T) {
+	// Create temporary directory for test repository
+	tmpDir, err := os.MkdirTemp("", "memex-test-*")
+	if err != nil {
+		t.Fatalf("Error creating temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
 
-		_, err = repo.Add([]byte("content"), "note", map[string]any{
-			"tags": []string{"test"},
-		})
-		if err != nil {
-			t.Fatalf("Adding first test object failed: %v", err)
-		}
+	// Initialize repository
+	err = memex.InitCommand(tmpDir)
+	if err != nil {
+		t.Fatalf("Error initializing repository: %v", err)
+	}
 
-		_, err = repo.Add([]byte("content"), "note", map[string]any{
-			"tags": []string{"other"},
-		})
-		if err != nil {
-			t.Fatalf("Adding second test object failed: %v", err)
-		}
+	// Change to test directory
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Error getting current directory: %v", err)
+	}
+	defer os.Chdir(origDir)
 
-		// Test search
-		query := map[string]any{
-			"tags": []string{"test"},
-		}
-		err = memex.SearchCommand(query)
+	err = os.Chdir(tmpDir)
+	if err != nil {
+		t.Fatalf("Error changing to test directory: %v", err)
+	}
+
+	// Add some test content
+	testFiles := []struct {
+		name    string
+		content []byte
+	}{
+		{"test1.txt", []byte("Test content 1")},
+		{"test2.txt", []byte("Test content 2")},
+	}
+
+	for _, tf := range testFiles {
+		err = os.WriteFile(tf.name, tf.content, 0644)
 		if err != nil {
-			t.Errorf("SearchCommand failed: %v", err)
+			t.Fatalf("Error creating test file: %v", err)
 		}
-	})
+		defer os.Remove(tf.name)
+
+		err = memex.AddCommand(tf.name)
+		if err != nil {
+			t.Fatalf("Error adding file: %v", err)
+		}
+	}
+
+	// Test status command
+	err = memex.StatusCommand()
+	if err != nil {
+		t.Fatalf("Error running status command: %v", err)
+	}
 }

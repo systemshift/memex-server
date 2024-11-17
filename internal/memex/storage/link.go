@@ -25,14 +25,18 @@ func NewLinkStore(rootDir string) (*BinaryLinkStore, error) {
 }
 
 // getLinkPath returns the path for a link file
-func (s *BinaryLinkStore) getLinkPath(source, target string) string {
-	// Use source-target as filename
-	return filepath.Join(s.rootDir, "links", fmt.Sprintf("%s-%s.json", source, target))
+func (s *BinaryLinkStore) getLinkPath(source, target, linkType string, sourceChunk, targetChunk string) string {
+	// Use source-target-type-chunks as filename
+	filename := fmt.Sprintf("%s-%s-%s", source, target, linkType)
+	if sourceChunk != "" && targetChunk != "" {
+		filename += fmt.Sprintf("-chunk-%s-%s", sourceChunk[:8], targetChunk[:8])
+	}
+	return filepath.Join(s.rootDir, "links", filename+".json")
 }
 
 // Store stores a link
 func (s *BinaryLinkStore) Store(link core.Link) error {
-	linkPath := s.getLinkPath(link.Source, link.Target)
+	linkPath := s.getLinkPath(link.Source, link.Target, link.Type, link.SourceChunk, link.TargetChunk)
 
 	// Marshal link data
 	data, err := json.MarshalIndent(link, "", "  ")
@@ -50,10 +54,16 @@ func (s *BinaryLinkStore) Store(link core.Link) error {
 
 // Delete removes a link
 func (s *BinaryLinkStore) Delete(source, target string) error {
-	linkPath := s.getLinkPath(source, target)
-	if err := os.Remove(linkPath); err != nil {
-		if !os.IsNotExist(err) {
-			return fmt.Errorf("removing link file: %w", err)
+	// Find all links between these objects
+	links := s.GetBySource(source)
+	for _, link := range links {
+		if link.Target == target {
+			linkPath := s.getLinkPath(link.Source, link.Target, link.Type, link.SourceChunk, link.TargetChunk)
+			if err := os.Remove(linkPath); err != nil {
+				if !os.IsNotExist(err) {
+					return fmt.Errorf("removing link file: %w", err)
+				}
+			}
 		}
 	}
 	return nil
@@ -179,30 +189,4 @@ func (s *BinaryLinkStore) FindByType(linkType string) []core.Link {
 	})
 
 	return links
-}
-
-// GetLinked returns all objects linked to the given object (in either direction)
-func (s *BinaryLinkStore) GetLinked(id string) []string {
-	var linked []string
-	seen := make(map[string]bool)
-
-	// Get outgoing links
-	outgoing := s.GetBySource(id)
-	for _, link := range outgoing {
-		if !seen[link.Target] {
-			linked = append(linked, link.Target)
-			seen[link.Target] = true
-		}
-	}
-
-	// Get incoming links
-	incoming := s.GetByTarget(id)
-	for _, link := range incoming {
-		if !seen[link.Source] {
-			linked = append(linked, link.Source)
-			seen[link.Source] = true
-		}
-	}
-
-	return linked
 }

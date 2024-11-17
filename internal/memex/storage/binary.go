@@ -90,8 +90,8 @@ func (s *BinaryStore) Store(obj core.Object) (string, error) {
 	meta := map[string]interface{}{
 		"type":     obj.Type,
 		"version":  obj.Version,
-		"created":  obj.Created,
-		"modified": obj.Modified,
+		"created":  obj.Created.Format(time.RFC3339),
+		"modified": obj.Modified.Format(time.RFC3339),
 		"meta":     obj.Meta,
 		"chunks":   obj.Chunks,
 	}
@@ -136,16 +136,31 @@ func (s *BinaryStore) Load(id string) (core.Object, error) {
 		obj.Modified, _ = time.Parse(time.RFC3339, modified)
 	}
 
-	// Handle potentially nil metadata
+	// Handle metadata
 	if metaMap, ok := meta["meta"].(map[string]interface{}); ok {
-		obj.Meta = metaMap
+		obj.Meta = make(map[string]any)
+		for k, v := range metaMap {
+			// Convert interface{} arrays to []string if needed
+			if arr, ok := v.([]interface{}); ok {
+				strArr := make([]string, len(arr))
+				for i, item := range arr {
+					strArr[i] = fmt.Sprint(item)
+				}
+				obj.Meta[k] = strArr
+			} else {
+				obj.Meta[k] = v
+			}
+		}
 	} else {
 		obj.Meta = make(map[string]any)
 	}
 
 	// Handle chunks
-	if chunks, ok := meta["chunks"].([]string); ok {
-		obj.Chunks = chunks
+	if chunks, ok := meta["chunks"].([]interface{}); ok {
+		obj.Chunks = make([]string, len(chunks))
+		for i, chunk := range chunks {
+			obj.Chunks[i] = chunk.(string)
+		}
 	}
 
 	// Read content if no chunks are present
