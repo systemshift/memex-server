@@ -10,9 +10,7 @@ import (
 	"net/http"
 	"strings"
 
-	"memex/internal/memex"
-	"memex/internal/memex/core"
-	"memex/internal/memex/storage"
+	"memex/pkg/memex"
 )
 
 //go:embed static/* templates/*
@@ -20,16 +18,16 @@ var content embed.FS
 
 // Server handles HTTP requests
 type Server struct {
-	repo      *storage.Repository
+	memex     *memex.Memex
 	templates *template.Template
 }
 
 // NewServer creates a new server instance
-func NewServer() (*Server, error) {
-	// Initialize repository
-	repo, err := memex.GetRepository()
+func NewServer(path string) (*Server, error) {
+	// Initialize memex
+	mx, err := memex.Open(path)
 	if err != nil {
-		return nil, fmt.Errorf("initializing repository: %w", err)
+		return nil, fmt.Errorf("initializing memex: %w", err)
 	}
 
 	// Load templates
@@ -39,7 +37,7 @@ func NewServer() (*Server, error) {
 	}
 
 	return &Server{
-		repo:      repo,
+		memex:     mx,
 		templates: tmpl,
 	}, nil
 }
@@ -51,10 +49,10 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get all objects
-	objects := s.repo.List()
-	var items []core.Object
+	objects := s.memex.List()
+	var items []memex.Object
 	for _, id := range objects {
-		obj, err := s.repo.Get(id)
+		obj, err := s.memex.Get(id)
 		if err != nil {
 			continue
 		}
@@ -99,13 +97,13 @@ func (s *Server) handleAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Add to repository
+	// Add to memex
 	meta := map[string]any{
 		"filename": header.Filename,
 		"type":     "file",
 	}
 
-	if _, err := s.repo.Add(content, "file", meta); err != nil {
+	if _, err := s.memex.Add(content, "file", meta); err != nil {
 		log.Printf("Error adding file: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -136,7 +134,7 @@ func (s *Server) handleLink(w http.ResponseWriter, r *http.Request) {
 		meta["note"] = note
 	}
 
-	if err := s.repo.Link(source, target, linkType, meta); err != nil {
+	if err := s.memex.Link(source, target, linkType, meta); err != nil {
 		log.Printf("Error creating link: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -158,7 +156,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	results := s.repo.Search(query)
+	results := s.memex.Search(query)
 	data := map[string]interface{}{
 		"Objects": results,
 		"Query":   r.URL.Query().Get("q"),
@@ -175,10 +173,11 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 func main() {
 	// Parse flags
 	port := flag.Int("port", 8080, "Port to listen on")
+	dir := flag.String("dir", ".", "Directory to store data")
 	flag.Parse()
 
 	// Create server
-	server, err := NewServer()
+	server, err := NewServer(*dir)
 	if err != nil {
 		log.Fatalf("Error creating server: %v", err)
 	}

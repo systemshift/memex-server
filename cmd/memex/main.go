@@ -3,136 +3,170 @@ package main
 import (
 	"flag"
 	"fmt"
+	"log"
 	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
-	"memex/internal/memex"
+	"memex/pkg/memex"
 )
 
 func main() {
-	// Subcommands
-	initCmd := flag.NewFlagSet("init", flag.ExitOnError)
-	commitCmd := flag.NewFlagSet("commit", flag.ExitOnError)
-	commitMsg := commitCmd.String("m", "", "Commit message")
-	addCmd := flag.NewFlagSet("add", flag.ExitOnError)
-	showCmd := flag.NewFlagSet("show", flag.ExitOnError)
-	linkCmd := flag.NewFlagSet("link", flag.ExitOnError)
-	linkType := linkCmd.String("type", "references", "Type of link")
-	linkNote := linkCmd.String("note", "", "Note about the link")
-	searchCmd := flag.NewFlagSet("search", flag.ExitOnError)
-	searchQuery := searchCmd.String("q", "", "Search query (key=value,...)")
+	// Parse command line arguments
+	flag.Parse()
+	args := flag.Args()
 
-	// Parse command
-	if len(os.Args) < 2 {
-		// No command provided, default to edit
-		if err := memex.EditCommand(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+	if len(args) < 1 {
+		fmt.Println("Usage: memex <command> [args...]")
+		os.Exit(1)
+	}
+
+	// Get current directory
+	dir, err := os.Getwd()
+	if err != nil {
+		log.Fatalf("Error getting current directory: %v", err)
+	}
+
+	// Open memex
+	mx, err := memex.Open(dir)
+	if err != nil {
+		log.Fatalf("Error opening memex: %v", err)
+	}
+
+	// Handle commands
+	cmd := args[0]
+	switch cmd {
+	case "add":
+		if len(args) < 2 {
+			log.Fatal("Usage: memex add <file>")
 		}
+		handleAdd(mx, args[1])
+
+	case "link":
+		if len(args) < 4 {
+			log.Fatal("Usage: memex link <source> <target> <type> [note]")
+		}
+		note := ""
+		if len(args) > 4 {
+			note = args[4]
+		}
+		handleLink(mx, args[1], args[2], args[3], note)
+
+	case "search":
+		if len(args) < 2 {
+			log.Fatal("Usage: memex search <query>")
+		}
+		handleSearch(mx, args[1:])
+
+	case "status":
+		handleStatus(mx)
+
+	default:
+		log.Fatalf("Unknown command: %s", cmd)
+	}
+}
+
+func handleAdd(mx *memex.Memex, path string) {
+	// Read file content
+	content, err := os.ReadFile(path)
+	if err != nil {
+		log.Fatalf("Error reading file: %v", err)
+	}
+
+	// Create metadata
+	meta := map[string]any{
+		"filename": filepath.Base(path),
+		"added":    time.Now(),
+	}
+
+	// Add to repository
+	id, err := mx.Add(content, "file", meta)
+	if err != nil {
+		log.Fatalf("Error adding to repository: %v", err)
+	}
+
+	fmt.Printf("Added %s (ID: %s)\n", filepath.Base(path), id[:8])
+}
+
+func handleLink(mx *memex.Memex, source, target, linkType, note string) {
+	meta := map[string]any{}
+	if note != "" {
+		meta["note"] = note
+	}
+
+	err := mx.Link(source, target, linkType, meta)
+	if err != nil {
+		log.Fatalf("Error creating link: %v", err)
+	}
+
+	fmt.Printf("Created %s link from %s to %s\n", linkType, source[:8], target[:8])
+}
+
+func handleSearch(mx *memex.Memex, terms []string) {
+	// Build query from terms
+	query := make(map[string]any)
+	for _, term := range terms {
+		if strings.Contains(term, ":") {
+			parts := strings.SplitN(term, ":", 2)
+			query[parts[0]] = parts[1]
+		} else {
+			query["content"] = term
+		}
+	}
+
+	// Search
+	results := mx.Search(query)
+	if len(results) == 0 {
+		fmt.Println("No results found")
 		return
 	}
 
-	switch os.Args[1] {
-	case "init":
-		initCmd.Parse(os.Args[2:])
-		if initCmd.NArg() != 1 {
-			fmt.Fprintf(os.Stderr, "Usage: memex init <directory>\n")
-			os.Exit(1)
+	fmt.Printf("Found %d results:\n\n", len(results))
+	for _, obj := range results {
+		fmt.Printf("ID: %s\n", obj.ID[:8])
+		fmt.Printf("Type: %s\n", obj.Type)
+		if title, ok := obj.Meta["title"].(string); ok {
+			fmt.Printf("Title: %s\n", title)
 		}
-		if err := memex.InitCommand(initCmd.Arg(0)); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
+		fmt.Printf("Created: %s\n", obj.Created.UTC().Format("02 Jan 06 15:04 MST"))
+		fmt.Println()
+	}
+}
 
-	case "add":
-		addCmd.Parse(os.Args[2:])
-		if addCmd.NArg() != 1 {
-			fmt.Fprintf(os.Stderr, "Usage: memex add <file>\n")
-			os.Exit(1)
-		}
-		if err := memex.AddCommand(addCmd.Arg(0)); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
+func handleStatus(mx *memex.Memex) {
+	fmt.Println("Memex Status ===")
+	fmt.Println()
 
-	case "show":
-		showCmd.Parse(os.Args[2:])
-		if showCmd.NArg() != 1 {
-			fmt.Fprintf(os.Stderr, "Usage: memex show <id>\n")
-			os.Exit(1)
-		}
-		if err := memex.ShowCommand(showCmd.Arg(0)); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-
-	case "link":
-		linkCmd.Parse(os.Args[2:])
-		if linkCmd.NArg() != 2 {
-			fmt.Fprintf(os.Stderr, "Usage: memex link [-type <type>] [-note <note>] <source-id> <target-id>\n")
-			os.Exit(1)
-		}
-		if err := memex.LinkCommand(linkCmd.Arg(0), linkCmd.Arg(1), *linkType, *linkNote); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-
-	case "search":
-		searchCmd.Parse(os.Args[2:])
-		query := make(map[string]any)
-		if *searchQuery != "" {
-			// Parse key=value pairs
-			pairs := strings.Split(*searchQuery, ",")
-			for _, pair := range pairs {
-				kv := strings.SplitN(pair, "=", 2)
-				if len(kv) == 2 {
-					query[strings.TrimSpace(kv[0])] = strings.TrimSpace(kv[1])
-				}
+	// List notes
+	notes := mx.FindByType("note")
+	if len(notes) > 0 {
+		fmt.Printf("Notes (%d):\n", len(notes))
+		for _, obj := range notes {
+			title := "Untitled"
+			if t, ok := obj.Meta["title"].(string); ok {
+				title = t
 			}
+			fmt.Printf("  %s - %s (%s)\n", obj.ID[:8], title, obj.Created.UTC().Format("02 Jan 06 15:04 MST"))
 		}
-		if err := memex.SearchCommand(query); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
+		fmt.Println()
+	}
 
-	case "status":
-		if err := memex.StatusCommand(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+	// List files
+	files := mx.FindByType("file")
+	if len(files) > 0 {
+		fmt.Printf("Files (%d):\n", len(files))
+		for _, obj := range files {
+			filename := "unknown"
+			if f, ok := obj.Meta["filename"].(string); ok {
+				filename = f
+			}
+			fmt.Printf("  %s - %s (%s)\n", obj.ID[:8], filename, obj.Created.UTC().Format("02 Jan 06 15:04 MST"))
 		}
+		fmt.Println()
+	}
 
-	case "commit":
-		commitCmd.Parse(os.Args[2:])
-		if *commitMsg == "" {
-			fmt.Fprintf(os.Stderr, "Usage: memex commit -m \"commit message\"\n")
-			os.Exit(1)
-		}
-		if err := memex.CommitCommand(*commitMsg); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-
-	case "log":
-		if err := memex.LogCommand(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-
-	case "restore":
-		if len(os.Args) != 3 {
-			fmt.Fprintf(os.Stderr, "Usage: memex restore <commit-hash>\n")
-			os.Exit(1)
-		}
-		if err := memex.RestoreCommand(os.Args[2]); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-
-	default:
-		// Unknown command, default to edit
-		if err := memex.EditCommand(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
+	if len(notes) == 0 && len(files) == 0 {
+		fmt.Println("No content found")
 	}
 }
