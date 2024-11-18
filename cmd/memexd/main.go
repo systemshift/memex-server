@@ -113,6 +113,34 @@ func (s *Server) handleAdd(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
+func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	id := r.Form.Get("id")
+	if id == "" {
+		http.Error(w, "ID required", http.StatusBadRequest)
+		return
+	}
+
+	// Delete the object
+	if err := s.memex.Delete(id); err != nil {
+		log.Printf("Error deleting object: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Redirect back to index
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
 func (s *Server) handleLink(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -194,6 +222,7 @@ func main() {
 	mux.Handle("/static/", http.StripPrefix("/static/", staticHandler))
 	mux.HandleFunc("/", server.handleIndex)
 	mux.HandleFunc("/add", server.handleAdd)
+	mux.HandleFunc("/delete", server.handleDelete)
 	mux.HandleFunc("/link", server.handleLink)
 	mux.HandleFunc("/search", server.handleSearch)
 

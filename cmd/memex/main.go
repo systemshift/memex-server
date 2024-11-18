@@ -19,6 +19,12 @@ func main() {
 
 	if len(args) < 1 {
 		fmt.Println("Usage: memex <command> [args...]")
+		fmt.Println("\nCommands:")
+		fmt.Println("  add <file>                Add a file")
+		fmt.Println("  delete <id>               Delete an object")
+		fmt.Println("  link <src> <dst> <type>   Create a link")
+		fmt.Println("  search <query>            Search objects")
+		fmt.Println("  status                    Show repository status")
 		os.Exit(1)
 	}
 
@@ -42,6 +48,12 @@ func main() {
 			log.Fatal("Usage: memex add <file>")
 		}
 		handleAdd(mx, args[1])
+
+	case "delete":
+		if len(args) < 2 {
+			log.Fatal("Usage: memex delete <id>")
+		}
+		handleDelete(mx, args[1])
 
 	case "link":
 		if len(args) < 4 {
@@ -87,6 +99,28 @@ func handleAdd(mx *memex.Memex, path string) {
 	}
 
 	fmt.Printf("Added %s (ID: %s)\n", filepath.Base(path), id[:8])
+}
+
+func handleDelete(mx *memex.Memex, id string) {
+	// Get object first to verify it exists and get its name
+	obj, err := mx.Get(id)
+	if err != nil {
+		log.Fatalf("Error: %v", err)
+	}
+
+	// Delete the object
+	if err := mx.Delete(id); err != nil {
+		log.Fatalf("Error deleting object: %v", err)
+	}
+
+	name := id[:8]
+	if filename, ok := obj.Meta["filename"].(string); ok {
+		name = filename
+	} else if title, ok := obj.Meta["title"].(string); ok {
+		name = title
+	}
+
+	fmt.Printf("Deleted %s (ID: %s)\n", name, id[:8])
 }
 
 func handleLink(mx *memex.Memex, source, target, linkType, note string) {

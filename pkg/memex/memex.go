@@ -37,6 +37,11 @@ func (m *Memex) Get(id string) (Object, error) {
 	return convertObject(obj), nil
 }
 
+// Delete removes an object and its chunks
+func (m *Memex) Delete(id string) error {
+	return m.repo.Delete(id)
+}
+
 // Update updates an object's content
 func (m *Memex) Update(id string, content []byte) error {
 	return m.repo.Update(id, content)

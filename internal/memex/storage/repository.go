@@ -2,7 +2,6 @@ package storage
 
 import (
 	"fmt"
-	"log"
 	"reflect"
 	"time"
 
@@ -174,14 +173,41 @@ func (r *Repository) Update(id string, content []byte) error {
 	return nil
 }
 
-// Delete removes an object
+// Delete removes an object and its chunks
 func (r *Repository) Delete(id string) error {
-	return r.objects.Delete(id)
+	// Get object first to get its chunks
+	obj, err := r.objects.Load(id)
+	if err != nil {
+		return fmt.Errorf("loading object: %w", err)
+	}
+
+	// Delete all chunks
+	for _, hash := range obj.Chunks {
+		if err := r.objects.DeleteChunk(hash); err != nil {
+			return fmt.Errorf("deleting chunk %s: %w", hash, err)
+		}
+	}
+
+	// Delete all versions
+	if err := r.versions.Delete(id); err != nil {
+		return fmt.Errorf("deleting versions: %w", err)
+	}
+
+	// Delete all links
+	if err := r.links.Delete(id, ""); err != nil {
+		return fmt.Errorf("deleting links: %w", err)
+	}
+
+	// Delete the object itself
+	if err := r.objects.Delete(id); err != nil {
+		return fmt.Errorf("deleting object: %w", err)
+	}
+
+	return nil
 }
 
 // Link creates a link between objects
 func (r *Repository) Link(source, target, linkType string, meta map[string]any) error {
-	log.Printf("Creating file-level link: source=%s target=%s type=%s", source, target, linkType)
 	link := core.Link{
 		Source: source,
 		Target: target,
@@ -198,13 +224,7 @@ func (r *Repository) Unlink(source, target string) error {
 
 // GetLinks returns all links for an object
 func (r *Repository) GetLinks(id string) ([]core.Link, error) {
-	links := r.links.GetBySource(id)
-	log.Printf("Found %d links for object %s", len(links), id)
-	for i, link := range links {
-		log.Printf("Link %d: Source=%s Target=%s Type=%s SourceChunk=%s TargetChunk=%s",
-			i, link.Source, link.Target, link.Type, link.SourceChunk, link.TargetChunk)
-	}
-	return links, nil
+	return r.links.GetBySource(id), nil
 }
 
 // List returns all object IDs
@@ -317,14 +337,11 @@ func (r *Repository) LinkChunks(sourceID, sourceChunk, targetID, targetChunk, li
 		return fmt.Errorf("target chunk not found: %w", err)
 	}
 
-	log.Printf("Creating chunk-level link: source=%s sourceChunk=%s target=%s targetChunk=%s type=%s",
-		sourceID, sourceChunk, targetID, targetChunk, linkType)
-
 	// Create a new link with chunk references
 	link := core.Link{
 		Source:      sourceID,
 		Target:      targetID,
-		Type:        linkType + "-chunk", // Use different type for chunk links
+		Type:        linkType,
 		Meta:        meta,
 		SourceChunk: sourceChunk,
 		TargetChunk: targetChunk,

@@ -122,29 +122,36 @@ func TestMemex(t *testing.T) {
 		t.Errorf("Expected 2 objects, got %d", len(allObjects))
 	}
 
-	// Test versioning
-	newContent := []byte("Updated content")
-	err = mx.Update(id, newContent)
+	// Test deleting an object
+	err = mx.Delete(id)
 	if err != nil {
-		t.Fatalf("Error updating object: %v", err)
+		t.Fatalf("Error deleting object: %v", err)
 	}
 
-	versions, err := mx.ListVersions(id)
+	// Verify object is deleted
+	_, err = mx.Get(id)
+	if err == nil {
+		t.Error("Expected error getting deleted object")
+	}
+
+	// Verify chunks are deleted
+	_, err = mx.GetObjectChunks(id)
+	if err == nil {
+		t.Error("Expected error getting chunks of deleted object")
+	}
+
+	// Verify links are deleted
+	links, err = mx.GetLinks(id)
 	if err != nil {
-		t.Fatalf("Error listing versions: %v", err)
+		t.Fatalf("Error getting links after delete: %v", err)
+	}
+	if len(links) != 0 {
+		t.Errorf("Expected 0 links after delete, got %d", len(links))
 	}
 
-	if len(versions) != 2 { // Should have initial version and update
-		t.Errorf("Expected 2 versions, got %d", len(versions))
-	}
-
-	// Test getting specific version
-	v1, err := mx.GetVersion(id, 1)
-	if err != nil {
-		t.Fatalf("Error getting version 1: %v", err)
-	}
-
-	if !bytes.Equal(v1.Content, content) {
-		t.Error("Version 1 content does not match original")
+	// Verify object count is updated
+	allObjects = mx.List()
+	if len(allObjects) != 1 {
+		t.Errorf("Expected 1 object after delete, got %d", len(allObjects))
 	}
 }

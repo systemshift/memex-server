@@ -38,19 +38,27 @@ func NewBinaryStore(rootDir string) (*BinaryStore, error) {
 // generateID creates a unique ID for content
 func (s *BinaryStore) generateID(content []byte) string {
 	hash := sha256.Sum256(content)
-	return hex.EncodeToString(hash[:])
+	return hex.EncodeToString(hash[:])[:8] // Use first 8 chars for shorter IDs
 }
 
 // getObjectPath returns the path for an object ID
 func (s *BinaryStore) getObjectPath(id string) string {
 	// Use first 2 chars as directory name
-	return filepath.Join(s.rootDir, "objects", id[:2], id[2:])
+	dir := filepath.Join(s.rootDir, "objects", id[:2])
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return ""
+	}
+	return filepath.Join(dir, id[2:])
 }
 
 // getChunkPath returns the path for a chunk hash
 func (s *BinaryStore) getChunkPath(hash string) string {
 	// Use first 2 chars as directory name
-	return filepath.Join(s.rootDir, "chunks", hash[:2], hash[2:])
+	dir := filepath.Join(s.rootDir, "chunks", hash[:2])
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return ""
+	}
+	return filepath.Join(dir, hash[2:])
 }
 
 // Store stores an object and returns its ID
@@ -65,16 +73,10 @@ func (s *BinaryStore) Store(obj core.Object) (string, error) {
 			for _, chunk := range obj.Chunks {
 				hasher.Write([]byte(chunk))
 			}
-			obj.ID = hex.EncodeToString(hasher.Sum(nil))
+			obj.ID = hex.EncodeToString(hasher.Sum(nil))[:8]
 		} else {
 			return "", fmt.Errorf("object must have either Content or Chunks")
 		}
-	}
-
-	// Create object directory
-	objDir := filepath.Join(s.rootDir, "objects", obj.ID[:2])
-	if err := os.MkdirAll(objDir, 0755); err != nil {
-		return "", fmt.Errorf("creating object directory: %w", err)
 	}
 
 	// Write content if present
@@ -88,6 +90,7 @@ func (s *BinaryStore) Store(obj core.Object) (string, error) {
 	// Store metadata
 	metaPath := filepath.Join(s.rootDir, "meta", obj.ID+".json")
 	meta := map[string]interface{}{
+		"id":       obj.ID,
 		"type":     obj.Type,
 		"version":  obj.Version,
 		"created":  obj.Created.Format(time.RFC3339),
@@ -179,13 +182,12 @@ func (s *BinaryStore) Load(id string) (core.Object, error) {
 // StoreChunk stores a content chunk
 func (s *BinaryStore) StoreChunk(hash string, content []byte) error {
 	// Create chunk directory
-	chunkDir := filepath.Join(s.rootDir, "chunks", hash[:2])
-	if err := os.MkdirAll(chunkDir, 0755); err != nil {
-		return fmt.Errorf("creating chunk directory: %w", err)
+	chunkPath := s.getChunkPath(hash)
+	if chunkPath == "" {
+		return fmt.Errorf("error creating chunk directory")
 	}
 
 	// Write chunk
-	chunkPath := s.getChunkPath(hash)
 	if err := os.WriteFile(chunkPath, content, 0644); err != nil {
 		return fmt.Errorf("writing chunk: %w", err)
 	}
@@ -196,6 +198,10 @@ func (s *BinaryStore) StoreChunk(hash string, content []byte) error {
 // LoadChunk retrieves a content chunk
 func (s *BinaryStore) LoadChunk(hash string) ([]byte, error) {
 	chunkPath := s.getChunkPath(hash)
+	if chunkPath == "" {
+		return nil, fmt.Errorf("error getting chunk path")
+	}
+
 	content, err := os.ReadFile(chunkPath)
 	if err != nil {
 		return nil, fmt.Errorf("reading chunk: %w", err)
@@ -203,13 +209,30 @@ func (s *BinaryStore) LoadChunk(hash string) ([]byte, error) {
 	return content, nil
 }
 
+// DeleteChunk removes a chunk
+func (s *BinaryStore) DeleteChunk(hash string) error {
+	chunkPath := s.getChunkPath(hash)
+	if chunkPath == "" {
+		return fmt.Errorf("error getting chunk path")
+	}
+
+	if err := os.Remove(chunkPath); err != nil {
+		if !os.IsNotExist(err) {
+			return fmt.Errorf("removing chunk: %w", err)
+		}
+	}
+	return nil
+}
+
 // Delete removes an object
 func (s *BinaryStore) Delete(id string) error {
 	// Remove content
 	objPath := s.getObjectPath(id)
-	if err := os.Remove(objPath); err != nil {
-		if !os.IsNotExist(err) {
-			return fmt.Errorf("removing object content: %w", err)
+	if objPath != "" {
+		if err := os.Remove(objPath); err != nil {
+			if !os.IsNotExist(err) {
+				return fmt.Errorf("removing object content: %w", err)
+			}
 		}
 	}
 

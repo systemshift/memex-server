@@ -52,21 +52,39 @@ func (s *BinaryLinkStore) Store(link core.Link) error {
 	return nil
 }
 
-// Delete removes a link
+// Delete removes links involving an object
 func (s *BinaryLinkStore) Delete(source, target string) error {
-	// Find all links between these objects
-	links := s.GetBySource(source)
-	for _, link := range links {
-		if link.Target == target {
-			linkPath := s.getLinkPath(link.Source, link.Target, link.Type, link.SourceChunk, link.TargetChunk)
-			if err := os.Remove(linkPath); err != nil {
-				if !os.IsNotExist(err) {
-					return fmt.Errorf("removing link file: %w", err)
+	linksDir := filepath.Join(s.rootDir, "links")
+
+	// Walk through links directory
+	return filepath.Walk(linksDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if !info.IsDir() && filepath.Ext(path) == ".json" {
+			// Read link file
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return nil
+			}
+
+			var link core.Link
+			if err := json.Unmarshal(data, &link); err != nil {
+				return nil
+			}
+
+			// Delete if link involves the specified object(s)
+			if (source != "" && link.Source == source) ||
+				(target != "" && link.Target == target) {
+				if err := os.Remove(path); err != nil {
+					if !os.IsNotExist(err) {
+						return fmt.Errorf("removing link file: %w", err)
+					}
 				}
 			}
 		}
-	}
-	return nil
+		return nil
+	})
 }
 
 // GetBySource returns all links from a source
@@ -80,18 +98,19 @@ func (s *BinaryLinkStore) GetBySource(source string) []core.Link {
 			return nil
 		}
 		if !info.IsDir() && filepath.Ext(path) == ".json" {
-			// Check if file starts with source ID
-			filename := filepath.Base(path)
-			if len(filename) > len(source) && filename[:len(source)] == source {
-				// Read and parse link
-				data, err := os.ReadFile(path)
-				if err != nil {
-					return nil
-				}
-				var link core.Link
-				if err := json.Unmarshal(data, &link); err != nil {
-					return nil
-				}
+			// Read link file
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return nil
+			}
+
+			var link core.Link
+			if err := json.Unmarshal(data, &link); err != nil {
+				return nil
+			}
+
+			// Add if this link is from our source
+			if link.Source == source {
 				links = append(links, link)
 			}
 		}
@@ -112,16 +131,18 @@ func (s *BinaryLinkStore) GetByTarget(target string) []core.Link {
 			return nil
 		}
 		if !info.IsDir() && filepath.Ext(path) == ".json" {
-			// Read and parse link
+			// Read link file
 			data, err := os.ReadFile(path)
 			if err != nil {
 				return nil
 			}
+
 			var link core.Link
 			if err := json.Unmarshal(data, &link); err != nil {
 				return nil
 			}
-			// Check if this link points to our target
+
+			// Add if this link points to our target
 			if link.Target == target {
 				links = append(links, link)
 			}
@@ -143,15 +164,17 @@ func (s *BinaryLinkStore) GetAll() []core.Link {
 			return nil
 		}
 		if !info.IsDir() && filepath.Ext(path) == ".json" {
-			// Read and parse link
+			// Read link file
 			data, err := os.ReadFile(path)
 			if err != nil {
 				return nil
 			}
+
 			var link core.Link
 			if err := json.Unmarshal(data, &link); err != nil {
 				return nil
 			}
+
 			links = append(links, link)
 		}
 		return nil
@@ -171,16 +194,18 @@ func (s *BinaryLinkStore) FindByType(linkType string) []core.Link {
 			return nil
 		}
 		if !info.IsDir() && filepath.Ext(path) == ".json" {
-			// Read and parse link
+			// Read link file
 			data, err := os.ReadFile(path)
 			if err != nil {
 				return nil
 			}
+
 			var link core.Link
 			if err := json.Unmarshal(data, &link); err != nil {
 				return nil
 			}
-			// Check if this link matches our type
+
+			// Add if this link matches our type
 			if link.Type == linkType {
 				links = append(links, link)
 			}
