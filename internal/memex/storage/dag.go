@@ -60,7 +60,10 @@ func (s *DAGStore) initRoot() error {
 	log.Printf("Initializing root state at %s", rootPath)
 
 	if _, err := os.Stat(rootPath); os.IsNotExist(err) {
+		// Create initial root with empty hash
+		hasher := sha256.New()
 		root := core.Root{
+			Hash:     hex.EncodeToString(hasher.Sum(nil)),
 			Modified: time.Now(),
 			Nodes:    []string{},
 		}
@@ -136,6 +139,17 @@ func (s *DAGStore) AddNode(content []byte, nodeType string, meta map[string]any)
 	}
 	root.Nodes = append(root.Nodes, id)
 	root.Modified = time.Now()
+
+	// Calculate new root hash
+	hasher := sha256.New()
+	for _, nodeID := range root.Nodes {
+		node, err := s.GetNode(nodeID)
+		if err != nil {
+			continue
+		}
+		hasher.Write([]byte(node.Current))
+	}
+	root.Hash = hex.EncodeToString(hasher.Sum(nil))
 
 	// Store updated root
 	data, err := json.MarshalIndent(root, "", "  ")
@@ -214,7 +228,8 @@ func (s *DAGStore) UpdateNode(id string, content []byte, meta map[string]any) er
 		return fmt.Errorf("storing node: %w", err)
 	}
 
-	return nil
+	// Update root hash
+	return s.UpdateRoot()
 }
 
 // DeleteNode removes a node
@@ -257,6 +272,17 @@ func (s *DAGStore) DeleteNode(id string) error {
 	}
 	root.Nodes = nodes
 	root.Modified = time.Now()
+
+	// Calculate new root hash
+	hasher := sha256.New()
+	for _, nodeID := range root.Nodes {
+		node, err := s.GetNode(nodeID)
+		if err != nil {
+			continue
+		}
+		hasher.Write([]byte(node.Current))
+	}
+	root.Hash = hex.EncodeToString(hasher.Sum(nil))
 
 	// Store updated root
 	data, err := json.MarshalIndent(root, "", "  ")
@@ -486,10 +512,14 @@ func (s *DAGStore) GetRoot() (core.Root, error) {
 	if err != nil {
 		if os.IsNotExist(err) {
 			// Return empty root if no state exists
-			return core.Root{
+			root := core.Root{
 				Modified: time.Now(),
 				Nodes:    []string{},
-			}, nil
+			}
+			// Calculate initial hash
+			hasher := sha256.New()
+			root.Hash = hex.EncodeToString(hasher.Sum(nil))
+			return root, nil
 		}
 		return core.Root{}, fmt.Errorf("reading root state: %w", err)
 	}
@@ -499,7 +529,51 @@ func (s *DAGStore) GetRoot() (core.Root, error) {
 		return core.Root{}, fmt.Errorf("parsing root state: %w", err)
 	}
 
+	// Calculate root hash
+	hasher := sha256.New()
+	for _, id := range root.Nodes {
+		node, err := s.GetNode(id)
+		if err != nil {
+			continue
+		}
+		hasher.Write([]byte(node.Current)) // Hash includes current version of each node
+	}
+	root.Hash = hex.EncodeToString(hasher.Sum(nil))
+
 	return root, nil
+}
+
+// UpdateRoot recalculates and stores the root hash
+func (s *DAGStore) UpdateRoot() error {
+	root, err := s.GetRoot()
+	if err != nil {
+		return fmt.Errorf("getting root: %w", err)
+	}
+
+	// Calculate root hash
+	hasher := sha256.New()
+	for _, id := range root.Nodes {
+		node, err := s.GetNode(id)
+		if err != nil {
+			continue
+		}
+		hasher.Write([]byte(node.Current)) // Hash includes current version of each node
+	}
+	root.Hash = hex.EncodeToString(hasher.Sum(nil))
+	root.Modified = time.Now()
+
+	// Store updated root
+	data, err := json.MarshalIndent(root, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshaling root: %w", err)
+	}
+
+	rootPath := filepath.Join(s.rootDir, "root", "state.json")
+	if err := os.WriteFile(rootPath, data, 0644); err != nil {
+		return fmt.Errorf("writing root state: %w", err)
+	}
+
+	return nil
 }
 
 // Internal helper functions

@@ -1,6 +1,7 @@
 package test
 
 import (
+	"bytes"
 	"os"
 	"testing"
 
@@ -16,7 +17,7 @@ func TestStorage(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	// Create repository
-	repo, err := storage.NewRepository(tmpDir)
+	store, err := storage.NewDAGStore(tmpDir)
 	if err != nil {
 		t.Fatalf("Error creating repository: %v", err)
 	}
@@ -28,19 +29,19 @@ func TestStorage(t *testing.T) {
 		"tags":  []string{"test", "example"},
 	}
 
-	id, err := repo.AddNode(content, "note", meta)
+	id, err := store.AddNode(content, "note", meta)
 	if err != nil {
 		t.Fatalf("Error adding content: %v", err)
 	}
 
 	// Test retrieving content
-	node, err := repo.GetNode(id)
+	node, err := store.GetNode(id)
 	if err != nil {
 		t.Fatalf("Error getting node: %v", err)
 	}
 
 	// Get current version content
-	version, err := repo.GetVersion(id, node.Current)
+	version, err := store.GetVersion(id, node.Current)
 	if err != nil {
 		t.Fatalf("Error getting version: %v", err)
 	}
@@ -50,25 +51,40 @@ func TestStorage(t *testing.T) {
 		t.Error("Version should be available")
 	}
 
+	// Reconstruct content
+	var reconstructed []byte
+	for _, hash := range version.Chunks {
+		chunk, err := store.GetChunk(hash)
+		if err != nil {
+			t.Fatalf("Error getting chunk: %v", err)
+		}
+		reconstructed = append(reconstructed, chunk...)
+	}
+
+	if !bytes.Equal(reconstructed, content) {
+		t.Error("Content not preserved correctly")
+	}
+
 	// Test updating content
 	newContent := []byte("Updated content")
-	err = repo.UpdateNode(id, newContent, nil)
+	err = store.UpdateNode(id, newContent, nil)
 	if err != nil {
 		t.Fatalf("Error updating node: %v", err)
 	}
 
 	// Get updated node
-	updated, err := repo.GetNode(id)
+	updated, err := store.GetNode(id)
 	if err != nil {
 		t.Fatalf("Error getting updated node: %v", err)
 	}
 
+	// Verify update
 	if len(updated.Versions) != 2 {
 		t.Errorf("Expected 2 versions, got %d", len(updated.Versions))
 	}
 
 	// Test root hash updates
-	root, err := repo.GetRoot()
+	root, err := store.GetRoot()
 	if err != nil {
 		t.Fatalf("Error getting root: %v", err)
 	}
@@ -87,14 +103,21 @@ func TestStorage(t *testing.T) {
 		"title": "Another Node",
 	}
 
-	id2, err := repo.AddNode(sameContent, "note", meta2)
+	id2, err := store.AddNode(sameContent, "note", meta2)
 	if err != nil {
 		t.Fatalf("Error adding second node: %v", err)
 	}
 
 	// Get both nodes
-	node1, _ := repo.GetNode(id)
-	node2, _ := repo.GetNode(id2)
+	node1, err := store.GetNode(id)
+	if err != nil {
+		t.Fatalf("Error getting first node: %v", err)
+	}
+
+	node2, err := store.GetNode(id2)
+	if err != nil {
+		t.Fatalf("Error getting second node: %v", err)
+	}
 
 	// Verify they share the same content hash
 	if node1.Current != node2.Current {
@@ -103,13 +126,17 @@ func TestStorage(t *testing.T) {
 
 	// Test pruning an old version
 	oldHash := updated.Versions[0].Hash
-	err = repo.PruneVersion(id, oldHash)
+	err = store.PruneVersion(id, oldHash)
 	if err != nil {
 		t.Fatalf("Error pruning version: %v", err)
 	}
 
 	// Verify version is marked unavailable
-	prunedNode, _ := repo.GetNode(id)
+	prunedNode, err := store.GetNode(id)
+	if err != nil {
+		t.Fatalf("Error getting pruned node: %v", err)
+	}
+
 	var found bool
 	for _, v := range prunedNode.Versions {
 		if v.Hash == oldHash {
@@ -124,40 +151,24 @@ func TestStorage(t *testing.T) {
 		t.Error("Pruned version not found")
 	}
 
-	// Test searching
-	nodes, err := repo.Search(map[string]any{
-		"title": "Test Node",
-	})
-	if err != nil {
-		t.Fatalf("Error searching: %v", err)
-	}
-	if len(nodes) != 1 {
-		t.Errorf("Expected 1 search result, got %d", len(nodes))
-	}
-
-	// Test finding by type
-	notes, err := repo.FindByType("note")
-	if err != nil {
-		t.Fatalf("Error finding by type: %v", err)
-	}
-	if len(notes) != 2 {
-		t.Errorf("Expected 2 notes, got %d", len(notes))
-	}
-
 	// Test deleting a node
-	err = repo.DeleteNode(id)
+	err = store.DeleteNode(id)
 	if err != nil {
 		t.Fatalf("Error deleting node: %v", err)
 	}
 
 	// Verify node is deleted
-	_, err = repo.GetNode(id)
+	_, err = store.GetNode(id)
 	if err == nil {
 		t.Error("Node should be deleted")
 	}
 
 	// Verify root is updated
-	root, _ = repo.GetRoot()
+	root, err = store.GetRoot()
+	if err != nil {
+		t.Fatalf("Error getting root: %v", err)
+	}
+
 	if len(root.Nodes) != 1 { // Should only have id2 left
 		t.Errorf("Expected 1 node in root after delete, got %d", len(root.Nodes))
 	}

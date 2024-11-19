@@ -9,13 +9,13 @@ import (
 	"memex/internal/memex/storage"
 )
 
-var repo *storage.Repository
+var repo *storage.DAGStore
 
 // InitCommand initializes a new repository
 func InitCommand(path string) error {
 	repoPath := filepath.Join(path, ".memex")
 	var err error
-	repo, err = storage.NewRepository(repoPath)
+	repo, err = storage.NewDAGStore(repoPath)
 	if err != nil {
 		return fmt.Errorf("initializing repository: %w", err)
 	}
@@ -135,7 +135,7 @@ func StatusCommand() error {
 }
 
 // GetRepository returns the current repository instance
-func GetRepository() (*storage.Repository, error) {
+func GetRepository() (*storage.DAGStore, error) {
 	if repo == nil {
 		return nil, fmt.Errorf("repository not initialized")
 	}
