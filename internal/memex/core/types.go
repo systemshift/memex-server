@@ -6,40 +6,40 @@ import (
 
 // Node represents a node in the DAG
 type Node struct {
-	ID       string         // Stable identifier
-	Type     string         // Type of node (file, directory, etc)
-	Meta     map[string]any // Metadata
-	Created  time.Time      // Creation timestamp
-	Modified time.Time      // Last modified timestamp
-	Versions []Version      // Version history
-	Links    []Link         // Links to other nodes
-	Current  string         // Hash of current content version
+	ID       string         `json:"id"`
+	Type     string         `json:"type"`
+	Meta     map[string]any `json:"meta"`
+	Created  time.Time      `json:"created"`
+	Modified time.Time      `json:"modified"`
+	Versions []Version      `json:"versions"`
+	Links    []Link         `json:"links"`
+	Current  string         `json:"current"`
 }
 
 // Version represents a specific version of content
 type Version struct {
-	Hash      string         // Content hash
-	Chunks    []string       // Chunk hashes that make up this version
-	Created   time.Time      // When this version was created
-	Meta      map[string]any // Version-specific metadata
-	Available bool           // Whether content is available or pruned
+	Hash      string         `json:"hash"`
+	Chunks    []string       `json:"chunks"`
+	Created   time.Time      `json:"created"`
+	Meta      map[string]any `json:"meta"`
+	Available bool           `json:"available"`
 }
 
 // Link represents a relationship between nodes
 type Link struct {
-	Source      string         // Source node ID
-	Target      string         // Target node ID
-	Type        string         // Type of relationship
-	Meta        map[string]any // Link metadata
-	SourceChunk string         // Optional: specific chunk in source
-	TargetChunk string         // Optional: specific chunk in target
+	Source      string         `json:"source"`
+	Target      string         `json:"target"`
+	Type        string         `json:"type"`
+	Meta        map[string]any `json:"meta"`
+	SourceChunk string         `json:"sourceChunk"`
+	TargetChunk string         `json:"targetChunk"`
 }
 
 // Root represents the root of the DAG
 type Root struct {
-	Hash     string    // Hash of current state
-	Modified time.Time // Last modified timestamp
-	Nodes    []string  // List of node IDs
+	Hash     string    `json:"hash"`
+	Modified time.Time `json:"modified"`
+	Nodes    []string  `json:"nodes"`
 }
 
 // Repository defines the interface for content storage

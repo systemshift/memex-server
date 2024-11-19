@@ -13,8 +13,13 @@ var repo *storage.DAGStore
 
 // InitCommand initializes a new repository
 func InitCommand(path string) error {
-	repoPath := filepath.Join(path, ".memex")
-	var err error
+	// Always use ~/.memex for repository
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("getting home directory: %w", err)
+	}
+	repoPath := filepath.Join(homeDir, ".memex")
+
 	repo, err = storage.NewDAGStore(repoPath)
 	if err != nil {
 		return fmt.Errorf("initializing repository: %w", err)
