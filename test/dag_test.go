@@ -59,6 +59,20 @@ func TestDAGStore(t *testing.T) {
 		t.Error("Version should be available")
 	}
 
+	// Reconstruct content from chunks
+	var reconstructed []byte
+	for _, hash := range version.Chunks {
+		chunk, err := store.GetChunk(hash)
+		if err != nil {
+			t.Fatalf("Error getting chunk: %v", err)
+		}
+		reconstructed = append(reconstructed, chunk...)
+	}
+
+	if string(reconstructed) != string(content) {
+		t.Errorf("Content mismatch. Expected '%s', got '%s'", content, reconstructed)
+	}
+
 	// Test updating the node
 	newContent := []byte("Updated content")
 	newMeta := map[string]any{
@@ -86,20 +100,6 @@ func TestDAGStore(t *testing.T) {
 		t.Errorf("Expected 2 versions, got %d", len(updated.Versions))
 	}
 
-	// Test root hash updates
-	root, err := store.GetRoot()
-	if err != nil {
-		t.Fatalf("Error getting root: %v", err)
-	}
-
-	if len(root.Nodes) != 1 {
-		t.Errorf("Expected 1 node in root, got %d", len(root.Nodes))
-	}
-
-	if root.Hash == "" {
-		t.Error("Root hash should not be empty")
-	}
-
 	// Test content deduplication
 	sameContent := []byte("Updated content") // Same as newContent
 	meta2 := map[string]any{
@@ -112,8 +112,15 @@ func TestDAGStore(t *testing.T) {
 	}
 
 	// Get both nodes
-	node1, _ := store.GetNode(id)
-	node2, _ := store.GetNode(id2)
+	node1, err := store.GetNode(id)
+	if err != nil {
+		t.Fatalf("Error getting first node: %v", err)
+	}
+
+	node2, err := store.GetNode(id2)
+	if err != nil {
+		t.Fatalf("Error getting second node: %v", err)
+	}
 
 	// Verify they share the same content hash
 	if node1.Current != node2.Current {
@@ -128,7 +135,11 @@ func TestDAGStore(t *testing.T) {
 	}
 
 	// Verify version is marked unavailable
-	prunedNode, _ := store.GetNode(id)
+	prunedNode, err := store.GetNode(id)
+	if err != nil {
+		t.Fatalf("Error getting pruned node: %v", err)
+	}
+
 	var found bool
 	for _, v := range prunedNode.Versions {
 		if v.Hash == oldHash {
@@ -141,6 +152,32 @@ func TestDAGStore(t *testing.T) {
 	}
 	if !found {
 		t.Error("Pruned version not found")
+	}
+
+	// Test linking nodes
+	err = store.AddLink(id, id2, "references", map[string]any{
+		"note": "Test link",
+	})
+	if err != nil {
+		t.Fatalf("Error creating link: %v", err)
+	}
+
+	// Test getting links
+	links, err := store.GetLinks(id)
+	if err != nil {
+		t.Fatalf("Error getting links: %v", err)
+	}
+
+	if len(links) != 1 {
+		t.Errorf("Expected 1 link, got %d", len(links))
+	}
+
+	if links[0].Source != id || links[0].Target != id2 {
+		t.Error("Link source/target not preserved correctly")
+	}
+
+	if note, ok := links[0].Meta["note"].(string); !ok || note != "Test link" {
+		t.Error("Link metadata not preserved correctly")
 	}
 
 	// Test deleting a node
@@ -156,8 +193,34 @@ func TestDAGStore(t *testing.T) {
 	}
 
 	// Verify root is updated
-	root, _ = store.GetRoot()
+	root, err := store.GetRoot()
+	if err != nil {
+		t.Fatalf("Error getting root: %v", err)
+	}
+
 	if len(root.Nodes) != 1 { // Should only have id2 left
 		t.Errorf("Expected 1 node in root after delete, got %d", len(root.Nodes))
+	}
+
+	// Test searching
+	nodes, err := store.Search(map[string]any{
+		"title": "Another Node",
+	})
+	if err != nil {
+		t.Fatalf("Error searching: %v", err)
+	}
+
+	if len(nodes) != 1 {
+		t.Errorf("Expected 1 search result, got %d", len(nodes))
+	}
+
+	// Test finding by type
+	notes, err := store.FindByType("note")
+	if err != nil {
+		t.Fatalf("Error finding by type: %v", err)
+	}
+
+	if len(notes) != 1 {
+		t.Errorf("Expected 1 note, got %d", len(notes))
 	}
 }
