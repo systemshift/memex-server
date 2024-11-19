@@ -21,8 +21,10 @@ func main() {
 		fmt.Println("Usage: memex <command> [args...]")
 		fmt.Println("\nCommands:")
 		fmt.Println("  add <file>                Add a file")
+		fmt.Println("  update <id> <file>        Update content of an object")
 		fmt.Println("  delete <id>               Delete an object")
 		fmt.Println("  link <src> <dst> <type>   Create a link")
+		fmt.Println("  links <id>                Show links for an object")
 		fmt.Println("  search <query>            Search objects")
 		fmt.Println("  status                    Show repository status")
 		os.Exit(1)
@@ -49,6 +51,12 @@ func main() {
 		}
 		handleAdd(mx, args[1])
 
+	case "update":
+		if len(args) < 3 {
+			log.Fatal("Usage: memex update <id> <file>")
+		}
+		handleUpdate(mx, args[1], args[2])
+
 	case "delete":
 		if len(args) < 2 {
 			log.Fatal("Usage: memex delete <id>")
@@ -64,6 +72,12 @@ func main() {
 			note = args[4]
 		}
 		handleLink(mx, args[1], args[2], args[3], note)
+
+	case "links":
+		if len(args) < 2 {
+			log.Fatal("Usage: memex links <id>")
+		}
+		handleLinks(mx, args[1])
 
 	case "search":
 		if len(args) < 2 {
@@ -101,6 +115,21 @@ func handleAdd(mx *memex.Memex, path string) {
 	fmt.Printf("Added %s (ID: %s)\n", filepath.Base(path), id[:8])
 }
 
+func handleUpdate(mx *memex.Memex, id string, path string) {
+	// Read file content
+	content, err := os.ReadFile(path)
+	if err != nil {
+		log.Fatalf("Error reading file: %v", err)
+	}
+
+	// Update object
+	if err := mx.Update(id, content); err != nil {
+		log.Fatalf("Error updating object: %v", err)
+	}
+
+	fmt.Printf("Updated %s (ID: %s)\n", filepath.Base(path), id[:8])
+}
+
 func handleDelete(mx *memex.Memex, id string) {
 	// Get object first to verify it exists and get its name
 	obj, err := mx.Get(id)
@@ -135,6 +164,55 @@ func handleLink(mx *memex.Memex, source, target, linkType, note string) {
 	}
 
 	fmt.Printf("Created %s link from %s to %s\n", linkType, source[:8], target[:8])
+}
+
+func handleLinks(mx *memex.Memex, id string) {
+	// Get object first to show its name
+	obj, err := mx.Get(id)
+	if err != nil {
+		log.Fatalf("Error: %v", err)
+	}
+
+	name := id[:8]
+	if filename, ok := obj.Meta["filename"].(string); ok {
+		name = filename
+	} else if title, ok := obj.Meta["title"].(string); ok {
+		name = title
+	}
+
+	// Get links
+	links, err := mx.GetLinks(id)
+	if err != nil {
+		log.Fatalf("Error getting links: %v", err)
+	}
+
+	if len(links) == 0 {
+		fmt.Printf("No links found for %s (ID: %s)\n", name, id[:8])
+		return
+	}
+
+	fmt.Printf("Links for %s (ID: %s):\n\n", name, id[:8])
+	for _, link := range links {
+		// Get target object name
+		target, err := mx.Get(link.Target)
+		if err != nil {
+			continue
+		}
+
+		targetName := link.Target[:8]
+		if filename, ok := target.Meta["filename"].(string); ok {
+			targetName = filename
+		} else if title, ok := target.Meta["title"].(string); ok {
+			targetName = title
+		}
+
+		fmt.Printf("Type: %s\n", link.Type)
+		fmt.Printf("Target: %s (ID: %s)\n", targetName, link.Target[:8])
+		if note, ok := link.Meta["note"].(string); ok {
+			fmt.Printf("Note: %s\n", note)
+		}
+		fmt.Println()
+	}
 }
 
 func handleSearch(mx *memex.Memex, terms []string) {

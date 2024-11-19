@@ -1,6 +1,8 @@
 package storage
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"reflect"
 	"time"
@@ -14,6 +16,12 @@ type Repository struct {
 	versions *BinaryVersionStore
 	links    *BinaryLinkStore
 	rootDir  string
+}
+
+// generateHash creates a hash from content
+func generateHash(content []byte) string {
+	hash := sha256.Sum256(content)
+	return hex.EncodeToString(hash[:])
 }
 
 // NewRepository creates a new repository instance
@@ -42,32 +50,8 @@ func NewRepository(path string) (*Repository, error) {
 	}, nil
 }
 
-// Init initializes a new repository
-func (r *Repository) Init(path string) error {
-	// Create new repository instance
-	newRepo, err := NewRepository(path)
-	if err != nil {
-		return fmt.Errorf("creating repository: %w", err)
-	}
-
-	// Copy values
-	*r = *newRepo
-	return nil
-}
-
-// Open opens an existing repository
-func (r *Repository) Open(path string) error {
-	return r.Init(path) // Same as Init for now
-}
-
-// Close closes the repository
-func (r *Repository) Close() error {
-	// Nothing to do for now
-	return nil
-}
-
-// Add adds new content to the repository
-func (r *Repository) Add(content []byte, contentType string, meta map[string]any) (string, error) {
+// AddNode creates a new node with content
+func (r *Repository) AddNode(content []byte, nodeType string, meta map[string]any) (string, error) {
 	// Split content into chunks
 	chunks, err := ChunkContent(content)
 	if err != nil {
@@ -83,60 +67,47 @@ func (r *Repository) Add(content []byte, contentType string, meta map[string]any
 		chunkHashes = append(chunkHashes, chunk.Hash)
 	}
 
-	// Create object
-	obj := core.Object{
-		Type:     contentType,
-		Version:  1,
+	// Create initial version
+	version := core.Version{
+		Hash:      generateHash(content),
+		Chunks:    chunkHashes,
+		Created:   time.Now(),
+		Available: true,
+		Meta:      make(map[string]any),
+	}
+
+	// Create node
+	node := core.Node{
+		Type:     nodeType,
 		Created:  time.Now(),
 		Modified: time.Now(),
 		Meta:     meta,
-		Chunks:   chunkHashes,
-		Content:  content, // Store original content for backward compatibility
+		Versions: []core.Version{version},
+		Current:  version.Hash,
 	}
 
-	// Store object
-	id, err := r.objects.Store(obj)
+	// Store node
+	id, err := r.objects.Store(node)
 	if err != nil {
-		return "", fmt.Errorf("storing object: %w", err)
+		return "", fmt.Errorf("storing node: %w", err)
 	}
 
-	// Store initial version
-	if err := r.versions.Store(id, 1, chunkHashes); err != nil {
-		return "", fmt.Errorf("storing version: %w", err)
-	}
+	node.ID = id
 
 	return id, nil
 }
 
-// Get retrieves an object by ID
-func (r *Repository) Get(id string) (core.Object, error) {
-	obj, err := r.objects.Load(id)
-	if err != nil {
-		return obj, fmt.Errorf("loading object: %w", err)
-	}
-
-	// If object has chunks but no content, reassemble it
-	if len(obj.Chunks) > 0 && len(obj.Content) == 0 {
-		var chunks []Chunk
-		for _, hash := range obj.Chunks {
-			content, err := r.objects.LoadChunk(hash)
-			if err != nil {
-				return obj, fmt.Errorf("loading chunk %s: %w", hash, err)
-			}
-			chunks = append(chunks, Chunk{Hash: hash, Content: content})
-		}
-		obj.Content = ReassembleContent(chunks)
-	}
-
-	return obj, nil
+// GetNode retrieves a node by ID
+func (r *Repository) GetNode(id string) (core.Node, error) {
+	return r.objects.Load(id)
 }
 
-// Update updates an object's content
-func (r *Repository) Update(id string, content []byte) error {
-	// Get current object
-	obj, err := r.objects.Load(id)
+// UpdateNode updates a node's content
+func (r *Repository) UpdateNode(id string, content []byte, meta map[string]any) error {
+	// Get current node
+	node, err := r.GetNode(id)
 	if err != nil {
-		return fmt.Errorf("loading object: %w", err)
+		return fmt.Errorf("getting node: %w", err)
 	}
 
 	// Split new content into chunks
@@ -154,37 +125,45 @@ func (r *Repository) Update(id string, content []byte) error {
 		chunkHashes = append(chunkHashes, chunk.Hash)
 	}
 
-	// Update object
-	obj.Chunks = chunkHashes
-	obj.Content = content // Update raw content for backward compatibility
-	obj.Version++
-	obj.Modified = time.Now()
-
-	// Store updated object
-	if _, err = r.objects.Store(obj); err != nil {
-		return fmt.Errorf("storing updated object: %w", err)
+	// Create new version
+	version := core.Version{
+		Hash:      generateHash(content),
+		Chunks:    chunkHashes,
+		Created:   time.Now(),
+		Available: true,
+		Meta:      make(map[string]any),
 	}
 
-	// Store new version
-	if err := r.versions.Store(id, obj.Version, chunkHashes); err != nil {
-		return fmt.Errorf("storing version: %w", err)
+	// Update node
+	node.Versions = append(node.Versions, version)
+	node.Current = version.Hash
+	node.Modified = time.Now()
+	if meta != nil {
+		node.Meta = meta
+	}
+
+	// Store updated node
+	if _, err = r.objects.Store(node); err != nil {
+		return fmt.Errorf("storing updated node: %w", err)
 	}
 
 	return nil
 }
 
-// Delete removes an object and its chunks
-func (r *Repository) Delete(id string) error {
-	// Get object first to get its chunks
-	obj, err := r.objects.Load(id)
+// DeleteNode removes a node
+func (r *Repository) DeleteNode(id string) error {
+	// Get node first to get its chunks
+	node, err := r.GetNode(id)
 	if err != nil {
-		return fmt.Errorf("loading object: %w", err)
+		return fmt.Errorf("getting node: %w", err)
 	}
 
 	// Delete all chunks
-	for _, hash := range obj.Chunks {
-		if err := r.objects.DeleteChunk(hash); err != nil {
-			return fmt.Errorf("deleting chunk %s: %w", hash, err)
+	for _, version := range node.Versions {
+		for _, hash := range version.Chunks {
+			if err := r.objects.DeleteChunk(hash); err != nil {
+				return fmt.Errorf("deleting chunk %s: %w", hash, err)
+			}
 		}
 	}
 
@@ -198,16 +177,95 @@ func (r *Repository) Delete(id string) error {
 		return fmt.Errorf("deleting links: %w", err)
 	}
 
-	// Delete the object itself
+	// Delete the node itself
 	if err := r.objects.Delete(id); err != nil {
-		return fmt.Errorf("deleting object: %w", err)
+		return fmt.Errorf("deleting node: %w", err)
 	}
 
 	return nil
 }
 
-// Link creates a link between objects
-func (r *Repository) Link(source, target, linkType string, meta map[string]any) error {
+// GetVersion retrieves a specific version
+func (r *Repository) GetVersion(nodeID string, hash string) (core.Version, error) {
+	node, err := r.GetNode(nodeID)
+	if err != nil {
+		return core.Version{}, fmt.Errorf("getting node: %w", err)
+	}
+
+	for _, version := range node.Versions {
+		if version.Hash == hash {
+			return version, nil
+		}
+	}
+
+	return core.Version{}, fmt.Errorf("version not found")
+}
+
+// PruneVersion marks a version's content as unavailable
+func (r *Repository) PruneVersion(nodeID string, hash string) error {
+	node, err := r.GetNode(nodeID)
+	if err != nil {
+		return fmt.Errorf("getting node: %w", err)
+	}
+
+	// Can't prune current version
+	if node.Current == hash {
+		return fmt.Errorf("cannot prune current version")
+	}
+
+	// Find and mark version as unavailable
+	found := false
+	for i := range node.Versions {
+		if node.Versions[i].Hash == hash {
+			node.Versions[i].Available = false
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		return fmt.Errorf("version not found")
+	}
+
+	// Store updated node
+	if _, err = r.objects.Store(node); err != nil {
+		return fmt.Errorf("storing node: %w", err)
+	}
+
+	return nil
+}
+
+// RestoreVersion marks a version's content as available
+func (r *Repository) RestoreVersion(nodeID string, hash string) error {
+	node, err := r.GetNode(nodeID)
+	if err != nil {
+		return fmt.Errorf("getting node: %w", err)
+	}
+
+	// Find version
+	found := false
+	for i := range node.Versions {
+		if node.Versions[i].Hash == hash {
+			node.Versions[i].Available = true
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		return fmt.Errorf("version not found")
+	}
+
+	// Store updated node
+	if _, err = r.objects.Store(node); err != nil {
+		return fmt.Errorf("storing node: %w", err)
+	}
+
+	return nil
+}
+
+// AddLink creates a link between nodes
+func (r *Repository) AddLink(source, target, linkType string, meta map[string]any) error {
 	link := core.Link{
 		Source: source,
 		Target: target,
@@ -217,90 +275,88 @@ func (r *Repository) Link(source, target, linkType string, meta map[string]any) 
 	return r.links.Store(link)
 }
 
-// Unlink removes a link between objects
-func (r *Repository) Unlink(source, target string) error {
+// DeleteLink removes a link
+func (r *Repository) DeleteLink(source, target string) error {
 	return r.links.Delete(source, target)
 }
 
-// GetLinks returns all links for an object
+// GetLinks returns all links for a node
 func (r *Repository) GetLinks(id string) ([]core.Link, error) {
 	return r.links.GetBySource(id), nil
 }
 
-// List returns all object IDs
-func (r *Repository) List() []string {
-	return r.objects.List()
-}
-
-// FindByType returns all objects of a specific type
-func (r *Repository) FindByType(contentType string) []core.Object {
-	var objects []core.Object
-	for _, id := range r.List() {
-		obj, err := r.Get(id)
-		if err != nil {
-			continue
-		}
-		if obj.Type == contentType {
-			objects = append(objects, obj)
-		}
+// GetRoot returns the current root state
+func (r *Repository) GetRoot() (core.Root, error) {
+	nodes := r.List()
+	root := core.Root{
+		Modified: time.Now(),
+		Nodes:    nodes,
 	}
-	return objects
-}
 
-// Search finds objects matching criteria
-func (r *Repository) Search(query map[string]any) []core.Object {
-	var results []core.Object
-	for _, id := range r.List() {
-		obj, err := r.Get(id)
+	// Calculate root hash
+	hasher := sha256.New()
+	for _, id := range nodes {
+		node, err := r.GetNode(id)
 		if err != nil {
 			continue
 		}
-		// Check if object matches query
+		hasher.Write([]byte(node.Current))
+	}
+	root.Hash = hex.EncodeToString(hasher.Sum(nil))
+
+	return root, nil
+}
+
+// UpdateRoot recalculates root hash
+func (r *Repository) UpdateRoot() error {
+	_, err := r.GetRoot() // Just recalculate
+	return err
+}
+
+// Search finds nodes matching criteria
+func (r *Repository) Search(query map[string]any) ([]core.Node, error) {
+	var nodes []core.Node
+	for _, id := range r.List() {
+		node, err := r.GetNode(id)
+		if err != nil {
+			continue
+		}
+
+		// Check if node matches query
 		matches := true
 		for k, v := range query {
-			if objVal, ok := obj.Meta[k]; !ok {
+			if nodeVal, ok := node.Meta[k]; !ok {
 				matches = false
 				break
-			} else {
-				// Handle different types of values
-				switch val := v.(type) {
-				case []string:
-					// For string arrays, check if any value matches
-					if objArr, ok := objVal.([]string); ok {
-						found := false
-						for _, s := range val {
-							for _, os := range objArr {
-								if s == os {
-									found = true
-									break
-								}
-							}
-							if found {
-								break
-							}
-						}
-						if !found {
-							matches = false
-							break
-						}
-					} else {
-						matches = false
-						break
-					}
-				default:
-					// For other types, use reflect.DeepEqual
-					if !reflect.DeepEqual(objVal, v) {
-						matches = false
-						break
-					}
-				}
+			} else if !reflect.DeepEqual(nodeVal, v) {
+				matches = false
+				break
 			}
 		}
+
 		if matches {
-			results = append(results, obj)
+			nodes = append(nodes, node)
 		}
 	}
-	return results
+
+	return nodes, nil
+}
+
+// FindByType returns all nodes of a specific type
+func (r *Repository) FindByType(nodeType string) ([]core.Node, error) {
+	var nodes []core.Node
+	for _, id := range r.List() {
+		node, err := r.GetNode(id)
+		if err != nil {
+			continue
+		}
+
+		if node.Type == nodeType {
+			nodes = append(nodes, node)
+		}
+	}
+
+	return nodes, nil
 }
 
 // GetChunk retrieves a chunk by hash
@@ -308,83 +364,13 @@ func (r *Repository) GetChunk(hash string) ([]byte, error) {
 	return r.objects.LoadChunk(hash)
 }
 
-// GetObjectChunks retrieves all chunks for an object
-func (r *Repository) GetObjectChunks(id string) ([][]byte, error) {
-	obj, err := r.objects.Load(id)
-	if err != nil {
-		return nil, fmt.Errorf("loading object: %w", err)
-	}
-
-	var chunks [][]byte
-	for _, hash := range obj.Chunks {
-		content, err := r.objects.LoadChunk(hash)
-		if err != nil {
-			return nil, fmt.Errorf("loading chunk %s: %w", hash, err)
-		}
-		chunks = append(chunks, content)
-	}
-
-	return chunks, nil
+// HasChunk checks if a chunk exists
+func (r *Repository) HasChunk(hash string) bool {
+	_, err := r.objects.LoadChunk(hash)
+	return err == nil
 }
 
-// LinkChunks creates a link between specific chunks
-func (r *Repository) LinkChunks(sourceID, sourceChunk, targetID, targetChunk, linkType string, meta map[string]any) error {
-	// Verify chunks exist
-	if _, err := r.GetChunk(sourceChunk); err != nil {
-		return fmt.Errorf("source chunk not found: %w", err)
-	}
-	if _, err := r.GetChunk(targetChunk); err != nil {
-		return fmt.Errorf("target chunk not found: %w", err)
-	}
-
-	// Create a new link with chunk references
-	link := core.Link{
-		Source:      sourceID,
-		Target:      targetID,
-		Type:        linkType,
-		Meta:        meta,
-		SourceChunk: sourceChunk,
-		TargetChunk: targetChunk,
-	}
-
-	// Store the link
-	return r.links.Store(link)
-}
-
-// GetVersion retrieves a specific version of an object
-func (r *Repository) GetVersion(id string, version int) (core.Object, error) {
-	// Get base object
-	obj, err := r.objects.Load(id)
-	if err != nil {
-		return obj, fmt.Errorf("loading object: %w", err)
-	}
-
-	// Get version chunks
-	chunkHashes, err := r.versions.Load(id, version)
-	if err != nil {
-		return obj, fmt.Errorf("loading version: %w", err)
-	}
-
-	// Load chunks
-	var chunks []Chunk
-	for _, hash := range chunkHashes {
-		content, err := r.objects.LoadChunk(hash)
-		if err != nil {
-			return obj, fmt.Errorf("loading chunk %s: %w", hash, err)
-		}
-		chunks = append(chunks, Chunk{Hash: hash, Content: content})
-	}
-
-	// Update object with version data
-	obj.Version = version
-	obj.Chunks = chunkHashes
-	obj.Content = ReassembleContent(chunks)
-
-	return obj, nil
-}
-
-// ListVersions returns all versions of an object
-func (r *Repository) ListVersions(id string) ([]int, error) {
-	versions := r.versions.List(id)
-	return versions, nil
+// List returns all node IDs
+func (r *Repository) List() []string {
+	return r.objects.List()
 }

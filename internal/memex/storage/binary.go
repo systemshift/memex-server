@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"time"
 
 	"memex/internal/memex/core"
 )
@@ -21,7 +20,6 @@ type BinaryStore struct {
 func NewBinaryStore(rootDir string) (*BinaryStore, error) {
 	// Create required directories
 	dirs := []string{
-		filepath.Join(rootDir, "objects"),
 		filepath.Join(rootDir, "chunks"),
 		filepath.Join(rootDir, "meta"),
 	}
@@ -35,22 +33,6 @@ func NewBinaryStore(rootDir string) (*BinaryStore, error) {
 	return &BinaryStore{rootDir: rootDir}, nil
 }
 
-// generateID creates a unique ID for content
-func (s *BinaryStore) generateID(content []byte) string {
-	hash := sha256.Sum256(content)
-	return hex.EncodeToString(hash[:])[:8] // Use first 8 chars for shorter IDs
-}
-
-// getObjectPath returns the path for an object ID
-func (s *BinaryStore) getObjectPath(id string) string {
-	// Use first 2 chars as directory name
-	dir := filepath.Join(s.rootDir, "objects", id[:2])
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return ""
-	}
-	return filepath.Join(dir, id[2:])
-}
-
 // getChunkPath returns the path for a chunk hash
 func (s *BinaryStore) getChunkPath(hash string) string {
 	// Use first 2 chars as directory name
@@ -61,122 +43,51 @@ func (s *BinaryStore) getChunkPath(hash string) string {
 	return filepath.Join(dir, hash[2:])
 }
 
-// Store stores an object and returns its ID
-func (s *BinaryStore) Store(obj core.Object) (string, error) {
+// Store stores a node and returns its ID
+func (s *BinaryStore) Store(node core.Node) (string, error) {
 	// Generate ID if not provided
-	if obj.ID == "" {
-		if len(obj.Content) > 0 {
-			obj.ID = s.generateID(obj.Content)
-		} else if len(obj.Chunks) > 0 {
-			// Generate ID from concatenated chunk hashes
+	if node.ID == "" {
+		if len(node.Versions) > 0 && len(node.Versions[0].Chunks) > 0 {
+			// Generate ID from first version's chunks
 			hasher := sha256.New()
-			for _, chunk := range obj.Chunks {
+			for _, chunk := range node.Versions[0].Chunks {
 				hasher.Write([]byte(chunk))
 			}
-			obj.ID = hex.EncodeToString(hasher.Sum(nil))[:8]
+			node.ID = hex.EncodeToString(hasher.Sum(nil)[:8])
 		} else {
-			return "", fmt.Errorf("object must have either Content or Chunks")
-		}
-	}
-
-	// Write content if present
-	if len(obj.Content) > 0 {
-		objPath := s.getObjectPath(obj.ID)
-		if err := os.WriteFile(objPath, obj.Content, 0644); err != nil {
-			return "", fmt.Errorf("writing object content: %w", err)
+			return "", fmt.Errorf("node must have at least one version with chunks")
 		}
 	}
 
 	// Store metadata
-	metaPath := filepath.Join(s.rootDir, "meta", obj.ID+".json")
-	meta := map[string]interface{}{
-		"id":       obj.ID,
-		"type":     obj.Type,
-		"version":  obj.Version,
-		"created":  obj.Created.Format(time.RFC3339),
-		"modified": obj.Modified.Format(time.RFC3339),
-		"meta":     obj.Meta,
-		"chunks":   obj.Chunks,
-	}
-
-	metaData, err := json.MarshalIndent(meta, "", "  ")
+	metaPath := filepath.Join(s.rootDir, "meta", node.ID+".json")
+	data, err := json.MarshalIndent(node, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("marshaling metadata: %w", err)
 	}
 
-	if err := os.WriteFile(metaPath, metaData, 0644); err != nil {
+	if err := os.WriteFile(metaPath, data, 0644); err != nil {
 		return "", fmt.Errorf("writing metadata: %w", err)
 	}
 
-	return obj.ID, nil
+	return node.ID, nil
 }
 
-// Load retrieves an object by ID
-func (s *BinaryStore) Load(id string) (core.Object, error) {
-	var obj core.Object
-	obj.ID = id
-
-	// Read metadata first
+// Load retrieves a node by ID
+func (s *BinaryStore) Load(id string) (core.Node, error) {
+	// Read metadata
 	metaPath := filepath.Join(s.rootDir, "meta", id+".json")
-	metaData, err := os.ReadFile(metaPath)
+	data, err := os.ReadFile(metaPath)
 	if err != nil {
-		return obj, fmt.Errorf("reading metadata: %w", err)
+		return core.Node{}, fmt.Errorf("reading metadata: %w", err)
 	}
 
-	var meta map[string]interface{}
-	if err := json.Unmarshal(metaData, &meta); err != nil {
-		return obj, fmt.Errorf("unmarshaling metadata: %w", err)
+	var node core.Node
+	if err := json.Unmarshal(data, &node); err != nil {
+		return core.Node{}, fmt.Errorf("parsing metadata: %w", err)
 	}
 
-	obj.Type = meta["type"].(string)
-	obj.Version = int(meta["version"].(float64))
-
-	// Parse timestamps
-	if created, ok := meta["created"].(string); ok {
-		obj.Created, _ = time.Parse(time.RFC3339, created)
-	}
-	if modified, ok := meta["modified"].(string); ok {
-		obj.Modified, _ = time.Parse(time.RFC3339, modified)
-	}
-
-	// Handle metadata
-	if metaMap, ok := meta["meta"].(map[string]interface{}); ok {
-		obj.Meta = make(map[string]any)
-		for k, v := range metaMap {
-			// Convert interface{} arrays to []string if needed
-			if arr, ok := v.([]interface{}); ok {
-				strArr := make([]string, len(arr))
-				for i, item := range arr {
-					strArr[i] = fmt.Sprint(item)
-				}
-				obj.Meta[k] = strArr
-			} else {
-				obj.Meta[k] = v
-			}
-		}
-	} else {
-		obj.Meta = make(map[string]any)
-	}
-
-	// Handle chunks
-	if chunks, ok := meta["chunks"].([]interface{}); ok {
-		obj.Chunks = make([]string, len(chunks))
-		for i, chunk := range chunks {
-			obj.Chunks[i] = chunk.(string)
-		}
-	}
-
-	// Read content if no chunks are present
-	if len(obj.Chunks) == 0 {
-		objPath := s.getObjectPath(id)
-		content, err := os.ReadFile(objPath)
-		if err != nil {
-			return obj, fmt.Errorf("reading object content: %w", err)
-		}
-		obj.Content = content
-	}
-
-	return obj, nil
+	return node, nil
 }
 
 // StoreChunk stores a content chunk
@@ -224,18 +135,8 @@ func (s *BinaryStore) DeleteChunk(hash string) error {
 	return nil
 }
 
-// Delete removes an object
+// Delete removes a node
 func (s *BinaryStore) Delete(id string) error {
-	// Remove content
-	objPath := s.getObjectPath(id)
-	if objPath != "" {
-		if err := os.Remove(objPath); err != nil {
-			if !os.IsNotExist(err) {
-				return fmt.Errorf("removing object content: %w", err)
-			}
-		}
-	}
-
 	// Remove metadata
 	metaPath := filepath.Join(s.rootDir, "meta", id+".json")
 	if err := os.Remove(metaPath); err != nil {
@@ -245,7 +146,7 @@ func (s *BinaryStore) Delete(id string) error {
 	return nil
 }
 
-// List returns all object IDs
+// List returns all node IDs
 func (s *BinaryStore) List() []string {
 	var ids []string
 	metaDir := filepath.Join(s.rootDir, "meta")

@@ -4,124 +4,80 @@ import (
 	"time"
 )
 
-// Object represents stored content with metadata
-type Object struct {
-	ID       string         // Unique identifier
-	Content  []byte         // Raw content (for backward compatibility)
-	Chunks   []string       // List of chunk hashes that make up the content
-	Type     string         // Content type
-	Version  int            // Version number
+// Node represents a node in the DAG
+type Node struct {
+	ID       string         // Stable identifier
+	Type     string         // Type of node (file, directory, etc)
+	Meta     map[string]any // Metadata
 	Created  time.Time      // Creation timestamp
-	Modified time.Time      // Last modified
-	Meta     map[string]any // Flexible metadata
+	Modified time.Time      // Last modified timestamp
+	Versions []Version      // Version history
+	Links    []Link         // Links to other nodes
+	Current  string         // Hash of current content version
 }
 
-// Link represents relationship between objects
+// Version represents a specific version of content
+type Version struct {
+	Hash      string         // Content hash
+	Chunks    []string       // Chunk hashes that make up this version
+	Created   time.Time      // When this version was created
+	Meta      map[string]any // Version-specific metadata
+	Available bool           // Whether content is available or pruned
+}
+
+// Link represents a relationship between nodes
 type Link struct {
-	Source string         // Source object ID
-	Target string         // Target object ID
-	Type   string         // Relationship type
-	Meta   map[string]any // Link metadata
-	// New fields for chunk-level linking
-	SourceChunk string // Optional: specific chunk in source object
-	TargetChunk string // Optional: specific chunk in target object
+	Source      string         // Source node ID
+	Target      string         // Target node ID
+	Type        string         // Type of relationship
+	Meta        map[string]any // Link metadata
+	SourceChunk string         // Optional: specific chunk in source
+	TargetChunk string         // Optional: specific chunk in target
 }
 
-// Repository manages objects and their relationships
+// Root represents the root of the DAG
+type Root struct {
+	Hash     string    // Hash of current state
+	Modified time.Time // Last modified timestamp
+	Nodes    []string  // List of node IDs
+}
+
+// Repository defines the interface for content storage
 type Repository interface {
-	// Repository Operations
-	Init(path string) error
-	Open(path string) error
-	Close() error
+	// Node operations
+	AddNode(content []byte, nodeType string, meta map[string]any) (string, error)
+	GetNode(id string) (Node, error)
+	UpdateNode(id string, content []byte, meta map[string]any) error
+	DeleteNode(id string) error
 
-	// Object Operations
-	Add(content []byte, contentType string, meta map[string]any) (string, error)
-	Get(id string) (Object, error)
-	Update(id string, content []byte) error
-	Delete(id string) error
+	// Version operations
+	GetVersion(nodeID string, hash string) (Version, error)
+	PruneVersion(nodeID string, hash string) error
+	RestoreVersion(nodeID string, hash string) error
 
-	// Link Operations
-	Link(source, target string, linkType string, meta map[string]any) error
-	Unlink(source, target string) error
-	GetLinks(id string) ([]Link, error)
+	// Link operations
+	AddLink(source, target, linkType string, meta map[string]any) error
+	DeleteLink(source, target string) error
+	GetLinks(nodeID string) ([]Link, error)
 
-	// Version Operations
-	GetVersion(id string, version int) (Object, error)
-	ListVersions(id string) ([]int, error)
+	// Root operations
+	GetRoot() (Root, error)
+	UpdateRoot() error // Recalculates root hash
 
-	// Query Operations
-	List() []string
-	FindByType(contentType string) []Object
-	Search(query map[string]any) []Object
+	// Search operations
+	Search(query map[string]any) ([]Node, error)
+	FindByType(nodeType string) ([]Node, error)
 
-	// Chunk Operations
+	// Chunk operations
 	GetChunk(hash string) ([]byte, error)
-	GetObjectChunks(id string) ([][]byte, error)
-	LinkChunks(sourceID, sourceChunk, targetID, targetChunk string, linkType string, meta map[string]any) error
+	HasChunk(hash string) bool
 }
 
-// ObjectStore handles the storage and retrieval of objects
-type ObjectStore interface {
-	// Store stores an object and returns its ID
-	Store(obj Object) (string, error)
-
-	// Load retrieves an object by ID
-	Load(id string) (Object, error)
-
-	// Delete removes an object
-	Delete(id string) error
-
-	// List returns all object IDs
-	List() []string
-
-	// StoreChunk stores a content chunk
-	StoreChunk(hash string, content []byte) error
-
-	// LoadChunk retrieves a content chunk
-	LoadChunk(hash string) ([]byte, error)
-}
-
-// LinkStore handles the storage and retrieval of links
-type LinkStore interface {
-	// Store stores a link
-	Store(link Link) error
-
-	// Delete removes a link
-	Delete(source, target string) error
-
-	// GetBySource returns all links from a source
-	GetBySource(source string) []Link
-
-	// GetByTarget returns all links to a target
-	GetByTarget(target string) []Link
-
-	// GetByChunk returns all links involving a specific chunk
-	GetByChunk(hash string) []Link
-}
-
-// VersionStore handles version tracking
-type VersionStore interface {
-	// Store stores a version of an object
-	Store(id string, version int, chunks []string) error
-
-	// Load retrieves a specific version
-	Load(id string, version int) ([]string, error)
-
-	// List returns all versions of an object
-	List(id string) []int
-}
-
-// MetaStore handles metadata operations
-type MetaStore interface {
-	// Store stores metadata for an object
-	Store(id string, meta map[string]any) error
-
-	// Load retrieves metadata for an object
-	Load(id string) (map[string]any, error)
-
-	// Update updates metadata for an object
-	Update(id string, meta map[string]any) error
-
-	// Search finds objects matching metadata criteria
-	Search(query map[string]any) []string
+// ChunkStore defines the interface for chunk storage
+type ChunkStore interface {
+	Store(content []byte) (string, error) // Returns chunk hash
+	Load(hash string) ([]byte, error)     // Loads chunk content
+	Delete(hash string) error             // Deletes a chunk
+	Has(hash string) bool                 // Checks if chunk exists
+	Dedupe() error                        // Deduplicates chunks
 }

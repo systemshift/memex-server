@@ -37,7 +37,7 @@ func AddCommand(path string) error {
 	}
 
 	// Add to repository
-	id, err := repo.Add(content, "file", meta)
+	id, err := repo.AddNode(content, "file", meta)
 	if err != nil {
 		return fmt.Errorf("adding to repository: %w", err)
 	}
@@ -49,20 +49,20 @@ func AddCommand(path string) error {
 // DeleteCommand deletes an object from the repository
 func DeleteCommand(id string) error {
 	// Get object first to verify it exists and get its name
-	obj, err := repo.Get(id)
+	node, err := repo.GetNode(id)
 	if err != nil {
 		return fmt.Errorf("error: %w", err)
 	}
 
 	// Delete the object
-	if err := repo.Delete(id); err != nil {
+	if err := repo.DeleteNode(id); err != nil {
 		return fmt.Errorf("error deleting object: %w", err)
 	}
 
 	name := id[:8]
-	if filename, ok := obj.Meta["filename"].(string); ok {
+	if filename, ok := node.Meta["filename"].(string); ok {
 		name = filename
-	} else if title, ok := obj.Meta["title"].(string); ok {
+	} else if title, ok := node.Meta["title"].(string); ok {
 		name = title
 	}
 
@@ -77,7 +77,7 @@ func LinkCommand(source, target, linkType string, note string) error {
 		meta["note"] = note
 	}
 
-	err := repo.Link(source, target, linkType, meta)
+	err := repo.AddLink(source, target, linkType, meta)
 	if err != nil {
 		return fmt.Errorf("error creating link: %w", err)
 	}
@@ -92,29 +92,37 @@ func StatusCommand() error {
 	fmt.Println()
 
 	// List notes
-	notes := repo.FindByType("note")
+	notes, err := repo.FindByType("note")
+	if err != nil {
+		return fmt.Errorf("finding notes: %w", err)
+	}
+
 	if len(notes) > 0 {
 		fmt.Printf("Notes (%d):\n", len(notes))
-		for _, obj := range notes {
+		for _, node := range notes {
 			title := "Untitled"
-			if t, ok := obj.Meta["title"].(string); ok {
+			if t, ok := node.Meta["title"].(string); ok {
 				title = t
 			}
-			fmt.Printf("  %s - %s (%s)\n", obj.ID[:8], title, obj.Created.UTC().Format("02 Jan 06 15:04 MST"))
+			fmt.Printf("  %s - %s (%s)\n", node.ID[:8], title, node.Created.UTC().Format("02 Jan 06 15:04 MST"))
 		}
 		fmt.Println()
 	}
 
 	// List files
-	files := repo.FindByType("file")
+	files, err := repo.FindByType("file")
+	if err != nil {
+		return fmt.Errorf("finding files: %w", err)
+	}
+
 	if len(files) > 0 {
 		fmt.Printf("Files (%d):\n", len(files))
-		for _, obj := range files {
+		for _, node := range files {
 			filename := "unknown"
-			if f, ok := obj.Meta["filename"].(string); ok {
+			if f, ok := node.Meta["filename"].(string); ok {
 				filename = f
 			}
-			fmt.Printf("  %s - %s (%s)\n", obj.ID[:8], filename, obj.Created.UTC().Format("02 Jan 06 15:04 MST"))
+			fmt.Printf("  %s - %s (%s)\n", node.ID[:8], filename, node.Created.UTC().Format("02 Jan 06 15:04 MST"))
 		}
 		fmt.Println()
 	}

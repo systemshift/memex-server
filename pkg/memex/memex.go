@@ -9,13 +9,13 @@ import (
 
 // Memex represents a content-addressable storage system
 type Memex struct {
-	repo *storage.Repository
+	repo *storage.DAGStore
 }
 
 // Open creates or opens a Memex instance at the specified path
 func Open(path string) (*Memex, error) {
 	repoPath := filepath.Join(path, ".memex")
-	repo, err := storage.NewRepository(repoPath)
+	repo, err := storage.NewDAGStore(repoPath)
 	if err != nil {
 		return nil, fmt.Errorf("initializing repository: %w", err)
 	}
@@ -25,36 +25,58 @@ func Open(path string) (*Memex, error) {
 
 // Add adds new content to the repository
 func (m *Memex) Add(content []byte, contentType string, meta map[string]any) (string, error) {
-	return m.repo.Add(content, contentType, meta)
+	id, err := m.repo.AddNode(content, contentType, meta)
+	if err != nil {
+		return "", err
+	}
+	return id, nil
 }
 
 // Get retrieves an object by ID
 func (m *Memex) Get(id string) (Object, error) {
-	obj, err := m.repo.Get(id)
+	node, err := m.repo.GetNode(id)
 	if err != nil {
 		return Object{}, err
 	}
-	return convertObject(obj), nil
+
+	// Get current version content
+	version, err := m.repo.GetVersion(id, node.Current)
+	if err != nil {
+		return Object{}, err
+	}
+
+	// Reconstruct content from chunks
+	var content []byte
+	for _, hash := range version.Chunks {
+		chunk, err := m.repo.GetChunk(hash)
+		if err != nil {
+			return Object{}, err
+		}
+		content = append(content, chunk...)
+	}
+
+	obj := convertNode(node)
+	obj.Content = content
+	return obj, nil
 }
 
-// Delete removes an object and its chunks
+// Delete removes an object
 func (m *Memex) Delete(id string) error {
-	return m.repo.Delete(id)
+	return m.repo.DeleteNode(id)
 }
 
 // Update updates an object's content
 func (m *Memex) Update(id string, content []byte) error {
-	return m.repo.Update(id, content)
+	node, err := m.repo.GetNode(id)
+	if err != nil {
+		return err
+	}
+	return m.repo.UpdateNode(id, content, node.Meta)
 }
 
 // Link creates a link between objects
 func (m *Memex) Link(source, target, linkType string, meta map[string]any) error {
-	return m.repo.Link(source, target, linkType, meta)
-}
-
-// LinkChunks creates a link between specific chunks
-func (m *Memex) LinkChunks(sourceID, sourceChunk, targetID, targetChunk, linkType string, meta map[string]any) error {
-	return m.repo.LinkChunks(sourceID, sourceChunk, targetID, targetChunk, linkType, meta)
+	return m.repo.AddLink(source, target, linkType, meta)
 }
 
 // GetLinks returns all links for an object
@@ -72,49 +94,39 @@ func (m *Memex) GetLinks(id string) ([]Link, error) {
 
 // List returns all object IDs
 func (m *Memex) List() []string {
-	return m.repo.List()
+	root, err := m.repo.GetRoot()
+	if err != nil {
+		return []string{}
+	}
+	return root.Nodes
 }
 
 // FindByType returns all objects of a specific type
 func (m *Memex) FindByType(contentType string) []Object {
-	coreObjs := m.repo.FindByType(contentType)
+	nodes, err := m.repo.FindByType(contentType)
+	if err != nil {
+		return []Object{}
+	}
+
 	var objects []Object
-	for _, obj := range coreObjs {
-		objects = append(objects, convertObject(obj))
+	for _, node := range nodes {
+		obj := convertNode(node)
+		objects = append(objects, obj)
 	}
 	return objects
 }
 
 // Search finds objects matching criteria
 func (m *Memex) Search(query map[string]any) []Object {
-	coreObjs := m.repo.Search(query)
+	nodes, err := m.repo.Search(query)
+	if err != nil {
+		return []Object{}
+	}
+
 	var objects []Object
-	for _, obj := range coreObjs {
-		objects = append(objects, convertObject(obj))
+	for _, node := range nodes {
+		obj := convertNode(node)
+		objects = append(objects, obj)
 	}
 	return objects
-}
-
-// GetChunk retrieves a chunk by hash
-func (m *Memex) GetChunk(hash string) ([]byte, error) {
-	return m.repo.GetChunk(hash)
-}
-
-// GetObjectChunks retrieves all chunks for an object
-func (m *Memex) GetObjectChunks(id string) ([][]byte, error) {
-	return m.repo.GetObjectChunks(id)
-}
-
-// GetVersion retrieves a specific version of an object
-func (m *Memex) GetVersion(id string, version int) (Object, error) {
-	obj, err := m.repo.GetVersion(id, version)
-	if err != nil {
-		return Object{}, err
-	}
-	return convertObject(obj), nil
-}
-
-// ListVersions returns all versions of an object
-func (m *Memex) ListVersions(id string) ([]int, error) {
-	return m.repo.ListVersions(id)
 }

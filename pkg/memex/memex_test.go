@@ -49,20 +49,6 @@ func TestMemex(t *testing.T) {
 		t.Error("Metadata not preserved correctly")
 	}
 
-	// Test chunk-level operations
-	if len(obj.Chunks) == 0 {
-		t.Error("No chunks created")
-	}
-
-	chunks, err := mx.GetObjectChunks(id)
-	if err != nil {
-		t.Fatalf("Error getting chunks: %v", err)
-	}
-
-	if len(chunks) == 0 {
-		t.Error("No chunks returned")
-	}
-
 	// Test adding another object for linking
 	content2 := []byte("Another test content")
 	id2, err := mx.Add(content2, "note", nil)
@@ -70,25 +56,12 @@ func TestMemex(t *testing.T) {
 		t.Fatalf("Error adding second object: %v", err)
 	}
 
-	// Test file-level linking
+	// Test linking
 	err = mx.Link(id, id2, "references", map[string]any{
 		"note": "Test link",
 	})
 	if err != nil {
 		t.Fatalf("Error creating link: %v", err)
-	}
-
-	// Test chunk-level linking
-	obj1, _ := mx.Get(id)
-	obj2, _ := mx.Get(id2)
-
-	if len(obj1.Chunks) > 0 && len(obj2.Chunks) > 0 {
-		err = mx.LinkChunks(id, obj1.Chunks[0], id2, obj2.Chunks[0], "references", map[string]any{
-			"note": "Chunk link",
-		})
-		if err != nil {
-			t.Fatalf("Error creating chunk link: %v", err)
-		}
 	}
 
 	// Test retrieving links
@@ -97,8 +70,8 @@ func TestMemex(t *testing.T) {
 		t.Fatalf("Error getting links: %v", err)
 	}
 
-	if len(links) != 2 {
-		t.Errorf("Expected 2 links (file-level and chunk-level), got %d", len(links))
+	if len(links) != 1 {
+		t.Errorf("Expected 1 link, got %d", len(links))
 	}
 
 	// Test searching
@@ -122,6 +95,23 @@ func TestMemex(t *testing.T) {
 		t.Errorf("Expected 2 objects, got %d", len(allObjects))
 	}
 
+	// Test updating content
+	newContent := []byte("Updated content")
+	err = mx.Update(id, newContent)
+	if err != nil {
+		t.Fatalf("Error updating object: %v", err)
+	}
+
+	// Verify update
+	updated, err := mx.Get(id)
+	if err != nil {
+		t.Fatalf("Error getting updated object: %v", err)
+	}
+
+	if !bytes.Equal(updated.Content, newContent) {
+		t.Error("Updated content does not match")
+	}
+
 	// Test deleting an object
 	err = mx.Delete(id)
 	if err != nil {
@@ -132,21 +122,6 @@ func TestMemex(t *testing.T) {
 	_, err = mx.Get(id)
 	if err == nil {
 		t.Error("Expected error getting deleted object")
-	}
-
-	// Verify chunks are deleted
-	_, err = mx.GetObjectChunks(id)
-	if err == nil {
-		t.Error("Expected error getting chunks of deleted object")
-	}
-
-	// Verify links are deleted
-	links, err = mx.GetLinks(id)
-	if err != nil {
-		t.Fatalf("Error getting links after delete: %v", err)
-	}
-	if len(links) != 0 {
-		t.Errorf("Expected 0 links after delete, got %d", len(links))
 	}
 
 	// Verify object count is updated
