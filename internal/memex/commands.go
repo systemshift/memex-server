@@ -13,16 +13,18 @@ var repo *storage.DAGStore
 
 // InitCommand initializes a new repository
 func InitCommand(path string) error {
-	// Always use ~/.memex for repository
-	homeDir, err := os.UserHomeDir()
+	var err error
+	repo, err = storage.OpenRepository(path)
 	if err != nil {
-		return fmt.Errorf("getting home directory: %w", err)
-	}
-	repoPath := filepath.Join(homeDir, ".memex")
-
-	repo, err = storage.NewDAGStore(repoPath)
-	if err != nil {
-		return fmt.Errorf("initializing repository: %w", err)
+		// If repository doesn't exist, create it
+		name := filepath.Base(path)
+		if filepath.Ext(name) == ".mx" {
+			name = name[:len(name)-3]
+		}
+		repo, err = storage.CreateRepository(path, name)
+		if err != nil {
+			return fmt.Errorf("creating repository: %w", err)
+		}
 	}
 	return nil
 }
@@ -88,6 +90,59 @@ func LinkCommand(source, target, linkType string, note string) error {
 	}
 
 	fmt.Printf("Created %s link from %s to %s\n", linkType, source[:8], target[:8])
+	return nil
+}
+
+// LinksCommand shows links for an object
+func LinksCommand(id string) error {
+	// Get object first to verify it exists and get its name
+	node, err := repo.GetNode(id)
+	if err != nil {
+		return fmt.Errorf("error: %w", err)
+	}
+
+	// Get links
+	links, err := repo.GetLinks(id)
+	if err != nil {
+		return fmt.Errorf("error getting links: %w", err)
+	}
+
+	name := id[:8]
+	if filename, ok := node.Meta["filename"].(string); ok {
+		name = filename
+	} else if title, ok := node.Meta["title"].(string); ok {
+		name = title
+	}
+
+	fmt.Printf("Links for %s (ID: %s):\n\n", name, id[:8])
+
+	if len(links) == 0 {
+		fmt.Println("No links found")
+		return nil
+	}
+
+	for _, link := range links {
+		// Get target object name
+		targetNode, err := repo.GetNode(link.Target)
+		if err != nil {
+			continue
+		}
+
+		targetName := link.Target[:8]
+		if filename, ok := targetNode.Meta["filename"].(string); ok {
+			targetName = filename
+		} else if title, ok := targetNode.Meta["title"].(string); ok {
+			targetName = title
+		}
+
+		fmt.Printf("Type: %s\n", link.Type)
+		fmt.Printf("Target: %s (ID: %s)\n", targetName, link.Target[:8])
+		if note, ok := link.Meta["note"].(string); ok && note != "" {
+			fmt.Printf("Note: %s\n", note)
+		}
+		fmt.Println()
+	}
+
 	return nil
 }
 

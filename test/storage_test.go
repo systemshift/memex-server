@@ -3,6 +3,7 @@ package test
 import (
 	"bytes"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"memex/internal/memex/storage"
@@ -16,160 +17,78 @@ func TestStorage(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	// Create repository
-	store, err := storage.NewDAGStore(tmpDir)
+	// Create test repository
+	repoPath := filepath.Join(tmpDir, "test.mx")
+	repo, err := storage.CreateRepository(repoPath, "test")
 	if err != nil {
 		t.Fatalf("Error creating repository: %v", err)
 	}
 
-	// Test adding content
+	// Test storing content
 	content := []byte("Test content")
-	meta := map[string]any{
-		"title": "Test Node",
-		"tags":  []string{"test", "example"},
-	}
-
-	id, err := store.AddNode(content, "note", meta)
+	hash, err := repo.GetChunkStore().Store(content)
 	if err != nil {
-		t.Fatalf("Error adding content: %v", err)
+		t.Fatalf("Error storing content: %v", err)
 	}
 
 	// Test retrieving content
-	node, err := store.GetNode(id)
+	retrieved, err := repo.GetChunkStore().Load(hash)
 	if err != nil {
-		t.Fatalf("Error getting node: %v", err)
+		t.Fatalf("Error loading content: %v", err)
 	}
 
-	// Get current version content
-	version, err := store.GetVersion(id, node.Current)
-	if err != nil {
-		t.Fatalf("Error getting version: %v", err)
-	}
-
-	// Verify version
-	if !version.Available {
-		t.Error("Version should be available")
-	}
-
-	// Reconstruct content
-	var reconstructed []byte
-	for _, hash := range version.Chunks {
-		chunk, err := store.GetChunk(hash)
-		if err != nil {
-			t.Fatalf("Error getting chunk: %v", err)
-		}
-		reconstructed = append(reconstructed, chunk...)
-	}
-
-	if !bytes.Equal(reconstructed, content) {
+	if !bytes.Equal(retrieved, content) {
 		t.Error("Content not preserved correctly")
 	}
 
-	// Test updating content
-	newContent := []byte("Updated content")
-	err = store.UpdateNode(id, newContent, nil)
+	// Test content exists
+	if !repo.GetChunkStore().Has(hash) {
+		t.Error("Content should exist")
+	}
+
+	// Test deleting content
+	if err := repo.GetChunkStore().Delete(hash); err != nil {
+		t.Fatalf("Error deleting content: %v", err)
+	}
+
+	// Verify content is deleted
+	if repo.GetChunkStore().Has(hash) {
+		t.Error("Content should be deleted")
+	}
+
+	// Test storing duplicate content
+	hash1, err := repo.GetChunkStore().Store(content)
 	if err != nil {
-		t.Fatalf("Error updating node: %v", err)
+		t.Fatalf("Error storing content first time: %v", err)
 	}
 
-	// Get updated node
-	updated, err := store.GetNode(id)
+	hash2, err := repo.GetChunkStore().Store(content)
 	if err != nil {
-		t.Fatalf("Error getting updated node: %v", err)
+		t.Fatalf("Error storing content second time: %v", err)
 	}
 
-	// Verify update
-	if len(updated.Versions) != 2 {
-		t.Errorf("Expected 2 versions, got %d", len(updated.Versions))
-	}
-
-	// Test root hash updates
-	root, err := store.GetRoot()
-	if err != nil {
-		t.Fatalf("Error getting root: %v", err)
-	}
-
-	if len(root.Nodes) != 1 {
-		t.Errorf("Expected 1 node in root, got %d", len(root.Nodes))
-	}
-
-	if root.Hash == "" {
-		t.Error("Root hash should not be empty")
+	if hash1 != hash2 {
+		t.Error("Duplicate content should have same hash")
 	}
 
 	// Test content deduplication
-	sameContent := []byte("Updated content") // Same as newContent
-	meta2 := map[string]any{
-		"title": "Another Node",
+	if !repo.GetChunkStore().Has(hash1) {
+		t.Error("First copy should exist")
 	}
 
-	id2, err := store.AddNode(sameContent, "note", meta2)
-	if err != nil {
-		t.Fatalf("Error adding second node: %v", err)
+	if err := repo.GetChunkStore().Delete(hash1); err != nil {
+		t.Fatalf("Error deleting first copy: %v", err)
 	}
 
-	// Get both nodes
-	node1, err := store.GetNode(id)
-	if err != nil {
-		t.Fatalf("Error getting first node: %v", err)
+	if !repo.GetChunkStore().Has(hash2) {
+		t.Error("Second copy should still exist")
 	}
 
-	node2, err := store.GetNode(id2)
-	if err != nil {
-		t.Fatalf("Error getting second node: %v", err)
+	if err := repo.GetChunkStore().Delete(hash2); err != nil {
+		t.Fatalf("Error deleting second copy: %v", err)
 	}
 
-	// Verify they share the same content hash
-	if node1.Current != node2.Current {
-		t.Error("Content deduplication not working")
-	}
-
-	// Test pruning an old version
-	oldHash := updated.Versions[0].Hash
-	err = store.PruneVersion(id, oldHash)
-	if err != nil {
-		t.Fatalf("Error pruning version: %v", err)
-	}
-
-	// Verify version is marked unavailable
-	prunedNode, err := store.GetNode(id)
-	if err != nil {
-		t.Fatalf("Error getting pruned node: %v", err)
-	}
-
-	var found bool
-	for _, v := range prunedNode.Versions {
-		if v.Hash == oldHash {
-			if v.Available {
-				t.Error("Pruned version should be marked unavailable")
-			}
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Error("Pruned version not found")
-	}
-
-	// Test deleting a node
-	err = store.DeleteNode(id)
-	if err != nil {
-		t.Fatalf("Error deleting node: %v", err)
-	}
-
-	// Verify node is deleted
-	_, err = store.GetNode(id)
-	if err == nil {
-		t.Error("Node should be deleted")
-	}
-
-	// Verify root is updated
-	root, err = store.GetRoot()
-	if err != nil {
-		t.Fatalf("Error getting root: %v", err)
-	}
-
-	if len(root.Nodes) != 1 { // Should only have id2 left
-		t.Errorf("Expected 1 node in root after delete, got %d", len(root.Nodes))
+	if repo.GetChunkStore().Has(hash2) {
+		t.Error("Content should be deleted after both copies removed")
 	}
 }

@@ -8,27 +8,61 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"memex/internal/memex/core"
 )
 
+// Metadata contains repository information
+type Metadata struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
+	Created     time.Time      `json:"created"`
+	Modified    time.Time      `json:"modified"`
+	Version     string         `json:"version"`
+	Settings    map[string]any `json:"settings"`
+}
+
 // DAGStore implements the core.Repository interface using a DAG structure
 type DAGStore struct {
-	rootDir    string
+	path       string
+	metadata   Metadata
 	chunkStore core.ChunkStore
 }
 
-// NewDAGStore creates a new DAG-based storage
-func NewDAGStore(rootDir string) (*DAGStore, error) {
-	log.Printf("Creating DAG store in %s", rootDir)
+// GetChunkStore returns the underlying chunk store
+func (s *DAGStore) GetChunkStore() core.ChunkStore {
+	return s.chunkStore
+}
+
+// CreateRepository creates a new repository at the given path
+func CreateRepository(path string, name string) (*DAGStore, error) {
+	// Ensure path ends with .mx
+	if !strings.HasSuffix(path, ".mx") {
+		path += ".mx"
+	}
+
+	// Create metadata
+	metadata := Metadata{
+		Name:     name,
+		Created:  time.Now(),
+		Modified: time.Now(),
+		Version:  "1.0",
+		Settings: make(map[string]any),
+	}
+
+	// Create repository
+	store := &DAGStore{
+		path:     path,
+		metadata: metadata,
+	}
 
 	// Create required directories
 	dirs := []string{
-		filepath.Join(rootDir, "nodes"),  // Node metadata
-		filepath.Join(rootDir, "chunks"), // Content chunks
-		filepath.Join(rootDir, "root"),   // Root state
-		filepath.Join(rootDir, "links"),  // Link metadata
+		filepath.Join(path, "nodes"),  // Node metadata
+		filepath.Join(path, "chunks"), // Content chunks
+		filepath.Join(path, "links"),  // Link metadata
 	}
 
 	for _, dir := range dirs {
@@ -39,19 +73,91 @@ func NewDAGStore(rootDir string) (*DAGStore, error) {
 	}
 
 	// Initialize chunk store
-	chunkStore := NewChunkStore(filepath.Join(rootDir, "chunks"))
+	store.chunkStore = NewChunkStore(filepath.Join(path, "chunks"))
 
-	store := &DAGStore{
-		rootDir:    rootDir,
-		chunkStore: chunkStore,
+	// Save metadata
+	if err := store.saveMetadata(); err != nil {
+		return nil, fmt.Errorf("saving metadata: %w", err)
 	}
 
-	// Initialize root if it doesn't exist
+	// Initialize root state
 	if err := store.initRoot(); err != nil {
 		return nil, fmt.Errorf("initializing root: %w", err)
 	}
 
 	return store, nil
+}
+
+// OpenRepository opens an existing repository
+func OpenRepository(path string) (*DAGStore, error) {
+	// Ensure path ends with .mx
+	if !strings.HasSuffix(path, ".mx") {
+		path += ".mx"
+	}
+
+	// Check if repository exists
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return nil, fmt.Errorf("repository not found: %s", path)
+	}
+
+	// Read metadata
+	data, err := os.ReadFile(filepath.Join(path, "metadata.json"))
+	if err != nil {
+		return nil, fmt.Errorf("reading metadata: %w", err)
+	}
+
+	var metadata Metadata
+	if err := json.Unmarshal(data, &metadata); err != nil {
+		return nil, fmt.Errorf("parsing metadata: %w", err)
+	}
+
+	// Create store
+	store := &DAGStore{
+		path:     path,
+		metadata: metadata,
+	}
+
+	// Initialize chunk store
+	store.chunkStore = NewChunkStore(filepath.Join(path, "chunks"))
+
+	return store, nil
+}
+
+// ListRepositories returns a list of repositories in the given directory
+func ListRepositories(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, fmt.Errorf("reading directory: %w", err)
+	}
+
+	var repos []string
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".mx") {
+			repos = append(repos, entry.Name())
+		}
+	}
+
+	return repos, nil
+}
+
+// saveMetadata saves the repository metadata
+func (s *DAGStore) saveMetadata() error {
+	data, err := json.MarshalIndent(s.metadata, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshaling metadata: %w", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(s.path, "metadata.json"), data, 0644); err != nil {
+		return fmt.Errorf("writing metadata: %w", err)
+	}
+
+	return nil
+}
+
+// updateModified updates the repository's modified time
+func (s *DAGStore) updateModified() error {
+	s.metadata.Modified = time.Now()
+	return s.saveMetadata()
 }
 
 // AddNode creates a new node with content
@@ -110,12 +216,17 @@ func (s *DAGStore) AddNode(content []byte, nodeType string, meta map[string]any)
 		return "", fmt.Errorf("updating root: %w", err)
 	}
 
+	// Update repository modified time
+	if err := s.updateModified(); err != nil {
+		return "", fmt.Errorf("updating modified time: %w", err)
+	}
+
 	return id, nil
 }
 
 // GetNode retrieves a node by ID
 func (s *DAGStore) GetNode(id string) (core.Node, error) {
-	nodePath := filepath.Join(s.rootDir, "nodes", id+".json")
+	nodePath := filepath.Join(s.path, "nodes", id+".json")
 	data, err := os.ReadFile(nodePath)
 	if err != nil {
 		return core.Node{}, fmt.Errorf("reading node file: %w", err)
@@ -176,7 +287,16 @@ func (s *DAGStore) UpdateNode(id string, content []byte, meta map[string]any) er
 	}
 
 	// Update root hash
-	return s.UpdateRoot()
+	if err := s.UpdateRoot(); err != nil {
+		return fmt.Errorf("updating root: %w", err)
+	}
+
+	// Update repository modified time
+	if err := s.updateModified(); err != nil {
+		return fmt.Errorf("updating modified time: %w", err)
+	}
+
+	return nil
 }
 
 // DeleteNode removes a node
@@ -199,13 +319,22 @@ func (s *DAGStore) DeleteNode(id string) error {
 	}
 
 	// Remove node file
-	nodePath := filepath.Join(s.rootDir, "nodes", id+".json")
+	nodePath := filepath.Join(s.path, "nodes", id+".json")
 	if err := os.Remove(nodePath); err != nil {
 		return fmt.Errorf("removing node file: %w", err)
 	}
 
 	// Update root
-	return s.UpdateRoot()
+	if err := s.UpdateRoot(); err != nil {
+		return fmt.Errorf("updating root: %w", err)
+	}
+
+	// Update repository modified time
+	if err := s.updateModified(); err != nil {
+		return fmt.Errorf("updating modified time: %w", err)
+	}
+
+	return nil
 }
 
 // GetVersion retrieves a specific version
@@ -255,6 +384,11 @@ func (s *DAGStore) PruneVersion(nodeID string, hash string) error {
 		return fmt.Errorf("storing node: %w", err)
 	}
 
+	// Update repository modified time
+	if err := s.updateModified(); err != nil {
+		return fmt.Errorf("updating modified time: %w", err)
+	}
+
 	return nil
 }
 
@@ -289,7 +423,7 @@ func (s *DAGStore) storeNode(node core.Node) error {
 	}
 
 	// Write node file
-	nodePath := filepath.Join(s.rootDir, "nodes", node.ID+".json")
+	nodePath := filepath.Join(s.path, "nodes", node.ID+".json")
 	if err := os.WriteFile(nodePath, data, 0644); err != nil {
 		return fmt.Errorf("writing node file: %w", err)
 	}

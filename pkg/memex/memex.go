@@ -2,6 +2,8 @@ package memex
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 
 	"memex/internal/memex/storage"
 )
@@ -13,15 +15,27 @@ type Memex struct {
 
 // Open opens a memex repository at the given path
 func Open(path string) (*Memex, error) {
-	// Create repository
-	repo, err := storage.NewDAGStore(path)
+	// If repository exists, open it
+	if _, err := os.Stat(path); err == nil {
+		repo, err := storage.OpenRepository(path)
+		if err != nil {
+			return nil, fmt.Errorf("opening repository: %w", err)
+		}
+		return &Memex{repo: repo}, nil
+	}
+
+	// Create new repository
+	name := filepath.Base(path)
+	if filepath.Ext(name) == ".mx" {
+		name = name[:len(name)-3]
+	}
+
+	repo, err := storage.CreateRepository(path, name)
 	if err != nil {
 		return nil, fmt.Errorf("creating repository: %w", err)
 	}
 
-	return &Memex{
-		repo: repo,
-	}, nil
+	return &Memex{repo: repo}, nil
 }
 
 // GetRepository returns the underlying repository
@@ -60,7 +74,26 @@ func (m *Memex) Get(id string) (Node, error) {
 		content = append(content, chunk...)
 	}
 
-	return fromCoreNode(node, content), nil
+	return Node{
+		ID:       node.ID,
+		Type:     node.Type,
+		Meta:     node.Meta,
+		Content:  content,
+		Created:  node.Created,
+		Modified: node.Modified,
+	}, nil
+}
+
+// Update updates an object's content and metadata
+func (m *Memex) Update(id string, content []byte) error {
+	// Get existing object to preserve metadata
+	node, err := m.repo.GetNode(id)
+	if err != nil {
+		return fmt.Errorf("getting node: %w", err)
+	}
+
+	// Update with new content but keep metadata
+	return m.repo.UpdateNode(id, content, node.Meta)
 }
 
 // Delete removes an object
@@ -79,7 +112,19 @@ func (m *Memex) GetLinks(id string) ([]Link, error) {
 	if err != nil {
 		return nil, err
 	}
-	return fromCoreLinks(links), nil
+
+	// Convert core.Link to Link
+	result := make([]Link, len(links))
+	for i, link := range links {
+		result[i] = Link{
+			Source: link.Source,
+			Target: link.Target,
+			Type:   link.Type,
+			Meta:   link.Meta,
+		}
+	}
+
+	return result, nil
 }
 
 // Search finds objects matching criteria
@@ -88,7 +133,20 @@ func (m *Memex) Search(query map[string]any) ([]Node, error) {
 	if err != nil {
 		return nil, err
 	}
-	return fromCoreNodes(nodes), nil
+
+	// Convert core.Node to Node (without content)
+	result := make([]Node, len(nodes))
+	for i, node := range nodes {
+		result[i] = Node{
+			ID:       node.ID,
+			Type:     node.Type,
+			Meta:     node.Meta,
+			Created:  node.Created,
+			Modified: node.Modified,
+		}
+	}
+
+	return result, nil
 }
 
 // FindByType returns all objects of a specific type
@@ -97,12 +155,20 @@ func (m *Memex) FindByType(nodeType string) ([]Node, error) {
 	if err != nil {
 		return nil, err
 	}
-	return fromCoreNodes(nodes), nil
-}
 
-// Update updates an object's content and metadata
-func (m *Memex) Update(id string, content []byte, meta map[string]any) error {
-	return m.repo.UpdateNode(id, content, meta)
+	// Convert core.Node to Node (without content)
+	result := make([]Node, len(nodes))
+	for i, node := range nodes {
+		result[i] = Node{
+			ID:       node.ID,
+			Type:     node.Type,
+			Meta:     node.Meta,
+			Created:  node.Created,
+			Modified: node.Modified,
+		}
+	}
+
+	return result, nil
 }
 
 // List returns all objects

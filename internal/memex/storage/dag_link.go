@@ -27,19 +27,25 @@ func (s *DAGStore) AddLink(source, target, linkType string, meta map[string]any)
 	}
 
 	// Use full IDs in link filename
-	linkPath := filepath.Join(s.rootDir, "links", fmt.Sprintf("%s-%s-%s.json", source, target, linkType))
+	linkPath := filepath.Join(s.path, "links", fmt.Sprintf("%s-%s-%s.json", source, target, linkType))
 	if err := os.WriteFile(linkPath, data, 0644); err != nil {
 		return fmt.Errorf("writing link file: %w", err)
 	}
 
 	log.Printf("Created link file: %s", linkPath)
+
+	// Update repository modified time
+	if err := s.updateModified(); err != nil {
+		return fmt.Errorf("updating modified time: %w", err)
+	}
+
 	return nil
 }
 
 // GetLinks returns all links for a node
 func (s *DAGStore) GetLinks(nodeID string) ([]core.Link, error) {
 	var links []core.Link
-	linksDir := filepath.Join(s.rootDir, "links")
+	linksDir := filepath.Join(s.path, "links")
 
 	entries, err := os.ReadDir(linksDir)
 	if err != nil {
@@ -62,33 +68,6 @@ func (s *DAGStore) GetLinks(nodeID string) ([]core.Link, error) {
 			}
 
 			if link.Source == nodeID || link.Target == nodeID {
-				// Get source node name
-				sourceName := link.Source[:8]
-				if sourceNode, err := s.GetNode(link.Source); err == nil {
-					if filename, ok := sourceNode.Meta["filename"].(string); ok {
-						sourceName = filename
-					} else if title, ok := sourceNode.Meta["title"].(string); ok {
-						sourceName = title
-					}
-				}
-
-				// Get target node name
-				targetName := link.Target[:8]
-				if targetNode, err := s.GetNode(link.Target); err == nil {
-					if filename, ok := targetNode.Meta["filename"].(string); ok {
-						targetName = filename
-					} else if title, ok := targetNode.Meta["title"].(string); ok {
-						targetName = title
-					}
-				}
-
-				// Add names to metadata
-				if link.Meta == nil {
-					link.Meta = make(map[string]any)
-				}
-				link.Meta["sourceName"] = sourceName
-				link.Meta["targetName"] = targetName
-
 				links = append(links, link)
 			}
 		}
@@ -99,7 +78,7 @@ func (s *DAGStore) GetLinks(nodeID string) ([]core.Link, error) {
 
 // DeleteLink removes a link
 func (s *DAGStore) DeleteLink(source, target string) error {
-	linksDir := filepath.Join(s.rootDir, "links")
+	linksDir := filepath.Join(s.path, "links")
 	entries, err := os.ReadDir(linksDir)
 	if err != nil {
 		return fmt.Errorf("reading links directory: %w", err)
@@ -120,6 +99,11 @@ func (s *DAGStore) DeleteLink(source, target string) error {
 			if link.Source == source && link.Target == target {
 				if err := os.Remove(filepath.Join(linksDir, entry.Name())); err != nil {
 					return fmt.Errorf("removing link file: %w", err)
+				}
+
+				// Update repository modified time
+				if err := s.updateModified(); err != nil {
+					return fmt.Errorf("updating modified time: %w", err)
 				}
 			}
 		}

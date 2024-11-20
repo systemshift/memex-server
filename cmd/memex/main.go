@@ -6,7 +6,6 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"memex/pkg/memex"
@@ -14,7 +13,8 @@ import (
 
 var mx *memex.Memex
 
-func initCommand(path string) error {
+// InitCommand initializes a new repository
+func InitCommand(path string) error {
 	var err error
 	mx, err = memex.Open(path)
 	if err != nil {
@@ -23,7 +23,8 @@ func initCommand(path string) error {
 	return nil
 }
 
-func addCommand(path string) error {
+// AddCommand adds a file to the repository
+func AddCommand(path string) error {
 	// Read file content
 	content, err := os.ReadFile(path)
 	if err != nil {
@@ -46,7 +47,8 @@ func addCommand(path string) error {
 	return nil
 }
 
-func deleteCommand(id string) error {
+// DeleteCommand deletes an object from the repository
+func DeleteCommand(id string) error {
 	// Get object first to verify it exists and get its name
 	obj, err := mx.Get(id)
 	if err != nil {
@@ -69,7 +71,8 @@ func deleteCommand(id string) error {
 	return nil
 }
 
-func linkCommand(source, target, linkType string, note string) error {
+// LinkCommand creates a link between objects
+func LinkCommand(source, target, linkType string, note string) error {
 	meta := map[string]any{}
 	if note != "" {
 		meta["note"] = note
@@ -84,7 +87,8 @@ func linkCommand(source, target, linkType string, note string) error {
 	return nil
 }
 
-func linksCommand(id string) error {
+// LinksCommand shows links for an object
+func LinksCommand(id string) error {
 	// Get object first to verify it exists and get its name
 	obj, err := mx.Get(id)
 	if err != nil {
@@ -136,16 +140,23 @@ func linksCommand(id string) error {
 	return nil
 }
 
-func updateCommand(id string, content []byte) error {
-	// Get existing object to preserve metadata
-	obj, err := mx.Get(id)
+// UpdateCommand updates an object's content
+func UpdateCommand(id string, path string) error {
+	// Read file content
+	content, err := os.ReadFile(path)
 	if err != nil {
-		return fmt.Errorf("error: %w", err)
+		return fmt.Errorf("reading file: %w", err)
 	}
 
-	// Update with new content but keep metadata
-	if err := mx.Update(id, content, obj.Meta); err != nil {
+	// Update object
+	if err := mx.Update(id, content); err != nil {
 		return fmt.Errorf("error updating object: %w", err)
+	}
+
+	// Get updated object to show name
+	obj, err := mx.Get(id)
+	if err != nil {
+		return fmt.Errorf("error getting updated object: %w", err)
 	}
 
 	name := id[:8]
@@ -159,15 +170,11 @@ func updateCommand(id string, content []byte) error {
 	return nil
 }
 
-func searchCommand(query string) error {
+// SearchCommand searches for objects
+func SearchCommand(query string) error {
 	// Parse query into map
 	queryMap := make(map[string]any)
-	parts := strings.Split(query, ":")
-	if len(parts) == 2 {
-		queryMap[parts[0]] = parts[1]
-	} else {
-		queryMap["content"] = query
-	}
+	queryMap["content"] = query
 
 	// Search
 	results, err := mx.Search(queryMap)
@@ -198,7 +205,8 @@ func searchCommand(query string) error {
 	return nil
 }
 
-func statusCommand() error {
+// StatusCommand shows repository status
+func StatusCommand() error {
 	fmt.Println("Memex Status ===")
 	fmt.Println()
 
@@ -267,7 +275,7 @@ func main() {
 		*repoPath = filepath.Join(home, ".memex")
 	}
 
-	if err := initCommand(*repoPath); err != nil {
+	if err := InitCommand(*repoPath); err != nil {
 		log.Fatal(err)
 	}
 
@@ -278,13 +286,13 @@ func main() {
 		if len(args) != 1 {
 			log.Fatal("File path required")
 		}
-		err = addCommand(args[0])
+		err = AddCommand(args[0])
 
 	case "delete":
 		if len(args) != 1 {
 			log.Fatal("ID required")
 		}
-		err = deleteCommand(args[0])
+		err = DeleteCommand(args[0])
 
 	case "link":
 		if len(args) < 3 {
@@ -294,32 +302,28 @@ func main() {
 		if len(args) > 3 {
 			note = args[3]
 		}
-		err = linkCommand(args[0], args[1], args[2], note)
+		err = LinkCommand(args[0], args[1], args[2], note)
 
 	case "links":
 		if len(args) != 1 {
 			log.Fatal("ID required")
 		}
-		err = linksCommand(args[0])
+		err = LinksCommand(args[0])
 
 	case "update":
 		if len(args) != 2 {
 			log.Fatal("ID and file path required")
 		}
-		content, err := os.ReadFile(args[1])
-		if err != nil {
-			log.Fatal(err)
-		}
-		err = updateCommand(args[0], content)
+		err = UpdateCommand(args[0], args[1])
 
 	case "search":
 		if len(args) != 1 {
 			log.Fatal("Search query required")
 		}
-		err = searchCommand(args[0])
+		err = SearchCommand(args[0])
 
 	case "status":
-		err = statusCommand()
+		err = StatusCommand()
 
 	default:
 		log.Fatalf("Unknown command: %s", cmd)

@@ -1,7 +1,9 @@
 package memex
 
 import (
+	"bytes"
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -13,8 +15,11 @@ func TestMemex(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
+	// Create test repository path
+	repoPath := filepath.Join(tmpDir, "test.mx")
+
 	// Create memex
-	mx, err := Open(tmpDir)
+	mx, err := Open(repoPath)
 	if err != nil {
 		t.Fatalf("Error creating memex: %v", err)
 	}
@@ -37,7 +42,7 @@ func TestMemex(t *testing.T) {
 		t.Fatalf("Error getting object: %v", err)
 	}
 
-	if string(obj.Content) != string(content) {
+	if !bytes.Equal(obj.Content, content) {
 		t.Error("Content not preserved correctly")
 	}
 
@@ -47,7 +52,7 @@ func TestMemex(t *testing.T) {
 
 	// Test updating content
 	newContent := []byte("Updated content")
-	if err := mx.Update(id, newContent, nil); err != nil {
+	if err := mx.Update(id, newContent); err != nil {
 		t.Fatalf("Error updating object: %v", err)
 	}
 
@@ -57,7 +62,7 @@ func TestMemex(t *testing.T) {
 		t.Fatalf("Error getting updated object: %v", err)
 	}
 
-	if string(updated.Content) != string(newContent) {
+	if !bytes.Equal(updated.Content, newContent) {
 		t.Error("Updated content not preserved correctly")
 	}
 

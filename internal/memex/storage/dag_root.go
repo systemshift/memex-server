@@ -15,7 +15,7 @@ import (
 
 // initRoot creates initial root state if it doesn't exist
 func (s *DAGStore) initRoot() error {
-	rootPath := filepath.Join(s.rootDir, "root", "state.json")
+	rootPath := filepath.Join(s.path, "root.json")
 	log.Printf("Initializing root state at %s", rootPath)
 
 	if _, err := os.Stat(rootPath); os.IsNotExist(err) {
@@ -42,7 +42,7 @@ func (s *DAGStore) initRoot() error {
 
 // GetRoot returns the current root state
 func (s *DAGStore) GetRoot() (core.Root, error) {
-	rootPath := filepath.Join(s.rootDir, "root", "state.json")
+	rootPath := filepath.Join(s.path, "root.json")
 	data, err := os.ReadFile(rootPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -82,7 +82,7 @@ func (s *DAGStore) GetRoot() (core.Root, error) {
 func (s *DAGStore) UpdateRoot() error {
 	// List all nodes in the nodes directory
 	var nodes []string
-	nodesDir := filepath.Join(s.rootDir, "nodes")
+	nodesDir := filepath.Join(s.path, "nodes")
 	entries, err := os.ReadDir(nodesDir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -124,7 +124,7 @@ func (s *DAGStore) UpdateRoot() error {
 		return fmt.Errorf("marshaling root: %w", err)
 	}
 
-	rootPath := filepath.Join(s.rootDir, "root", "state.json")
+	rootPath := filepath.Join(s.path, "root.json")
 	if err := os.WriteFile(rootPath, data, 0644); err != nil {
 		return fmt.Errorf("writing root state: %w", err)
 	}
