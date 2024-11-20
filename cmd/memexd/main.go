@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 
+	"memex/internal/memex/core"
 	"memex/pkg/memex"
 )
 
@@ -49,14 +50,42 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get all objects
-	objects := s.memex.List()
-	var items []memex.Object
-	for _, id := range objects {
-		obj, err := s.memex.Get(id)
+	repo, err := s.memex.GetRepository()
+	if err != nil {
+		log.Printf("Error getting repository: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	root, err := repo.GetRoot()
+	if err != nil {
+		log.Printf("Error getting root: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	var items []map[string]interface{}
+	for _, id := range root.Nodes {
+		node, err := repo.GetNode(id)
 		if err != nil {
 			continue
 		}
-		items = append(items, obj)
+
+		// Get links for node
+		links, err := repo.GetLinks(id)
+		if err != nil {
+			links = []core.Link{}
+		}
+
+		item := map[string]interface{}{
+			"ID":       node.ID,
+			"Type":     node.Type,
+			"Meta":     node.Meta,
+			"Created":  node.Created,
+			"Modified": node.Modified,
+			"Links":    links,
+		}
+		items = append(items, item)
 	}
 
 	data := map[string]interface{}{
@@ -103,7 +132,14 @@ func (s *Server) handleAdd(w http.ResponseWriter, r *http.Request) {
 		"type":     "file",
 	}
 
-	if _, err := s.memex.Add(content, "file", meta); err != nil {
+	repo, err := s.memex.GetRepository()
+	if err != nil {
+		log.Printf("Error getting repository: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if _, err := repo.AddNode(content, "file", meta); err != nil {
 		log.Printf("Error adding file: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -130,8 +166,15 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	repo, err := s.memex.GetRepository()
+	if err != nil {
+		log.Printf("Error getting repository: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
 	// Delete the object
-	if err := s.memex.Delete(id); err != nil {
+	if err := repo.DeleteNode(id); err != nil {
 		log.Printf("Error deleting object: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -162,7 +205,14 @@ func (s *Server) handleLink(w http.ResponseWriter, r *http.Request) {
 		meta["note"] = note
 	}
 
-	if err := s.memex.Link(source, target, linkType, meta); err != nil {
+	repo, err := s.memex.GetRepository()
+	if err != nil {
+		log.Printf("Error getting repository: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if err := repo.AddLink(source, target, linkType, meta); err != nil {
 		log.Printf("Error creating link: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -184,9 +234,41 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	results := s.memex.Search(query)
+	repo, err := s.memex.GetRepository()
+	if err != nil {
+		log.Printf("Error getting repository: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	results, err := repo.Search(query)
+	if err != nil {
+		log.Printf("Error searching: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	var items []map[string]interface{}
+	for _, node := range results {
+		// Get links for node
+		links, err := repo.GetLinks(node.ID)
+		if err != nil {
+			links = []core.Link{}
+		}
+
+		item := map[string]interface{}{
+			"ID":       node.ID,
+			"Type":     node.Type,
+			"Meta":     node.Meta,
+			"Created":  node.Created,
+			"Modified": node.Modified,
+			"Links":    links,
+		}
+		items = append(items, item)
+	}
+
 	data := map[string]interface{}{
-		"Objects": results,
+		"Objects": items,
 		"Query":   r.URL.Query().Get("q"),
 	}
 
@@ -200,34 +282,35 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 	// Parse flags
-	port := flag.Int("port", 8080, "Port to listen on")
-	dir := flag.String("dir", ".", "Directory to store data")
+	addr := flag.String("addr", ":3000", "HTTP service address")
+	path := flag.String("path", "", "Path to memex repository")
 	flag.Parse()
 
+	if *path == "" {
+		log.Fatal("Path required")
+	}
+
 	// Create server
-	server, err := NewServer(*dir)
+	server, err := NewServer(*path)
 	if err != nil {
-		log.Fatalf("Error creating server: %v", err)
+		log.Fatal(err)
 	}
 
-	// Create static file server
-	static, err := fs.Sub(content, "static")
-	if err != nil {
-		log.Fatalf("Error setting up static files: %v", err)
-	}
-	staticHandler := http.FileServer(http.FS(static))
+	// Setup routes
+	http.HandleFunc("/", server.handleIndex)
+	http.HandleFunc("/add", server.handleAdd)
+	http.HandleFunc("/delete", server.handleDelete)
+	http.HandleFunc("/link", server.handleLink)
+	http.HandleFunc("/search", server.handleSearch)
 
-	// Set up routes
-	mux := http.NewServeMux()
-	mux.Handle("/static/", http.StripPrefix("/static/", staticHandler))
-	mux.HandleFunc("/", server.handleIndex)
-	mux.HandleFunc("/add", server.handleAdd)
-	mux.HandleFunc("/delete", server.handleDelete)
-	mux.HandleFunc("/link", server.handleLink)
-	mux.HandleFunc("/search", server.handleSearch)
+	// Serve static files
+	staticFS, err := fs.Sub(content, "static")
+	if err != nil {
+		log.Fatal(err)
+	}
+	http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
 
 	// Start server
-	addr := fmt.Sprintf(":%d", *port)
-	log.Printf("Starting server on http://localhost%s", addr)
-	log.Fatal(http.ListenAndServe(addr, mux))
+	log.Printf("Starting server on %s", *addr)
+	log.Fatal(http.ListenAndServe(*addr, nil))
 }

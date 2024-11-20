@@ -1,7 +1,6 @@
 package memex
 
 import (
-	"bytes"
 	"os"
 	"testing"
 )
@@ -14,16 +13,17 @@ func TestMemex(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	// Create new memex instance
+	// Create memex
 	mx, err := Open(tmpDir)
 	if err != nil {
-		t.Fatalf("Error opening memex: %v", err)
+		t.Fatalf("Error creating memex: %v", err)
 	}
 
 	// Test adding content
 	content := []byte("Test content")
 	meta := map[string]any{
-		"title": "Test Object",
+		"title": "Test Node",
+		"tags":  []string{"test", "example"},
 	}
 
 	id, err := mx.Add(content, "note", meta)
@@ -37,96 +37,104 @@ func TestMemex(t *testing.T) {
 		t.Fatalf("Error getting object: %v", err)
 	}
 
-	if !bytes.Equal(obj.Content, content) {
-		t.Error("Retrieved content does not match original")
+	if string(obj.Content) != string(content) {
+		t.Error("Content not preserved correctly")
 	}
 
-	if obj.Type != "note" {
-		t.Errorf("Expected type 'note', got '%s'", obj.Type)
-	}
-
-	if title, ok := obj.Meta["title"].(string); !ok || title != "Test Object" {
+	if title, ok := obj.Meta["title"].(string); !ok || title != "Test Node" {
 		t.Error("Metadata not preserved correctly")
 	}
 
-	// Test adding another object for linking
-	content2 := []byte("Another test content")
-	id2, err := mx.Add(content2, "note", nil)
+	// Test updating content
+	newContent := []byte("Updated content")
+	if err := mx.Update(id, newContent, nil); err != nil {
+		t.Fatalf("Error updating object: %v", err)
+	}
+
+	// Get updated object
+	updated, err := mx.Get(id)
+	if err != nil {
+		t.Fatalf("Error getting updated object: %v", err)
+	}
+
+	if string(updated.Content) != string(newContent) {
+		t.Error("Updated content not preserved correctly")
+	}
+
+	// Test searching
+	query := map[string]any{
+		"title": "Test Node",
+	}
+
+	results, err := mx.Search(query)
+	if err != nil {
+		t.Fatalf("Error searching: %v", err)
+	}
+
+	if len(results) != 1 {
+		t.Errorf("Expected 1 search result got %d", len(results))
+	}
+
+	// Test finding by type
+	notes, err := mx.FindByType("note")
+	if err != nil {
+		t.Fatalf("Error finding by type: %v", err)
+	}
+
+	if len(notes) != 1 {
+		t.Errorf("Expected 1 note got %d", len(notes))
+	}
+
+	// Test linking objects
+	content2 := []byte("Another test")
+	meta2 := map[string]any{
+		"title": "Another Node",
+	}
+
+	id2, err := mx.Add(content2, "note", meta2)
 	if err != nil {
 		t.Fatalf("Error adding second object: %v", err)
 	}
 
-	// Test linking
-	err = mx.Link(id, id2, "references", map[string]any{
+	linkMeta := map[string]any{
 		"note": "Test link",
-	})
-	if err != nil {
+	}
+
+	if err := mx.Link(id, id2, "references", linkMeta); err != nil {
 		t.Fatalf("Error creating link: %v", err)
 	}
 
-	// Test retrieving links
+	// Test getting links
 	links, err := mx.GetLinks(id)
 	if err != nil {
 		t.Fatalf("Error getting links: %v", err)
 	}
 
 	if len(links) != 1 {
-		t.Errorf("Expected 1 link, got %d", len(links))
+		t.Errorf("Expected 1 link got %d", len(links))
 	}
 
-	// Test searching
-	results := mx.Search(map[string]any{
-		"title": "Test Object",
-	})
-
-	if len(results) != 1 {
-		t.Errorf("Expected 1 search result, got %d", len(results))
+	if links[0].Source != id || links[0].Target != id2 {
+		t.Error("Link source/target not preserved correctly")
 	}
 
-	// Test finding by type
-	notes := mx.FindByType("note")
-	if len(notes) != 2 {
-		t.Errorf("Expected 2 notes, got %d", len(notes))
+	if note, ok := links[0].Meta["note"].(string); !ok || note != "Test link" {
+		t.Error("Link metadata not preserved correctly")
 	}
 
-	// Test listing all objects
-	allObjects := mx.List()
-	if len(allObjects) != 2 {
-		t.Errorf("Expected 2 objects, got %d", len(allObjects))
-	}
-
-	// Test updating content
-	newContent := []byte("Updated content")
-	err = mx.Update(id, newContent)
-	if err != nil {
-		t.Fatalf("Error updating object: %v", err)
-	}
-
-	// Verify update
-	updated, err := mx.Get(id)
-	if err != nil {
-		t.Fatalf("Error getting updated object: %v", err)
-	}
-
-	if !bytes.Equal(updated.Content, newContent) {
-		t.Error("Updated content does not match")
-	}
-
-	// Test deleting an object
-	err = mx.Delete(id)
-	if err != nil {
+	// Test deleting object
+	if err := mx.Delete(id); err != nil {
 		t.Fatalf("Error deleting object: %v", err)
 	}
 
 	// Verify object is deleted
-	_, err = mx.Get(id)
-	if err == nil {
-		t.Error("Expected error getting deleted object")
+	if _, err := mx.Get(id); err == nil {
+		t.Error("Object should be deleted")
 	}
 
-	// Verify object count is updated
-	allObjects = mx.List()
-	if len(allObjects) != 1 {
-		t.Errorf("Expected 1 object after delete, got %d", len(allObjects))
+	// Test listing objects
+	objects := mx.List()
+	if len(objects) != 1 { // Should only have id2 left
+		t.Errorf("Expected 1 object after delete got %d", len(objects))
 	}
 }

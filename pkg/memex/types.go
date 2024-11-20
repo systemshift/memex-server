@@ -6,17 +6,17 @@ import (
 	"memex/internal/memex/core"
 )
 
-// Object represents a stored object in the memex
-type Object struct {
+// Node represents a node in the memex
+type Node struct {
 	ID       string
-	Content  []byte
 	Type     string
+	Meta     map[string]any
+	Content  []byte
 	Created  time.Time
 	Modified time.Time
-	Meta     map[string]any
 }
 
-// Link represents a relationship between objects
+// Link represents a relationship between nodes
 type Link struct {
 	Source      string
 	Target      string
@@ -26,19 +26,20 @@ type Link struct {
 	TargetChunk string
 }
 
-// Convert internal core.Node to public Object
-func convertNode(node core.Node) Object {
-	return Object{
+// Convert core.Node to Node
+func fromCoreNode(node core.Node, content []byte) Node {
+	return Node{
 		ID:       node.ID,
 		Type:     node.Type,
+		Meta:     node.Meta,
+		Content:  content,
 		Created:  node.Created,
 		Modified: node.Modified,
-		Meta:     node.Meta,
 	}
 }
 
-// Convert internal core.Link to public Link
-func convertLink(link core.Link) Link {
+// Convert core.Link to Link
+func fromCoreLink(link core.Link) Link {
 	return Link{
 		Source:      link.Source,
 		Target:      link.Target,
@@ -47,4 +48,22 @@ func convertLink(link core.Link) Link {
 		SourceChunk: link.SourceChunk,
 		TargetChunk: link.TargetChunk,
 	}
+}
+
+// Convert []core.Link to []Link
+func fromCoreLinks(links []core.Link) []Link {
+	result := make([]Link, len(links))
+	for i, link := range links {
+		result[i] = fromCoreLink(link)
+	}
+	return result
+}
+
+// Convert []core.Node to []Node
+func fromCoreNodes(nodes []core.Node) []Node {
+	result := make([]Node, len(nodes))
+	for i, node := range nodes {
+		result[i] = fromCoreNode(node, nil) // Content not loaded for lists
+	}
+	return result
 }

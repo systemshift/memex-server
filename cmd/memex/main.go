@@ -12,92 +12,22 @@ import (
 	"memex/pkg/memex"
 )
 
-func main() {
-	// Parse command line arguments
-	flag.Parse()
-	args := flag.Args()
+var mx *memex.Memex
 
-	if len(args) < 1 {
-		fmt.Println("Usage: memex <command> [args...]")
-		fmt.Println("\nCommands:")
-		fmt.Println("  add <file>                Add a file")
-		fmt.Println("  update <id> <file>        Update content of an object")
-		fmt.Println("  delete <id>               Delete an object")
-		fmt.Println("  link <src> <dst> <type>   Create a link")
-		fmt.Println("  links <id>                Show links for an object")
-		fmt.Println("  search <query>            Search objects")
-		fmt.Println("  status                    Show repository status")
-		os.Exit(1)
-	}
-
-	// Get current directory
-	dir, err := os.Getwd()
+func initCommand(path string) error {
+	var err error
+	mx, err = memex.Open(path)
 	if err != nil {
-		log.Fatalf("Error getting current directory: %v", err)
+		return fmt.Errorf("initializing repository: %w", err)
 	}
-
-	// Open memex
-	mx, err := memex.Open(dir)
-	if err != nil {
-		log.Fatalf("Error opening memex: %v", err)
-	}
-
-	// Handle commands
-	cmd := args[0]
-	switch cmd {
-	case "add":
-		if len(args) < 2 {
-			log.Fatal("Usage: memex add <file>")
-		}
-		handleAdd(mx, args[1])
-
-	case "update":
-		if len(args) < 3 {
-			log.Fatal("Usage: memex update <id> <file>")
-		}
-		handleUpdate(mx, args[1], args[2])
-
-	case "delete":
-		if len(args) < 2 {
-			log.Fatal("Usage: memex delete <id>")
-		}
-		handleDelete(mx, args[1])
-
-	case "link":
-		if len(args) < 4 {
-			log.Fatal("Usage: memex link <source> <target> <type> [note]")
-		}
-		note := ""
-		if len(args) > 4 {
-			note = args[4]
-		}
-		handleLink(mx, args[1], args[2], args[3], note)
-
-	case "links":
-		if len(args) < 2 {
-			log.Fatal("Usage: memex links <id>")
-		}
-		handleLinks(mx, args[1])
-
-	case "search":
-		if len(args) < 2 {
-			log.Fatal("Usage: memex search <query>")
-		}
-		handleSearch(mx, args[1:])
-
-	case "status":
-		handleStatus(mx)
-
-	default:
-		log.Fatalf("Unknown command: %s", cmd)
-	}
+	return nil
 }
 
-func handleAdd(mx *memex.Memex, path string) {
+func addCommand(path string) error {
 	// Read file content
 	content, err := os.ReadFile(path)
 	if err != nil {
-		log.Fatalf("Error reading file: %v", err)
+		return fmt.Errorf("reading file: %w", err)
 	}
 
 	// Create metadata
@@ -109,37 +39,23 @@ func handleAdd(mx *memex.Memex, path string) {
 	// Add to repository
 	id, err := mx.Add(content, "file", meta)
 	if err != nil {
-		log.Fatalf("Error adding to repository: %v", err)
+		return fmt.Errorf("adding to repository: %w", err)
 	}
 
 	fmt.Printf("Added %s (ID: %s)\n", filepath.Base(path), id[:8])
+	return nil
 }
 
-func handleUpdate(mx *memex.Memex, id string, path string) {
-	// Read file content
-	content, err := os.ReadFile(path)
-	if err != nil {
-		log.Fatalf("Error reading file: %v", err)
-	}
-
-	// Update object
-	if err := mx.Update(id, content); err != nil {
-		log.Fatalf("Error updating object: %v", err)
-	}
-
-	fmt.Printf("Updated %s (ID: %s)\n", filepath.Base(path), id[:8])
-}
-
-func handleDelete(mx *memex.Memex, id string) {
+func deleteCommand(id string) error {
 	// Get object first to verify it exists and get its name
 	obj, err := mx.Get(id)
 	if err != nil {
-		log.Fatalf("Error: %v", err)
+		return fmt.Errorf("error: %w", err)
 	}
 
 	// Delete the object
 	if err := mx.Delete(id); err != nil {
-		log.Fatalf("Error deleting object: %v", err)
+		return fmt.Errorf("error deleting object: %w", err)
 	}
 
 	name := id[:8]
@@ -150,9 +66,10 @@ func handleDelete(mx *memex.Memex, id string) {
 	}
 
 	fmt.Printf("Deleted %s (ID: %s)\n", name, id[:8])
+	return nil
 }
 
-func handleLink(mx *memex.Memex, source, target, linkType, note string) {
+func linkCommand(source, target, linkType string, note string) error {
 	meta := map[string]any{}
 	if note != "" {
 		meta["note"] = note
@@ -160,17 +77,24 @@ func handleLink(mx *memex.Memex, source, target, linkType, note string) {
 
 	err := mx.Link(source, target, linkType, meta)
 	if err != nil {
-		log.Fatalf("Error creating link: %v", err)
+		return fmt.Errorf("error creating link: %w", err)
 	}
 
 	fmt.Printf("Created %s link from %s to %s\n", linkType, source[:8], target[:8])
+	return nil
 }
 
-func handleLinks(mx *memex.Memex, id string) {
-	// Get object first to show its name
+func linksCommand(id string) error {
+	// Get object first to verify it exists and get its name
 	obj, err := mx.Get(id)
 	if err != nil {
-		log.Fatalf("Error: %v", err)
+		return fmt.Errorf("error: %w", err)
+	}
+
+	// Get links
+	links, err := mx.GetLinks(id)
+	if err != nil {
+		return fmt.Errorf("error getting links: %w", err)
 	}
 
 	name := id[:8]
@@ -180,78 +104,110 @@ func handleLinks(mx *memex.Memex, id string) {
 		name = title
 	}
 
-	// Get links
-	links, err := mx.GetLinks(id)
-	if err != nil {
-		log.Fatalf("Error getting links: %v", err)
-	}
+	fmt.Printf("Links for %s (ID: %s):\n\n", name, id[:8])
 
 	if len(links) == 0 {
-		fmt.Printf("No links found for %s (ID: %s)\n", name, id[:8])
-		return
+		fmt.Println("No links found")
+		return nil
 	}
 
-	fmt.Printf("Links for %s (ID: %s):\n\n", name, id[:8])
 	for _, link := range links {
 		// Get target object name
-		target, err := mx.Get(link.Target)
+		targetObj, err := mx.Get(link.Target)
 		if err != nil {
 			continue
 		}
 
 		targetName := link.Target[:8]
-		if filename, ok := target.Meta["filename"].(string); ok {
+		if filename, ok := targetObj.Meta["filename"].(string); ok {
 			targetName = filename
-		} else if title, ok := target.Meta["title"].(string); ok {
+		} else if title, ok := targetObj.Meta["title"].(string); ok {
 			targetName = title
 		}
 
 		fmt.Printf("Type: %s\n", link.Type)
 		fmt.Printf("Target: %s (ID: %s)\n", targetName, link.Target[:8])
-		if note, ok := link.Meta["note"].(string); ok {
+		if note, ok := link.Meta["note"].(string); ok && note != "" {
 			fmt.Printf("Note: %s\n", note)
 		}
 		fmt.Println()
 	}
+
+	return nil
 }
 
-func handleSearch(mx *memex.Memex, terms []string) {
-	// Build query from terms
-	query := make(map[string]any)
-	for _, term := range terms {
-		if strings.Contains(term, ":") {
-			parts := strings.SplitN(term, ":", 2)
-			query[parts[0]] = parts[1]
-		} else {
-			query["content"] = term
-		}
+func updateCommand(id string, content []byte) error {
+	// Get existing object to preserve metadata
+	obj, err := mx.Get(id)
+	if err != nil {
+		return fmt.Errorf("error: %w", err)
+	}
+
+	// Update with new content but keep metadata
+	if err := mx.Update(id, content, obj.Meta); err != nil {
+		return fmt.Errorf("error updating object: %w", err)
+	}
+
+	name := id[:8]
+	if filename, ok := obj.Meta["filename"].(string); ok {
+		name = filename
+	} else if title, ok := obj.Meta["title"].(string); ok {
+		name = title
+	}
+
+	fmt.Printf("Updated %s (ID: %s)\n", name, id[:8])
+	return nil
+}
+
+func searchCommand(query string) error {
+	// Parse query into map
+	queryMap := make(map[string]any)
+	parts := strings.Split(query, ":")
+	if len(parts) == 2 {
+		queryMap[parts[0]] = parts[1]
+	} else {
+		queryMap["content"] = query
 	}
 
 	// Search
-	results := mx.Search(query)
+	results, err := mx.Search(queryMap)
+	if err != nil {
+		return fmt.Errorf("error searching: %w", err)
+	}
+
 	if len(results) == 0 {
 		fmt.Println("No results found")
-		return
+		return nil
 	}
 
 	fmt.Printf("Found %d results:\n\n", len(results))
 	for _, obj := range results {
-		fmt.Printf("ID: %s\n", obj.ID[:8])
-		fmt.Printf("Type: %s\n", obj.Type)
-		if title, ok := obj.Meta["title"].(string); ok {
-			fmt.Printf("Title: %s\n", title)
+		name := obj.ID[:8]
+		if filename, ok := obj.Meta["filename"].(string); ok {
+			name = filename
+		} else if title, ok := obj.Meta["title"].(string); ok {
+			name = title
 		}
-		fmt.Printf("Created: %s\n", obj.Created.UTC().Format("02 Jan 06 15:04 MST"))
+
+		fmt.Printf("%s (ID: %s)\n", name, obj.ID[:8])
+		fmt.Printf("Type: %s\n", obj.Type)
+		fmt.Printf("Created: %s\n", obj.Created.Format("02 Jan 06 15:04 MST"))
 		fmt.Println()
 	}
+
+	return nil
 }
 
-func handleStatus(mx *memex.Memex) {
+func statusCommand() error {
 	fmt.Println("Memex Status ===")
 	fmt.Println()
 
 	// List notes
-	notes := mx.FindByType("note")
+	notes, err := mx.FindByType("note")
+	if err != nil {
+		return fmt.Errorf("finding notes: %w", err)
+	}
+
 	if len(notes) > 0 {
 		fmt.Printf("Notes (%d):\n", len(notes))
 		for _, obj := range notes {
@@ -265,7 +221,11 @@ func handleStatus(mx *memex.Memex) {
 	}
 
 	// List files
-	files := mx.FindByType("file")
+	files, err := mx.FindByType("file")
+	if err != nil {
+		return fmt.Errorf("finding files: %w", err)
+	}
+
 	if len(files) > 0 {
 		fmt.Printf("Files (%d):\n", len(files))
 		for _, obj := range files {
@@ -280,5 +240,92 @@ func handleStatus(mx *memex.Memex) {
 
 	if len(notes) == 0 && len(files) == 0 {
 		fmt.Println("No content found")
+	}
+
+	return nil
+}
+
+func main() {
+	// Parse flags
+	repoPath := flag.String("repo", "", "Repository path")
+	flag.Parse()
+
+	// Get command and args
+	args := flag.Args()
+	if len(args) < 1 {
+		log.Fatal("Command required")
+	}
+	cmd := args[0]
+	args = args[1:]
+
+	// Initialize repository
+	if *repoPath == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			log.Fatal(err)
+		}
+		*repoPath = filepath.Join(home, ".memex")
+	}
+
+	if err := initCommand(*repoPath); err != nil {
+		log.Fatal(err)
+	}
+
+	// Execute command
+	var err error
+	switch cmd {
+	case "add":
+		if len(args) != 1 {
+			log.Fatal("File path required")
+		}
+		err = addCommand(args[0])
+
+	case "delete":
+		if len(args) != 1 {
+			log.Fatal("ID required")
+		}
+		err = deleteCommand(args[0])
+
+	case "link":
+		if len(args) < 3 {
+			log.Fatal("Source, target, and link type required")
+		}
+		note := ""
+		if len(args) > 3 {
+			note = args[3]
+		}
+		err = linkCommand(args[0], args[1], args[2], note)
+
+	case "links":
+		if len(args) != 1 {
+			log.Fatal("ID required")
+		}
+		err = linksCommand(args[0])
+
+	case "update":
+		if len(args) != 2 {
+			log.Fatal("ID and file path required")
+		}
+		content, err := os.ReadFile(args[1])
+		if err != nil {
+			log.Fatal(err)
+		}
+		err = updateCommand(args[0], content)
+
+	case "search":
+		if len(args) != 1 {
+			log.Fatal("Search query required")
+		}
+		err = searchCommand(args[0])
+
+	case "status":
+		err = statusCommand()
+
+	default:
+		log.Fatalf("Unknown command: %s", cmd)
+	}
+
+	if err != nil {
+		log.Fatal(err)
 	}
 }
