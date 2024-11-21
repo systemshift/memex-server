@@ -61,6 +61,11 @@ func (s *MXStore) Path() string {
 	return s.path
 }
 
+// Nodes returns all nodes in the repository
+func (s *MXStore) Nodes() []IndexEntry {
+	return s.nodes
+}
+
 // CreateMX creates a new .mx file
 func CreateMX(path string) (*MXStore, error) {
 	// Ensure path ends with .mx

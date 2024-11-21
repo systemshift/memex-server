@@ -1,10 +1,12 @@
 package main
 
 import (
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"memex/internal/memex"
@@ -76,7 +78,8 @@ func EditCommand() error {
 	}
 
 	meta := map[string]any{
-		"added": time.Now(),
+		"added":   time.Now().Format(time.RFC3339),
+		"content": content,
 	}
 
 	id, err := mx.AddNode([]byte(content), "note", meta)
@@ -85,6 +88,75 @@ func EditCommand() error {
 	}
 
 	fmt.Printf("Added note (ID: %s)\n", id[:8])
+	return nil
+}
+
+// StatusCommand shows repository status
+func StatusCommand() error {
+	fmt.Printf("\nMemex Status ===\n\n")
+
+	// Show connected repo
+	fmt.Printf("Repository: %s\n\n", mx.Path())
+
+	// Get all nodes
+	var files []storage.IndexEntry
+	var notes []storage.IndexEntry
+	for _, entry := range mx.Nodes() {
+		// Read node metadata
+		obj, err := mx.GetNode(hex.EncodeToString(entry.ID[:]))
+		if err != nil {
+			continue
+		}
+
+		if obj.Type == "file" {
+			files = append(files, entry)
+		} else if obj.Type == "note" {
+			notes = append(notes, entry)
+		}
+	}
+
+	// Show counts
+	fmt.Printf("Files (%d):\n", len(files))
+	for _, entry := range files {
+		obj, err := mx.GetNode(hex.EncodeToString(entry.ID[:]))
+		if err != nil {
+			continue
+		}
+		filename := obj.Meta["filename"].(string)
+		// Parse the added time from string
+		var added time.Time
+		if addedStr, ok := obj.Meta["added"].(string); ok {
+			added, _ = time.Parse(time.RFC3339, addedStr)
+		} else {
+			added = time.Now() // fallback if no time found
+		}
+		fmt.Printf("  %s - %s (%s)\n", hex.EncodeToString(entry.ID[:])[:8], filename, added.Format("02 Jan 06 15:04 MST"))
+	}
+
+	fmt.Printf("\nNotes (%d):\n", len(notes))
+	for _, entry := range notes {
+		obj, err := mx.GetNode(hex.EncodeToString(entry.ID[:]))
+		if err != nil {
+			continue
+		}
+		// Parse the added time from string
+		var added time.Time
+		if addedStr, ok := obj.Meta["added"].(string); ok {
+			added, _ = time.Parse(time.RFC3339, addedStr)
+		} else {
+			added = time.Now() // fallback if no time found
+		}
+		// Get first line of note as title
+		if content, ok := obj.Meta["content"].(string); ok {
+			title := strings.Split(content, "\n")[0]
+			if len(title) > 50 {
+				title = title[:47] + "..."
+			}
+			fmt.Printf("  %s - %s (%s)\n", hex.EncodeToString(entry.ID[:])[:8], title, added.Format("02 Jan 06 15:04 MST"))
+		}
+	}
+
+	fmt.Println()
 	return nil
 }
 
@@ -111,7 +183,7 @@ func AddCommand(path string) error {
 
 	meta := map[string]any{
 		"filename": filepath.Base(absPath),
-		"added":    time.Now(),
+		"added":    time.Now().Format(time.RFC3339),
 	}
 
 	id, err := mx.AddNode(content, "file", meta)
@@ -214,6 +286,7 @@ Usage:
 Commands:
   init <name>     Create a new repository
   connect <path>  Connect to an existing repository
+  status          Show repository status
   add <file>      Add a file to the repository
   delete <id>     Delete an object
   link <src> <dst> <type> [note]  Create a link between objects
@@ -226,11 +299,12 @@ When no command is provided and a repository is connected:
 Examples:
   memex init my_repo              Create a new repository
   memex connect my_repo.mx        Connect to existing repository
+  memex status                    Show repository status
   memex add document.txt          Add a file
   memex link abc123 def456 ref    Create a reference link
   memex links abc123              Show links for an object
 
-For more information, visit: https://github.com/systemshift/memex`)
+For more information, visit: https://github.com/your/memex`)
 	os.Exit(0)
 }
 
@@ -322,6 +396,9 @@ func main() {
 	args = args[1:]
 
 	switch cmd {
+	case "status":
+		err = StatusCommand()
+
 	case "add":
 		if len(args) != 1 {
 			fmt.Println("Error: File path required")
