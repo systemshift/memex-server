@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"time"
 
 	"memex/internal/memex/core"
@@ -122,34 +121,23 @@ func (s *MXStore) AddNode(content []byte, nodeType string, meta map[string]any) 
 
 // GetNode retrieves a node by ID
 func (s *MXStore) GetNode(id string) (core.Node, error) {
-	fmt.Fprintf(os.Stderr, "Getting node: %s\n", id)
-
 	// Convert ID to bytes
 	idBytes, err := hex.DecodeString(id)
 	if err != nil {
 		return core.Node{}, fmt.Errorf("invalid ID: %w", err)
 	}
-	fmt.Fprintf(os.Stderr, "Looking for ID bytes: %x\n", idBytes)
-
-	// Pad ID to 32 bytes
-	var fullID [32]byte
-	copy(fullID[:], idBytes)
 
 	// Find node in index
 	var entry IndexEntry
 	for _, e := range s.nodes {
-		fmt.Fprintf(os.Stderr, "Checking index entry: %x at offset %d\n", e.ID, e.Offset)
-		// Compare just the prefix of the ID that was provided
 		if bytes.HasPrefix(e.ID[:], idBytes) {
 			entry = e
 			break
 		}
 	}
 	if entry.ID == [32]byte{} {
-		return core.Node{}, fmt.Errorf("node not found in index")
+		return core.Node{}, fmt.Errorf("node not found")
 	}
-
-	fmt.Fprintf(os.Stderr, "Found node at offset: %d\n", entry.Offset)
 
 	// Seek to node data
 	if _, err := s.file.Seek(int64(entry.Offset), io.SeekStart); err != nil {
@@ -163,13 +151,11 @@ func (s *MXStore) GetNode(id string) (core.Node, error) {
 	if _, err := io.ReadFull(s.file, nodeData.ID[:]); err != nil {
 		return core.Node{}, fmt.Errorf("reading ID: %w", err)
 	}
-	fmt.Fprintf(os.Stderr, "Read node ID: %x\n", nodeData.ID)
 
 	// Read Type
 	if _, err := io.ReadFull(s.file, nodeData.Type[:]); err != nil {
 		return core.Node{}, fmt.Errorf("reading type: %w", err)
 	}
-	fmt.Fprintf(os.Stderr, "Read node type: %s\n", bytes.TrimRight(nodeData.Type[:], "\x00"))
 
 	// Read timestamps
 	if err := binary.Read(s.file, binary.LittleEndian, &nodeData.Created); err != nil {
@@ -178,20 +164,17 @@ func (s *MXStore) GetNode(id string) (core.Node, error) {
 	if err := binary.Read(s.file, binary.LittleEndian, &nodeData.Modified); err != nil {
 		return core.Node{}, fmt.Errorf("reading modified time: %w", err)
 	}
-	fmt.Fprintf(os.Stderr, "Read timestamps: created=%d modified=%d\n", nodeData.Created, nodeData.Modified)
 
 	// Read metadata length
 	if err := binary.Read(s.file, binary.LittleEndian, &nodeData.MetaLen); err != nil {
 		return core.Node{}, fmt.Errorf("reading metadata length: %w", err)
 	}
-	fmt.Fprintf(os.Stderr, "Read metadata length: %d\n", nodeData.MetaLen)
 
 	// Read metadata
 	nodeData.Meta = make([]byte, nodeData.MetaLen)
 	if _, err := io.ReadFull(s.file, nodeData.Meta); err != nil {
 		return core.Node{}, fmt.Errorf("reading metadata: %w", err)
 	}
-	fmt.Fprintf(os.Stderr, "Read metadata: %s\n", nodeData.Meta)
 
 	// Parse metadata
 	var meta map[string]any
@@ -247,14 +230,39 @@ func (s *MXStore) DeleteNode(id string) error {
 		return fmt.Errorf("node not found")
 	}
 
-	// Read node data to get content hash
+	// Read node data
 	if _, err := s.file.Seek(int64(entry.Offset), io.SeekStart); err != nil {
 		return fmt.Errorf("seeking to node: %w", err)
 	}
 
 	var nodeData NodeData
-	if err := binary.Read(s.file, binary.LittleEndian, &nodeData); err != nil {
-		return fmt.Errorf("reading node: %w", err)
+	// Read ID
+	if _, err := io.ReadFull(s.file, nodeData.ID[:]); err != nil {
+		return fmt.Errorf("reading ID: %w", err)
+	}
+
+	// Read Type
+	if _, err := io.ReadFull(s.file, nodeData.Type[:]); err != nil {
+		return fmt.Errorf("reading type: %w", err)
+	}
+
+	// Read timestamps
+	if err := binary.Read(s.file, binary.LittleEndian, &nodeData.Created); err != nil {
+		return fmt.Errorf("reading created time: %w", err)
+	}
+	if err := binary.Read(s.file, binary.LittleEndian, &nodeData.Modified); err != nil {
+		return fmt.Errorf("reading modified time: %w", err)
+	}
+
+	// Read metadata length
+	if err := binary.Read(s.file, binary.LittleEndian, &nodeData.MetaLen); err != nil {
+		return fmt.Errorf("reading metadata length: %w", err)
+	}
+
+	// Read metadata
+	nodeData.Meta = make([]byte, nodeData.MetaLen)
+	if _, err := io.ReadFull(s.file, nodeData.Meta); err != nil {
+		return fmt.Errorf("reading metadata: %w", err)
 	}
 
 	// Parse metadata to get content hash
@@ -288,6 +296,32 @@ func (s *MXStore) DeleteNode(id string) error {
 			s.header.BlobCount--
 		}
 	}
+
+	// Remove any edges connected to this node
+	var newEdges []IndexEntry
+	for _, e := range s.edges {
+		// Read edge data to check if it's connected to this node
+		if _, err := s.file.Seek(int64(e.Offset), io.SeekStart); err != nil {
+			return fmt.Errorf("seeking to edge: %w", err)
+		}
+
+		var edgeData EdgeData
+		// Read Source
+		if _, err := io.ReadFull(s.file, edgeData.Source[:]); err != nil {
+			return fmt.Errorf("reading edge source: %w", err)
+		}
+		// Read Target
+		if _, err := io.ReadFull(s.file, edgeData.Target[:]); err != nil {
+			return fmt.Errorf("reading edge target: %w", err)
+		}
+
+		// Keep edge if it's not connected to the node being deleted
+		if !bytes.Equal(edgeData.Source[:], nodeData.ID[:]) && !bytes.Equal(edgeData.Target[:], nodeData.ID[:]) {
+			newEdges = append(newEdges, e)
+		}
+	}
+	s.edges = newEdges
+	s.header.EdgeCount = uint32(len(s.edges))
 
 	// Remove node from index
 	s.nodes = append(s.nodes[:nodeIndex], s.nodes[nodeIndex+1:]...)
