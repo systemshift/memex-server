@@ -1,281 +1,12 @@
 package main
 
 import (
-	"encoding/hex"
 	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
-	"strings"
-	"time"
 
 	"memex/internal/memex"
-	"memex/internal/memex/storage"
 )
-
-var mx *storage.MXStore
-
-func getConnectedRepo() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	data, err := os.ReadFile(filepath.Join(home, ".memex"))
-	if err != nil {
-		return ""
-	}
-	return string(data)
-}
-
-func saveConnectedRepo(path string) error {
-	absPath, err := filepath.Abs(path)
-	if err != nil {
-		return err
-	}
-
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(filepath.Join(home, ".memex"), []byte(absPath), 0644)
-}
-
-// InitCommand initializes a new repository
-func InitCommand(name string) error {
-	path := name + ".mx"
-	absPath, err := filepath.Abs(path)
-	if err != nil {
-		return err
-	}
-
-	if _, err := os.Stat(absPath); err == nil {
-		return fmt.Errorf("repository already exists at %s", absPath)
-	}
-
-	mx, err = storage.CreateMX(absPath)
-	if err != nil {
-		return fmt.Errorf("creating repository: %w", err)
-	}
-
-	if err := saveConnectedRepo(absPath); err != nil {
-		return fmt.Errorf("connecting to new repo: %w", err)
-	}
-
-	fmt.Printf("Created repository %s\n", absPath)
-	return nil
-}
-
-// EditCommand opens the editor
-func EditCommand() error {
-	editor := memex.NewEditor(mx.Path())
-	content, err := editor.Run()
-	if err != nil {
-		return fmt.Errorf("running editor: %w", err)
-	}
-
-	if content == "" {
-		return nil // User cancelled
-	}
-
-	meta := map[string]any{
-		"added":   time.Now().Format(time.RFC3339),
-		"content": content,
-	}
-
-	id, err := mx.AddNode([]byte(content), "note", meta)
-	if err != nil {
-		return fmt.Errorf("adding note: %w", err)
-	}
-
-	fmt.Printf("Added note (ID: %s)\n", id[:8])
-	return nil
-}
-
-// StatusCommand shows repository status
-func StatusCommand() error {
-	fmt.Printf("\nMemex Status ===\n\n")
-
-	// Show connected repo
-	fmt.Printf("Repository: %s\n\n", mx.Path())
-
-	// Get all nodes
-	var files []storage.IndexEntry
-	var notes []storage.IndexEntry
-	for _, entry := range mx.Nodes() {
-		// Read node metadata
-		obj, err := mx.GetNode(hex.EncodeToString(entry.ID[:]))
-		if err != nil {
-			continue
-		}
-
-		if obj.Type == "file" {
-			files = append(files, entry)
-		} else if obj.Type == "note" {
-			notes = append(notes, entry)
-		}
-	}
-
-	// Show counts
-	fmt.Printf("Files (%d):\n", len(files))
-	for _, entry := range files {
-		obj, err := mx.GetNode(hex.EncodeToString(entry.ID[:]))
-		if err != nil {
-			continue
-		}
-		filename := obj.Meta["filename"].(string)
-		// Parse the added time from string
-		var added time.Time
-		if addedStr, ok := obj.Meta["added"].(string); ok {
-			added, _ = time.Parse(time.RFC3339, addedStr)
-		} else {
-			added = time.Now() // fallback if no time found
-		}
-		fmt.Printf("  %s - %s (%s)\n", hex.EncodeToString(entry.ID[:])[:8], filename, added.Format("02 Jan 06 15:04 MST"))
-	}
-
-	fmt.Printf("\nNotes (%d):\n", len(notes))
-	for _, entry := range notes {
-		obj, err := mx.GetNode(hex.EncodeToString(entry.ID[:]))
-		if err != nil {
-			continue
-		}
-		// Parse the added time from string
-		var added time.Time
-		if addedStr, ok := obj.Meta["added"].(string); ok {
-			added, _ = time.Parse(time.RFC3339, addedStr)
-		} else {
-			added = time.Now() // fallback if no time found
-		}
-		// Get first line of note as title
-		if content, ok := obj.Meta["content"].(string); ok {
-			title := strings.Split(content, "\n")[0]
-			if len(title) > 50 {
-				title = title[:47] + "..."
-			}
-			fmt.Printf("  %s - %s (%s)\n", hex.EncodeToString(entry.ID[:])[:8], title, added.Format("02 Jan 06 15:04 MST"))
-		}
-	}
-
-	fmt.Println()
-	return nil
-}
-
-// AddCommand adds a file to the repository
-func AddCommand(path string) error {
-	absPath, err := filepath.Abs(path)
-	if err != nil {
-		return fmt.Errorf("resolving path: %w", err)
-	}
-
-	info, err := os.Stat(absPath)
-	if err != nil {
-		return fmt.Errorf("checking path: %w", err)
-	}
-
-	if info.IsDir() {
-		return fmt.Errorf("'%s' is a directory. Use 'add <file>' to add individual files", path)
-	}
-
-	content, err := os.ReadFile(absPath)
-	if err != nil {
-		return fmt.Errorf("reading file: %w", err)
-	}
-
-	meta := map[string]any{
-		"filename": filepath.Base(absPath),
-		"added":    time.Now().Format(time.RFC3339),
-	}
-
-	id, err := mx.AddNode(content, "file", meta)
-	if err != nil {
-		return fmt.Errorf("adding to repository: %w", err)
-	}
-
-	fmt.Printf("Added %s (ID: %s)\n", filepath.Base(absPath), id[:8])
-	return nil
-}
-
-// DeleteCommand deletes an object from the repository
-func DeleteCommand(id string) error {
-	obj, err := mx.GetNode(id)
-	if err != nil {
-		return fmt.Errorf("error: %w", err)
-	}
-
-	if err := mx.DeleteNode(id); err != nil {
-		return fmt.Errorf("error deleting object: %w", err)
-	}
-
-	name := id[:8]
-	if filename, ok := obj.Meta["filename"].(string); ok {
-		name = filename
-	}
-
-	fmt.Printf("Deleted %s (ID: %s)\n", name, id[:8])
-	return nil
-}
-
-// LinkCommand creates a link between objects
-func LinkCommand(source, target, linkType string, note string) error {
-	meta := map[string]any{}
-	if note != "" {
-		meta["note"] = note
-	}
-
-	err := mx.AddLink(source, target, linkType, meta)
-	if err != nil {
-		return fmt.Errorf("error creating link: %w", err)
-	}
-
-	fmt.Printf("Created %s link from %s to %s\n", linkType, source[:8], target[:8])
-	return nil
-}
-
-// LinksCommand shows links for an object
-func LinksCommand(id string) error {
-	obj, err := mx.GetNode(id)
-	if err != nil {
-		return fmt.Errorf("error getting node: %w", err)
-	}
-
-	links, err := mx.GetLinks(id)
-	if err != nil {
-		return fmt.Errorf("error getting links: %w", err)
-	}
-
-	name := id[:8]
-	if filename, ok := obj.Meta["filename"].(string); ok {
-		name = filename
-	}
-
-	fmt.Printf("Links for %s (ID: %s):\n\n", name, id[:8])
-
-	if len(links) == 0 {
-		fmt.Println("No links found")
-		return nil
-	}
-
-	for _, link := range links {
-		targetObj, err := mx.GetNode(link.Target)
-		if err != nil {
-			continue
-		}
-
-		targetName := link.Target[:8]
-		if filename, ok := targetObj.Meta["filename"].(string); ok {
-			targetName = filename
-		}
-
-		fmt.Printf("Type: %s\n", link.Type)
-		fmt.Printf("Target: %s (ID: %s)\n", targetName, link.Target[:8])
-		if note, ok := link.Meta["note"].(string); ok && note != "" {
-			fmt.Printf("Note: %s\n", note)
-		}
-		fmt.Println()
-	}
-
-	return nil
-}
 
 func showHelp() {
 	fmt.Println(`memex - A personal knowledge graph
@@ -334,7 +65,7 @@ func main() {
 				fmt.Println("Error: Repository name required")
 				showHelp()
 			}
-			if err := InitCommand(args[1]); err != nil {
+			if err := memex.InitCommand(args[1]); err != nil {
 				fmt.Printf("Error: %v\n", err)
 				os.Exit(1)
 			}
@@ -345,46 +76,25 @@ func main() {
 				fmt.Println("Error: Repository path required")
 				showHelp()
 			}
-			absPath, err := filepath.Abs(args[1])
-			if err != nil {
+			if err := memex.ConnectCommand(args[1]); err != nil {
 				fmt.Printf("Error: %v\n", err)
 				os.Exit(1)
 			}
-			if err := saveConnectedRepo(absPath); err != nil {
-				fmt.Printf("Error: %v\n", err)
-				os.Exit(1)
-			}
-			fmt.Printf("Connected to %s\n", absPath)
 			return
 		}
 	}
 
 	// For all other commands, need a connected repo
-	repoPath := getConnectedRepo()
-	if repoPath == "" {
-		fmt.Println("Error: No repository connected. Use 'init <name>' or 'connect <path>' first")
-		showHelp()
-	}
-
-	// Check if the connected repo exists
-	if _, err := os.Stat(repoPath); err != nil {
-		fmt.Printf("Error: Connected repository '%s' not found. Use 'init <name>' or 'connect <path>' to connect to a valid repository\n", repoPath)
-		showHelp()
-	}
-
-	// Open the repository
-	var err error
-	mx, err = storage.OpenMX(repoPath)
-	if err != nil {
+	if err := memex.OpenRepository(); err != nil {
 		fmt.Printf("Error: %v\n", err)
-		os.Exit(1)
+		showHelp()
 	}
 
-	defer mx.Close()
+	defer memex.CloseRepository()
 
 	// If no command provided, open editor
 	if len(args) == 0 {
-		if err := EditCommand(); err != nil {
+		if err := memex.EditCommand(); err != nil {
 			fmt.Printf("Error: %v\n", err)
 			os.Exit(1)
 		}
@@ -395,23 +105,24 @@ func main() {
 	cmd := args[0]
 	args = args[1:]
 
+	var err error
 	switch cmd {
 	case "status":
-		err = StatusCommand()
+		err = memex.StatusCommand()
 
 	case "add":
 		if len(args) != 1 {
 			fmt.Println("Error: File path required")
 			showHelp()
 		}
-		err = AddCommand(args[0])
+		err = memex.AddCommand(args[0])
 
 	case "delete":
 		if len(args) != 1 {
 			fmt.Println("Error: ID required")
 			showHelp()
 		}
-		err = DeleteCommand(args[0])
+		err = memex.DeleteCommand(args[0])
 
 	case "link":
 		if len(args) < 3 {
@@ -422,14 +133,14 @@ func main() {
 		if len(args) > 3 {
 			note = args[3]
 		}
-		err = LinkCommand(args[0], args[1], args[2], note)
+		err = memex.LinkCommand(args[0], args[1], args[2], note)
 
 	case "links":
 		if len(args) != 1 {
 			fmt.Println("Error: ID required")
 			showHelp()
 		}
-		err = LinksCommand(args[0])
+		err = memex.LinksCommand(args[0])
 
 	default:
 		fmt.Printf("Error: Unknown command: %s\n", cmd)

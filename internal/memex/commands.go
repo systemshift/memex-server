@@ -11,53 +11,170 @@ import (
 
 var repo *storage.MXStore
 
-// InitCommand initializes a new repository
-func InitCommand(path string) error {
-	var err error
-	repo, err = storage.OpenMX(path)
+// GetConnectedRepo returns the path of the currently connected repository
+func GetConnectedRepo() string {
+	home, err := os.UserHomeDir()
 	if err != nil {
-		// If repository doesn't exist, create it
-		repo, err = storage.CreateMX(path)
-		if err != nil {
-			return fmt.Errorf("creating repository: %w", err)
-		}
+		return ""
 	}
+	data, err := os.ReadFile(filepath.Join(home, ".memex"))
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
+// SaveConnectedRepo saves the path of the connected repository
+func SaveConnectedRepo(path string) error {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(home, ".memex"), []byte(absPath), 0644)
+}
+
+// InitCommand initializes a new repository
+func InitCommand(name string) error {
+	path := name + ".mx"
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+
+	if _, err := os.Stat(absPath); err == nil {
+		return fmt.Errorf("repository already exists at %s", absPath)
+	}
+
+	repo, err = storage.CreateMX(absPath)
+	if err != nil {
+		return fmt.Errorf("creating repository: %w", err)
+	}
+
+	if err := SaveConnectedRepo(absPath); err != nil {
+		return fmt.Errorf("connecting to new repo: %w", err)
+	}
+
+	fmt.Printf("Created repository %s\n", absPath)
+	return nil
+}
+
+// ConnectCommand connects to an existing repository
+func ConnectCommand(path string) error {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+
+	if err := SaveConnectedRepo(absPath); err != nil {
+		return fmt.Errorf("saving connection: %w", err)
+	}
+
+	fmt.Printf("Connected to %s\n", absPath)
+	return nil
+}
+
+// OpenRepository opens and connects to a repository
+func OpenRepository() error {
+	repoPath := GetConnectedRepo()
+	if repoPath == "" {
+		return fmt.Errorf("no repository connected. Use 'init <name>' or 'connect <path>' first")
+	}
+
+	// Check if the connected repo exists
+	if _, err := os.Stat(repoPath); err != nil {
+		return fmt.Errorf("connected repository '%s' not found", repoPath)
+	}
+
+	var err error
+	repo, err = storage.OpenMX(repoPath)
+	if err != nil {
+		return fmt.Errorf("opening repository: %w", err)
+	}
+
+	return nil
+}
+
+// GetRepository returns the current repository instance
+func GetRepository() (*storage.MXStore, error) {
+	if repo == nil {
+		return nil, fmt.Errorf("repository not initialized")
+	}
+	return repo, nil
+}
+
+// EditCommand opens the editor
+func EditCommand() error {
+	editor := NewEditor(repo.Path())
+	content, err := editor.Run()
+	if err != nil {
+		return fmt.Errorf("running editor: %w", err)
+	}
+
+	if content == "" {
+		return nil // User cancelled
+	}
+
+	meta := map[string]any{
+		"added":   time.Now().Format(time.RFC3339),
+		"content": content,
+	}
+
+	id, err := repo.AddNode([]byte(content), "note", meta)
+	if err != nil {
+		return fmt.Errorf("adding note: %w", err)
+	}
+
+	fmt.Printf("Added note (ID: %s)\n", id[:8])
 	return nil
 }
 
 // AddCommand adds a file to the repository
 func AddCommand(path string) error {
-	// Read file content
-	content, err := os.ReadFile(path)
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return fmt.Errorf("resolving path: %w", err)
+	}
+
+	info, err := os.Stat(absPath)
+	if err != nil {
+		return fmt.Errorf("checking path: %w", err)
+	}
+
+	if info.IsDir() {
+		return fmt.Errorf("'%s' is a directory. Use 'add <file>' to add individual files", path)
+	}
+
+	content, err := os.ReadFile(absPath)
 	if err != nil {
 		return fmt.Errorf("reading file: %w", err)
 	}
 
-	// Create metadata
 	meta := map[string]any{
-		"filename": filepath.Base(path),
+		"filename": filepath.Base(absPath),
 		"added":    time.Now().Format(time.RFC3339),
 	}
 
-	// Add to repository
 	id, err := repo.AddNode(content, "file", meta)
 	if err != nil {
 		return fmt.Errorf("adding to repository: %w", err)
 	}
 
-	fmt.Printf("Added %s (ID: %s)\n", filepath.Base(path), id[:8])
+	fmt.Printf("Added %s (ID: %s)\n", filepath.Base(absPath), id[:8])
 	return nil
 }
 
 // DeleteCommand deletes an object from the repository
 func DeleteCommand(id string) error {
-	// Get object first to verify it exists and get its name
 	node, err := repo.GetNode(id)
 	if err != nil {
 		return fmt.Errorf("error: %w", err)
 	}
 
-	// Delete the object
 	if err := repo.DeleteNode(id); err != nil {
 		return fmt.Errorf("error deleting object: %w", err)
 	}
@@ -89,13 +206,11 @@ func LinkCommand(source, target, linkType string, note string) error {
 
 // LinksCommand shows links for an object
 func LinksCommand(id string) error {
-	// Get object first to verify it exists and get its name
 	node, err := repo.GetNode(id)
 	if err != nil {
 		return fmt.Errorf("error: %w", err)
 	}
 
-	// Get links
 	links, err := repo.GetLinks(id)
 	if err != nil {
 		return fmt.Errorf("error getting links: %w", err)
@@ -114,7 +229,6 @@ func LinksCommand(id string) error {
 	}
 
 	for _, link := range links {
-		// Get target object name
 		targetNode, err := repo.GetNode(link.Target)
 		if err != nil {
 			continue
@@ -205,10 +319,10 @@ func StatusCommand() error {
 	return nil
 }
 
-// GetRepository returns the current repository instance
-func GetRepository() (*storage.MXStore, error) {
-	if repo == nil {
-		return nil, fmt.Errorf("repository not initialized")
+// CloseRepository closes the current repository
+func CloseRepository() error {
+	if repo != nil {
+		return repo.Close()
 	}
-	return repo, nil
+	return nil
 }
