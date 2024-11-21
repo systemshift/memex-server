@@ -56,10 +56,13 @@ type MXStore struct {
 	blobs  []IndexEntry // Blob index
 }
 
+// Path returns the repository path
+func (s *MXStore) Path() string {
+	return s.path
+}
+
 // CreateMX creates a new .mx file
 func CreateMX(path string) (*MXStore, error) {
-	fmt.Fprintf(os.Stderr, "Creating file: %s\n", path)
-
 	// Ensure path ends with .mx
 	if !strings.HasSuffix(path, ".mx") {
 		path += ".mx"
@@ -70,7 +73,6 @@ func CreateMX(path string) (*MXStore, error) {
 	if err != nil {
 		return nil, fmt.Errorf("creating file: %w", err)
 	}
-	fmt.Fprintf(os.Stderr, "File created successfully\n")
 
 	// Initialize store
 	store := &MXStore{
@@ -94,14 +96,12 @@ func CreateMX(path string) (*MXStore, error) {
 		file.Close()
 		return nil, fmt.Errorf("writing header: %w", err)
 	}
-	fmt.Fprintf(os.Stderr, "Header written successfully\n")
 
 	// Write initial indexes
 	if err := store.writeIndexes(); err != nil {
 		file.Close()
 		return nil, fmt.Errorf("writing indexes: %w", err)
 	}
-	fmt.Fprintf(os.Stderr, "Indexes written successfully\n")
 
 	// Sync to disk
 	if err := file.Sync(); err != nil {
@@ -114,26 +114,21 @@ func CreateMX(path string) (*MXStore, error) {
 
 // OpenMX opens an existing .mx file
 func OpenMX(path string) (*MXStore, error) {
-	fmt.Fprintf(os.Stderr, "Opening file: %s\n", path)
-
 	// Ensure path ends with .mx
 	if !strings.HasSuffix(path, ".mx") {
 		path += ".mx"
 	}
 
 	// Check if file exists
-	info, err := os.Stat(path)
-	if err != nil {
+	if _, err := os.Stat(path); err != nil {
 		return nil, fmt.Errorf("checking file: %w", err)
 	}
-	fmt.Fprintf(os.Stderr, "File exists, size: %d (0x%x) bytes\n", info.Size(), info.Size())
 
 	// Open file with read/write permissions
 	file, err := os.OpenFile(path, os.O_RDWR, 0644)
 	if err != nil {
 		return nil, fmt.Errorf("opening file: %w", err)
 	}
-	fmt.Fprintf(os.Stderr, "File opened successfully\n")
 
 	// Initialize store
 	store := &MXStore{
@@ -146,47 +141,17 @@ func OpenMX(path string) (*MXStore, error) {
 		file.Close()
 		return nil, fmt.Errorf("reading header: %w", err)
 	}
-	fmt.Fprintf(os.Stderr, "Header read successfully\n")
 
 	// Verify magic number
 	if string(store.header.Magic[:]) != mxMagic {
 		file.Close()
 		return nil, fmt.Errorf("invalid file format")
 	}
-	fmt.Fprintf(os.Stderr, "Magic number verified\n")
 
 	// Read indexes
 	if err := store.readIndexes(); err != nil {
 		file.Close()
 		return nil, fmt.Errorf("reading indexes: %w", err)
-	}
-	fmt.Fprintf(os.Stderr, "Indexes read successfully\n")
-
-	// Dump file contents for debugging
-	fmt.Fprintf(os.Stderr, "File contents:\n")
-	buf := make([]byte, info.Size())
-	if _, err := file.ReadAt(buf, 0); err != nil {
-		fmt.Fprintf(os.Stderr, "Error reading file: %v\n", err)
-	} else {
-		fmt.Fprintf(os.Stderr, "=== First 128 bytes ===\n")
-		for i := 0; i < 128 && i < len(buf); i += 16 {
-			end := i + 16
-			if end > len(buf) {
-				end = len(buf)
-			}
-			fmt.Fprintf(os.Stderr, "%04x: % x\n", i, buf[i:end])
-		}
-		if info.Size() > 2500 {
-			fmt.Fprintf(os.Stderr, "\n=== Node Index (at 0x%x) ===\n", store.header.NodeIndex)
-			start := store.header.NodeIndex
-			for i := uint64(0); i < 44 && start+i < uint64(len(buf)); i += 16 {
-				end := start + i + 16
-				if end > uint64(len(buf)) {
-					end = uint64(len(buf))
-				}
-				fmt.Fprintf(os.Stderr, "%04x: % x\n", start+i, buf[start+i:end])
-			}
-		}
 	}
 
 	return store, nil
@@ -194,27 +159,21 @@ func OpenMX(path string) (*MXStore, error) {
 
 // Close closes the file
 func (s *MXStore) Close() error {
-	fmt.Fprintf(os.Stderr, "Closing file\n")
-
 	// Write final indexes
 	if err := s.writeIndexes(); err != nil {
 		return fmt.Errorf("writing indexes: %w", err)
 	}
-	fmt.Fprintf(os.Stderr, "Final indexes written\n")
 
 	// Sync to disk
 	if err := s.file.Sync(); err != nil {
 		return fmt.Errorf("syncing file: %w", err)
 	}
-	fmt.Fprintf(os.Stderr, "File synced\n")
 
 	return s.file.Close()
 }
 
 // writeHeader writes the file header
 func (s *MXStore) writeHeader() error {
-	fmt.Fprintf(os.Stderr, "Writing header...\n")
-
 	if _, err := s.file.Seek(0, io.SeekStart); err != nil {
 		return fmt.Errorf("seeking to start: %w", err)
 	}
@@ -272,11 +231,6 @@ func (s *MXStore) writeHeader() error {
 		return fmt.Errorf("writing header to file: %w", err)
 	}
 
-	fmt.Fprintf(os.Stderr, "Wrote header: magic=%s version=%d counts=[nodes=%d edges=%d blobs=%d] offsets=[nodes=0x%x edges=0x%x blobs=0x%x]\n",
-		mxMagic, s.header.Version,
-		s.header.NodeCount, s.header.EdgeCount, s.header.BlobCount,
-		s.header.NodeIndex, s.header.EdgeIndex, s.header.BlobIndex)
-
 	// Sync to disk
 	if err := s.file.Sync(); err != nil {
 		return fmt.Errorf("syncing file: %w", err)
@@ -287,8 +241,6 @@ func (s *MXStore) writeHeader() error {
 
 // readHeader reads the file header
 func (s *MXStore) readHeader() error {
-	fmt.Fprintf(os.Stderr, "Reading header...\n")
-
 	if _, err := s.file.Seek(0, io.SeekStart); err != nil {
 		return fmt.Errorf("seeking to start: %w", err)
 	}
@@ -342,11 +294,6 @@ func (s *MXStore) readHeader() error {
 	if _, err := io.ReadFull(s.file, s.header.Reserved[:]); err != nil {
 		return fmt.Errorf("reading reserved space: %w", err)
 	}
-
-	fmt.Fprintf(os.Stderr, "Read header: magic=%s version=%d counts=[nodes=%d edges=%d blobs=%d] offsets=[nodes=0x%x edges=0x%x blobs=0x%x]\n",
-		magic, s.header.Version,
-		s.header.NodeCount, s.header.EdgeCount, s.header.BlobCount,
-		s.header.NodeIndex, s.header.EdgeIndex, s.header.BlobIndex)
 
 	return nil
 }

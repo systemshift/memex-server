@@ -1,70 +1,95 @@
 package main
 
 import (
-	"flag"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"time"
 
+	"memex/internal/memex"
 	"memex/internal/memex/storage"
 )
 
 var mx *storage.MXStore
 
-// InitCommand initializes a new repository
-func InitCommand(path string) error {
-	fmt.Fprintf(os.Stderr, "Initializing repository at %s\n", path)
+func getConnectedRepo() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	data, err := os.ReadFile(filepath.Join(home, ".memex"))
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
 
-	// Check if file exists
+func saveConnectedRepo(path string) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(home, ".memex"), []byte(path), 0644)
+}
+
+// InitCommand initializes a new repository
+func InitCommand(name string) error {
+	path := name + ".mx"
 	if _, err := os.Stat(path); err == nil {
-		fmt.Fprintf(os.Stderr, "Repository already exists at %s\n", path)
-		// Try to open existing repository
-		mx, err = storage.OpenMX(path)
-		if err != nil {
-			return fmt.Errorf("opening existing repository: %w", err)
-		}
-		return nil
-	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("checking repository: %w", err)
+		return fmt.Errorf("repository already exists at %s", path)
 	}
 
-	// Create new repository
 	var err error
 	mx, err = storage.CreateMX(path)
 	if err != nil {
 		return fmt.Errorf("creating repository: %w", err)
 	}
 
-	fmt.Fprintf(os.Stderr, "Repository initialized successfully\n")
+	if err := saveConnectedRepo(path); err != nil {
+		return fmt.Errorf("connecting to new repo: %w", err)
+	}
+
+	fmt.Printf("Created repository %s\n", path)
+	return nil
+}
+
+// EditCommand opens the editor
+func EditCommand() error {
+	editor := memex.NewEditor(mx.Path())
+	content, err := editor.Run()
+	if err != nil {
+		return fmt.Errorf("running editor: %w", err)
+	}
+
+	if content == "" {
+		return nil // User cancelled
+	}
+
+	meta := map[string]any{
+		"added": time.Now(),
+	}
+
+	id, err := mx.AddNode([]byte(content), "note", meta)
+	if err != nil {
+		return fmt.Errorf("adding note: %w", err)
+	}
+
+	fmt.Printf("Added note (ID: %s)\n", id[:8])
 	return nil
 }
 
 // AddCommand adds a file to the repository
 func AddCommand(path string) error {
-	fmt.Fprintf(os.Stderr, "Adding file: %s\n", path)
-
-	// Check if file exists
-	if _, err := os.Stat(path); err != nil {
-		return fmt.Errorf("checking file: %w", err)
-	}
-
-	// Read file content
 	content, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("reading file: %w", err)
 	}
 
-	fmt.Fprintf(os.Stderr, "Read %d bytes from file\n", len(content))
-
-	// Create metadata
 	meta := map[string]any{
 		"filename": filepath.Base(path),
 		"added":    time.Now(),
 	}
 
-	// Add to repository
 	id, err := mx.AddNode(content, "file", meta)
 	if err != nil {
 		return fmt.Errorf("adding to repository: %w", err)
@@ -76,15 +101,11 @@ func AddCommand(path string) error {
 
 // DeleteCommand deletes an object from the repository
 func DeleteCommand(id string) error {
-	fmt.Fprintf(os.Stderr, "Deleting object: %s\n", id)
-
-	// Get object first to verify it exists and get its name
 	obj, err := mx.GetNode(id)
 	if err != nil {
 		return fmt.Errorf("error: %w", err)
 	}
 
-	// Delete the object
 	if err := mx.DeleteNode(id); err != nil {
 		return fmt.Errorf("error deleting object: %w", err)
 	}
@@ -92,8 +113,6 @@ func DeleteCommand(id string) error {
 	name := id[:8]
 	if filename, ok := obj.Meta["filename"].(string); ok {
 		name = filename
-	} else if title, ok := obj.Meta["title"].(string); ok {
-		name = title
 	}
 
 	fmt.Printf("Deleted %s (ID: %s)\n", name, id[:8])
@@ -102,8 +121,6 @@ func DeleteCommand(id string) error {
 
 // LinkCommand creates a link between objects
 func LinkCommand(source, target, linkType string, note string) error {
-	fmt.Fprintf(os.Stderr, "Creating link: %s -> %s (%s)\n", source, target, linkType)
-
 	meta := map[string]any{}
 	if note != "" {
 		meta["note"] = note
@@ -120,27 +137,19 @@ func LinkCommand(source, target, linkType string, note string) error {
 
 // LinksCommand shows links for an object
 func LinksCommand(id string) error {
-	fmt.Fprintf(os.Stderr, "Getting links for: %s\n", id)
-
-	// Get object first to verify it exists and get its name
 	obj, err := mx.GetNode(id)
 	if err != nil {
 		return fmt.Errorf("error getting node: %w", err)
 	}
-	fmt.Fprintf(os.Stderr, "Found node: %+v\n", obj)
 
-	// Get links
 	links, err := mx.GetLinks(id)
 	if err != nil {
 		return fmt.Errorf("error getting links: %w", err)
 	}
-	fmt.Fprintf(os.Stderr, "Found %d links\n", len(links))
 
 	name := id[:8]
 	if filename, ok := obj.Meta["filename"].(string); ok {
 		name = filename
-	} else if title, ok := obj.Meta["title"].(string); ok {
-		name = title
 	}
 
 	fmt.Printf("Links for %s (ID: %s):\n\n", name, id[:8])
@@ -151,7 +160,6 @@ func LinksCommand(id string) error {
 	}
 
 	for _, link := range links {
-		// Get target object name
 		targetObj, err := mx.GetNode(link.Target)
 		if err != nil {
 			continue
@@ -160,8 +168,6 @@ func LinksCommand(id string) error {
 		targetName := link.Target[:8]
 		if filename, ok := targetObj.Meta["filename"].(string); ok {
 			targetName = filename
-		} else if title, ok := targetObj.Meta["title"].(string); ok {
-			targetName = title
 		}
 
 		fmt.Printf("Type: %s\n", link.Type)
@@ -175,67 +181,103 @@ func LinksCommand(id string) error {
 	return nil
 }
 
+func showUsage() {
+	fmt.Println("Usage:")
+	fmt.Println("  memex init <name>     Create a new repository")
+	fmt.Println("  memex connect <path>  Connect to an existing repository")
+	fmt.Println("  memex add <file>      Add a file to the repository")
+	fmt.Println("  memex delete <id>     Delete an object")
+	fmt.Println("  memex link <src> <dst> <type> [note]  Create a link between objects")
+	fmt.Println("  memex links <id>      Show links for an object")
+	os.Exit(1)
+}
+
 func main() {
-	// Set up logging
-	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds | log.Lshortfile)
-	log.SetOutput(os.Stderr)
+	args := os.Args[1:]
 
-	// Parse flags
-	repoPath := flag.String("repo", "", "Repository path")
-	flag.Parse()
+	// Handle init and connect commands first
+	if len(args) > 0 {
+		switch args[0] {
+		case "init":
+			if len(args) != 2 {
+				fmt.Println("Error: Repository name required")
+				showUsage()
+			}
+			if err := InitCommand(args[1]); err != nil {
+				fmt.Printf("Error: %v\n", err)
+				os.Exit(1)
+			}
+			return
 
-	// Get command and args
-	args := flag.Args()
-	if len(args) < 1 {
-		log.Fatal("Command required")
+		case "connect":
+			if len(args) != 2 {
+				fmt.Println("Error: Repository path required")
+				showUsage()
+			}
+			if err := saveConnectedRepo(args[1]); err != nil {
+				fmt.Printf("Error: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Printf("Connected to %s\n", args[1])
+			return
+		}
 	}
+
+	// For all other commands, need a connected repo
+	repoPath := getConnectedRepo()
+	if repoPath == "" {
+		fmt.Println("Error: No repository connected. Use 'init <name>' or 'connect <path>' first")
+		showUsage()
+	}
+
+	// Check if the connected repo exists
+	if _, err := os.Stat(repoPath); err != nil {
+		fmt.Printf("Error: Connected repository '%s' not found. Use 'init <name>' or 'connect <path>' to connect to a valid repository\n", repoPath)
+		showUsage()
+	}
+
+	// Open the repository
+	var err error
+	mx, err = storage.OpenMX(repoPath)
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	defer mx.Close()
+
+	// If no command provided, open editor
+	if len(args) == 0 {
+		if err := EditCommand(); err != nil {
+			fmt.Printf("Error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	// Execute command
 	cmd := args[0]
 	args = args[1:]
 
-	// Initialize repository
-	if *repoPath == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			log.Fatal(err)
-		}
-		*repoPath = filepath.Join(home, "memex.mx")
-	}
-
-	fmt.Fprintf(os.Stderr, "Using repository: %s\n", *repoPath)
-
-	if err := InitCommand(*repoPath); err != nil {
-		log.Fatal(err)
-	}
-
-	if mx == nil {
-		log.Fatal("Repository not initialized")
-	}
-
-	defer func() {
-		fmt.Fprintf(os.Stderr, "Closing repository\n")
-		if err := mx.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error closing repository: %v\n", err)
-		}
-	}()
-
-	// Execute command
-	var err error
 	switch cmd {
 	case "add":
 		if len(args) != 1 {
-			log.Fatal("File path required")
+			fmt.Println("Error: File path required")
+			showUsage()
 		}
 		err = AddCommand(args[0])
 
 	case "delete":
 		if len(args) != 1 {
-			log.Fatal("ID required")
+			fmt.Println("Error: ID required")
+			showUsage()
 		}
 		err = DeleteCommand(args[0])
 
 	case "link":
 		if len(args) < 3 {
-			log.Fatal("Source, target, and link type required")
+			fmt.Println("Error: Source, target, and link type required")
+			showUsage()
 		}
 		note := ""
 		if len(args) > 3 {
@@ -245,15 +287,18 @@ func main() {
 
 	case "links":
 		if len(args) != 1 {
-			log.Fatal("ID required")
+			fmt.Println("Error: ID required")
+			showUsage()
 		}
 		err = LinksCommand(args[0])
 
 	default:
-		log.Fatalf("Unknown command: %s", cmd)
+		fmt.Printf("Error: Unknown command: %s\n", cmd)
+		showUsage()
 	}
 
 	if err != nil {
-		log.Fatal(err)
+		fmt.Printf("Error: %v\n", err)
+		os.Exit(1)
 	}
 }

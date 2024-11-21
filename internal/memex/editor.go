@@ -3,6 +3,8 @@ package memex
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"golang.org/x/term"
 )
@@ -14,10 +16,11 @@ type Editor struct {
 	cursorY    int
 	screenRows int
 	screenCols int
+	repoName   string
 }
 
 // NewEditor creates a new editor instance
-func NewEditor() *Editor {
+func NewEditor(repoPath string) *Editor {
 	rows, cols, err := term.GetSize(int(os.Stdout.Fd()))
 	if err != nil {
 		rows = 24
@@ -25,8 +28,9 @@ func NewEditor() *Editor {
 	}
 	return &Editor{
 		content:    [][]rune{{}}, // Start with one empty line
-		screenRows: rows - 2,     // Leave room for status line
+		screenRows: rows - 3,     // Leave room for title and status line
 		screenCols: cols,
+		repoName:   filepath.Base(repoPath),
 	}
 }
 
@@ -75,6 +79,17 @@ func (e *Editor) refreshScreen() {
 	fmt.Print("\x1b[2J")
 	fmt.Print("\x1b[H")
 
+	// Draw title
+	fmt.Print("\x1b[7m") // Invert colors
+	title := fmt.Sprintf(" %s ", e.repoName)
+	padding := e.screenCols - len(title)
+	if padding > 0 {
+		title += strings.Repeat(" ", padding)
+	}
+	fmt.Print(title)
+	fmt.Print("\x1b[m") // Reset colors
+	fmt.Print("\r\n")
+
 	// Draw content
 	for i, line := range e.content {
 		if i >= e.screenRows {
@@ -90,11 +105,15 @@ func (e *Editor) refreshScreen() {
 	if len(status) > e.screenCols {
 		status = status[:e.screenCols]
 	}
+	padding = e.screenCols - len(status)
+	if padding > 0 {
+		status += strings.Repeat(" ", padding)
+	}
 	fmt.Print(status)
 	fmt.Print("\x1b[m") // Reset colors
 
 	// Position cursor
-	fmt.Printf("\x1b[%d;%dH", e.cursorY+1, e.cursorX+1)
+	fmt.Printf("\x1b[%d;%dH", e.cursorY+2, e.cursorX+1) // +2 to account for title line
 }
 
 func (e *Editor) insertChar(ch rune) {
