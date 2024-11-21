@@ -4,150 +4,131 @@ This document describes the HTTP API endpoints provided by the memexd server.
 
 ## Base URL
 
-All API URLs are relative to: `http://localhost:8080/api/`
+All endpoints are relative to: `http://localhost:3000/`
 
 ## Content Types
 
-- Request bodies should be `application/json` unless uploading files
-- File uploads should use `multipart/form-data`
-- Responses will be `application/json`
-
-## Authentication
-
-Currently, the API does not require authentication. This may change in future versions.
+- File uploads use `multipart/form-data`
+- Form submissions use `application/x-www-form-urlencoded`
+- Responses are HTML pages (web interface)
 
 ## Endpoints
 
-### Add Content
+### View Repository
+```
+GET /
+```
+
+View the repository contents, including files, notes, and their links.
+
+**Response:**
+- HTML page showing repository contents
+
+### Add File
 ```
 POST /add
 Content-Type: multipart/form-data
 ```
 
-Upload a file to store in the system.
+Upload a file to the repository.
 
 **Parameters:**
-- `file`: The file to upload
+- `file`: The file to upload (form field)
 
 **Response:**
-```json
-{
-    "id": "abcd1234..."
-}
+- Redirects to `/` on success
+- Error page on failure
+
+### Delete Node
 ```
+POST /delete
+Content-Type: application/x-www-form-urlencoded
+```
+
+Delete a node from the repository.
+
+**Parameters:**
+- `id`: Node ID to delete
+
+**Response:**
+- Redirects to `/` on success
+- Error page on failure
 
 ### Create Link
 ```
 POST /link
-Content-Type: application/json
+Content-Type: application/x-www-form-urlencoded
 ```
 
-Create a link between two pieces of content.
+Create a link between two nodes.
 
-**Request Body:**
-```json
-{
-    "source": "source-id",
-    "target": "target-id",
-    "type": "link-type",
-    "meta": {
-        "note": "Optional link metadata"
-    }
-}
-```
+**Parameters:**
+- `source`: Source node ID
+- `target`: Target node ID
+- `type`: Link type
+- `note`: Optional note about the link
 
 **Response:**
-- Status: 201 Created
+- Redirects to `/` on success
+- Error page on failure
 
 ### Search
 ```
-POST /search
-Content-Type: application/json
+GET /search
 ```
 
-Search for content based on criteria.
+Search for nodes based on query parameters.
 
-**Request Body:**
-```json
-{
-    "type": "document",
-    "tags": ["important"],
-    "created_after": "2024-01-01T00:00:00Z"
-}
-```
+**Parameters:**
+- Query parameters are converted to search criteria
 
 **Response:**
-```json
-{
-    "results": [
-        {
-            "id": "abcd1234...",
-            "type": "document",
-            "metadata": {
-                "tags": ["important"],
-                "created": "2024-01-15T10:30:00Z"
-            }
-        }
-    ]
-}
-```
+- HTML page showing search results
 
-## Error Responses
+## Error Handling
 
-All error responses follow this format:
-
-```json
-{
-    "error": "Error message describing what went wrong"
-}
-```
+All errors result in:
+- HTTP error status code
+- Error page with message
 
 Common HTTP status codes:
 - 400: Bad Request - Invalid input
 - 404: Not Found - Resource doesn't exist
+- 405: Method Not Allowed - Wrong HTTP method
 - 500: Internal Server Error - Server-side error
-
-## Rate Limiting
-
-Currently, there are no rate limits implemented. This may change in future versions.
 
 ## Examples
 
 ### Adding a File
-```bash
-curl -X POST http://localhost:8080/api/add \
-  -F "file=@document.pdf"
+```html
+<form action="/add" method="post" enctype="multipart/form-data">
+  <input type="file" name="file">
+  <button type="submit">Upload</button>
+</form>
 ```
 
 ### Creating a Link
-```bash
-curl -X POST http://localhost:8080/api/link \
-  -H "Content-Type: application/json" \
-  -d '{
-    "source": "abc123",
-    "target": "def456",
-    "type": "reference",
-    "meta": {
-      "note": "Important connection"
-    }
-  }'
+```html
+<form action="/link" method="post">
+  <input type="hidden" name="source" value="abc123">
+  <input type="hidden" name="target" value="def456">
+  <input type="text" name="type" value="reference">
+  <input type="text" name="note" value="Important connection">
+  <button type="submit">Create Link</button>
+</form>
 ```
 
 ### Searching
-```bash
-curl -X POST http://localhost:8080/api/search \
-  -H "Content-Type: application/json" \
-  -d '{
-    "type": "document",
-    "tags": ["important"]
-  }'
+```
+GET /search?type=file&filename=document.txt
 ```
 
-## Future Endpoints
+## Future Enhancements
 
-Planned for future releases:
-- Content versioning
+Planned improvements:
+- JSON API endpoints
+- Authentication
 - Batch operations
-- Advanced querying
-- User management
-- Access control
+- WebSocket updates
+- Content versioning
+- Advanced search options
