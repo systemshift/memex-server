@@ -25,31 +25,42 @@ func getConnectedRepo() string {
 }
 
 func saveConnectedRepo(path string) error {
+	// Convert to absolute path
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(home, ".memex"), []byte(path), 0644)
+	return os.WriteFile(filepath.Join(home, ".memex"), []byte(absPath), 0644)
 }
 
 // InitCommand initializes a new repository
 func InitCommand(name string) error {
 	path := name + ".mx"
-	if _, err := os.Stat(path); err == nil {
-		return fmt.Errorf("repository already exists at %s", path)
+	// Convert to absolute path
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return err
 	}
 
-	var err error
-	mx, err = storage.CreateMX(path)
+	if _, err := os.Stat(absPath); err == nil {
+		return fmt.Errorf("repository already exists at %s", absPath)
+	}
+
+	mx, err = storage.CreateMX(absPath)
 	if err != nil {
 		return fmt.Errorf("creating repository: %w", err)
 	}
 
-	if err := saveConnectedRepo(path); err != nil {
+	if err := saveConnectedRepo(absPath); err != nil {
 		return fmt.Errorf("connecting to new repo: %w", err)
 	}
 
-	fmt.Printf("Created repository %s\n", path)
+	fmt.Printf("Created repository %s\n", absPath)
 	return nil
 }
 
@@ -80,13 +91,19 @@ func EditCommand() error {
 
 // AddCommand adds a file to the repository
 func AddCommand(path string) error {
-	content, err := os.ReadFile(path)
+	// Convert to absolute path
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return fmt.Errorf("resolving path: %w", err)
+	}
+
+	content, err := os.ReadFile(absPath)
 	if err != nil {
 		return fmt.Errorf("reading file: %w", err)
 	}
 
 	meta := map[string]any{
-		"filename": filepath.Base(path),
+		"filename": filepath.Base(absPath),
 		"added":    time.Now(),
 	}
 
@@ -95,7 +112,7 @@ func AddCommand(path string) error {
 		return fmt.Errorf("adding to repository: %w", err)
 	}
 
-	fmt.Printf("Added %s (ID: %s)\n", filepath.Base(path), id[:8])
+	fmt.Printf("Added %s (ID: %s)\n", filepath.Base(absPath), id[:8])
 	return nil
 }
 
@@ -214,11 +231,17 @@ func main() {
 				fmt.Println("Error: Repository path required")
 				showUsage()
 			}
-			if err := saveConnectedRepo(args[1]); err != nil {
+			// Convert to absolute path
+			absPath, err := filepath.Abs(args[1])
+			if err != nil {
 				fmt.Printf("Error: %v\n", err)
 				os.Exit(1)
 			}
-			fmt.Printf("Connected to %s\n", args[1])
+			if err := saveConnectedRepo(absPath); err != nil {
+				fmt.Printf("Error: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Printf("Connected to %s\n", absPath)
 			return
 		}
 	}
