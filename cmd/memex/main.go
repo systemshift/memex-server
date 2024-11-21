@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -25,7 +26,6 @@ func getConnectedRepo() string {
 }
 
 func saveConnectedRepo(path string) error {
-	// Convert to absolute path
 	absPath, err := filepath.Abs(path)
 	if err != nil {
 		return err
@@ -41,7 +41,6 @@ func saveConnectedRepo(path string) error {
 // InitCommand initializes a new repository
 func InitCommand(name string) error {
 	path := name + ".mx"
-	// Convert to absolute path
 	absPath, err := filepath.Abs(path)
 	if err != nil {
 		return err
@@ -91,10 +90,18 @@ func EditCommand() error {
 
 // AddCommand adds a file to the repository
 func AddCommand(path string) error {
-	// Convert to absolute path
 	absPath, err := filepath.Abs(path)
 	if err != nil {
 		return fmt.Errorf("resolving path: %w", err)
+	}
+
+	info, err := os.Stat(absPath)
+	if err != nil {
+		return fmt.Errorf("checking path: %w", err)
+	}
+
+	if info.IsDir() {
+		return fmt.Errorf("'%s' is a directory. Use 'add <file>' to add individual files", path)
 	}
 
 	content, err := os.ReadFile(absPath)
@@ -198,19 +205,52 @@ func LinksCommand(id string) error {
 	return nil
 }
 
-func showUsage() {
-	fmt.Println("Usage:")
-	fmt.Println("  memex init <name>     Create a new repository")
-	fmt.Println("  memex connect <path>  Connect to an existing repository")
-	fmt.Println("  memex add <file>      Add a file to the repository")
-	fmt.Println("  memex delete <id>     Delete an object")
-	fmt.Println("  memex link <src> <dst> <type> [note]  Create a link between objects")
-	fmt.Println("  memex links <id>      Show links for an object")
-	os.Exit(1)
+func showHelp() {
+	fmt.Println(`memex - A personal knowledge graph
+
+Usage:
+  memex [command] [arguments]
+
+Commands:
+  init <name>     Create a new repository
+  connect <path>  Connect to an existing repository
+  add <file>      Add a file to the repository
+  delete <id>     Delete an object
+  link <src> <dst> <type> [note]  Create a link between objects
+  links <id>      Show links for an object
+  help            Show this help message
+
+When no command is provided and a repository is connected:
+  Opens an editor to create a new note
+
+Examples:
+  memex init my_repo              Create a new repository
+  memex connect my_repo.mx        Connect to existing repository
+  memex add document.txt          Add a file
+  memex link abc123 def456 ref    Create a reference link
+  memex links abc123              Show links for an object
+
+For more information, visit: https://github.com/systemshift/memex`)
+	os.Exit(0)
 }
 
 func main() {
-	args := os.Args[1:]
+	// Handle help flags
+	flag.Usage = showHelp
+	help := flag.Bool("help", false, "Show help message")
+	h := flag.Bool("h", false, "Show help message")
+	flag.Parse()
+
+	if *help || *h {
+		showHelp()
+	}
+
+	args := flag.Args()
+
+	// Handle help command
+	if len(args) > 0 && (args[0] == "help" || args[0] == "--help") {
+		showHelp()
+	}
 
 	// Handle init and connect commands first
 	if len(args) > 0 {
@@ -218,7 +258,7 @@ func main() {
 		case "init":
 			if len(args) != 2 {
 				fmt.Println("Error: Repository name required")
-				showUsage()
+				showHelp()
 			}
 			if err := InitCommand(args[1]); err != nil {
 				fmt.Printf("Error: %v\n", err)
@@ -229,9 +269,8 @@ func main() {
 		case "connect":
 			if len(args) != 2 {
 				fmt.Println("Error: Repository path required")
-				showUsage()
+				showHelp()
 			}
-			// Convert to absolute path
 			absPath, err := filepath.Abs(args[1])
 			if err != nil {
 				fmt.Printf("Error: %v\n", err)
@@ -250,13 +289,13 @@ func main() {
 	repoPath := getConnectedRepo()
 	if repoPath == "" {
 		fmt.Println("Error: No repository connected. Use 'init <name>' or 'connect <path>' first")
-		showUsage()
+		showHelp()
 	}
 
 	// Check if the connected repo exists
 	if _, err := os.Stat(repoPath); err != nil {
 		fmt.Printf("Error: Connected repository '%s' not found. Use 'init <name>' or 'connect <path>' to connect to a valid repository\n", repoPath)
-		showUsage()
+		showHelp()
 	}
 
 	// Open the repository
@@ -286,21 +325,21 @@ func main() {
 	case "add":
 		if len(args) != 1 {
 			fmt.Println("Error: File path required")
-			showUsage()
+			showHelp()
 		}
 		err = AddCommand(args[0])
 
 	case "delete":
 		if len(args) != 1 {
 			fmt.Println("Error: ID required")
-			showUsage()
+			showHelp()
 		}
 		err = DeleteCommand(args[0])
 
 	case "link":
 		if len(args) < 3 {
 			fmt.Println("Error: Source, target, and link type required")
-			showUsage()
+			showHelp()
 		}
 		note := ""
 		if len(args) > 3 {
@@ -311,13 +350,13 @@ func main() {
 	case "links":
 		if len(args) != 1 {
 			fmt.Println("Error: ID required")
-			showUsage()
+			showHelp()
 		}
 		err = LinksCommand(args[0])
 
 	default:
 		fmt.Printf("Error: Unknown command: %s\n", cmd)
-		showUsage()
+		showHelp()
 	}
 
 	if err != nil {
