@@ -53,8 +53,8 @@ func (s *MXStore) storeBlob(content []byte) (string, error) {
 	return hashStr, nil
 }
 
-// loadBlob loads content by hash
-func (s *MXStore) loadBlob(hash string) ([]byte, error) {
+// LoadBlob loads content by hash
+func (s *MXStore) LoadBlob(hash string) ([]byte, error) {
 	// Convert hash to bytes
 	hashBytes, err := hex.DecodeString(hash)
 	if err != nil {

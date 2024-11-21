@@ -19,76 +19,88 @@ func TestStorage(t *testing.T) {
 
 	// Create test repository
 	repoPath := filepath.Join(tmpDir, "test.mx")
-	repo, err := storage.CreateRepository(repoPath, "test")
+	repo, err := storage.CreateMX(repoPath)
 	if err != nil {
 		t.Fatalf("Error creating repository: %v", err)
 	}
 
 	// Test storing content
 	content := []byte("Test content")
-	hash, err := repo.GetChunkStore().Store(content)
+	meta := map[string]any{
+		"filename": "test.txt",
+		"added":    "2024-01-01T00:00:00Z",
+	}
+	id, err := repo.AddNode(content, "file", meta)
 	if err != nil {
 		t.Fatalf("Error storing content: %v", err)
 	}
 
 	// Test retrieving content
-	retrieved, err := repo.GetChunkStore().Load(hash)
+	node, err := repo.GetNode(id)
 	if err != nil {
 		t.Fatalf("Error loading content: %v", err)
 	}
 
-	if !bytes.Equal(retrieved, content) {
+	// Get content from blob store
+	contentHash := node.Meta["content"].(string)
+	blob, err := repo.LoadBlob(contentHash)
+	if err != nil {
+		t.Fatalf("Error loading blob: %v", err)
+	}
+
+	if !bytes.Equal(content, blob) {
 		t.Error("Content not preserved correctly")
 	}
 
 	// Test content exists
-	if !repo.GetChunkStore().Has(hash) {
+	_, err = repo.GetNode(id)
+	if err != nil {
 		t.Error("Content should exist")
 	}
 
 	// Test deleting content
-	if err := repo.GetChunkStore().Delete(hash); err != nil {
+	if err := repo.DeleteNode(id); err != nil {
 		t.Fatalf("Error deleting content: %v", err)
 	}
 
 	// Verify content is deleted
-	if repo.GetChunkStore().Has(hash) {
+	_, err = repo.GetNode(id)
+	if err == nil {
 		t.Error("Content should be deleted")
 	}
 
 	// Test storing duplicate content
-	hash1, err := repo.GetChunkStore().Store(content)
+	id1, err := repo.AddNode(content, "file", meta)
 	if err != nil {
 		t.Fatalf("Error storing content first time: %v", err)
 	}
 
-	hash2, err := repo.GetChunkStore().Store(content)
+	id2, err := repo.AddNode(content, "file", meta)
 	if err != nil {
 		t.Fatalf("Error storing content second time: %v", err)
 	}
 
-	if hash1 != hash2 {
-		t.Error("Duplicate content should have same hash")
-	}
-
-	// Test content deduplication
-	if !repo.GetChunkStore().Has(hash1) {
+	// Test content exists
+	_, err = repo.GetNode(id1)
+	if err != nil {
 		t.Error("First copy should exist")
 	}
 
-	if err := repo.GetChunkStore().Delete(hash1); err != nil {
+	if err := repo.DeleteNode(id1); err != nil {
 		t.Fatalf("Error deleting first copy: %v", err)
 	}
 
-	if !repo.GetChunkStore().Has(hash2) {
+	_, err = repo.GetNode(id2)
+	if err != nil {
 		t.Error("Second copy should still exist")
 	}
 
-	if err := repo.GetChunkStore().Delete(hash2); err != nil {
+	if err := repo.DeleteNode(id2); err != nil {
 		t.Fatalf("Error deleting second copy: %v", err)
 	}
 
-	if repo.GetChunkStore().Has(hash2) {
+	_, err = repo.GetNode(id2)
+	if err == nil {
 		t.Error("Content should be deleted after both copies removed")
 	}
 }

@@ -9,19 +9,15 @@ import (
 	"memex/internal/memex/storage"
 )
 
-var repo *storage.DAGStore
+var repo *storage.MXStore
 
 // InitCommand initializes a new repository
 func InitCommand(path string) error {
 	var err error
-	repo, err = storage.OpenRepository(path)
+	repo, err = storage.OpenMX(path)
 	if err != nil {
 		// If repository doesn't exist, create it
-		name := filepath.Base(path)
-		if filepath.Ext(name) == ".mx" {
-			name = name[:len(name)-3]
-		}
-		repo, err = storage.CreateRepository(path, name)
+		repo, err = storage.CreateMX(path)
 		if err != nil {
 			return fmt.Errorf("creating repository: %w", err)
 		}
@@ -40,7 +36,7 @@ func AddCommand(path string) error {
 	// Create metadata
 	meta := map[string]any{
 		"filename": filepath.Base(path),
-		"added":    time.Now(),
+		"added":    time.Now().Format(time.RFC3339),
 	}
 
 	// Add to repository
@@ -69,8 +65,6 @@ func DeleteCommand(id string) error {
 	name := id[:8]
 	if filename, ok := node.Meta["filename"].(string); ok {
 		name = filename
-	} else if title, ok := node.Meta["title"].(string); ok {
-		name = title
 	}
 
 	fmt.Printf("Deleted %s (ID: %s)\n", name, id[:8])
@@ -110,8 +104,6 @@ func LinksCommand(id string) error {
 	name := id[:8]
 	if filename, ok := node.Meta["filename"].(string); ok {
 		name = filename
-	} else if title, ok := node.Meta["title"].(string); ok {
-		name = title
 	}
 
 	fmt.Printf("Links for %s (ID: %s):\n\n", name, id[:8])
@@ -131,8 +123,6 @@ func LinksCommand(id string) error {
 		targetName := link.Target[:8]
 		if filename, ok := targetNode.Meta["filename"].(string); ok {
 			targetName = filename
-		} else if title, ok := targetNode.Meta["title"].(string); ok {
-			targetName = title
 		}
 
 		fmt.Printf("Type: %s\n", link.Type)
@@ -148,54 +138,75 @@ func LinksCommand(id string) error {
 
 // StatusCommand shows repository status
 func StatusCommand() error {
-	fmt.Println("Memex Status ===")
+	fmt.Printf("\nMemex Status ===\n\n")
+
+	// Show connected repo
+	fmt.Printf("Repository: %s\n\n", repo.Path())
+
+	// Get all nodes
+	var files []storage.IndexEntry
+	var notes []storage.IndexEntry
+	for _, entry := range repo.Nodes() {
+		// Read node metadata
+		obj, err := repo.GetNode(fmt.Sprintf("%x", entry.ID[:]))
+		if err != nil {
+			continue
+		}
+
+		if obj.Type == "file" {
+			files = append(files, entry)
+		} else if obj.Type == "note" {
+			notes = append(notes, entry)
+		}
+	}
+
+	// Show counts
+	fmt.Printf("Files (%d):\n", len(files))
+	for _, entry := range files {
+		obj, err := repo.GetNode(fmt.Sprintf("%x", entry.ID[:]))
+		if err != nil {
+			continue
+		}
+		filename := obj.Meta["filename"].(string)
+		// Parse the added time from string
+		var added time.Time
+		if addedStr, ok := obj.Meta["added"].(string); ok {
+			added, _ = time.Parse(time.RFC3339, addedStr)
+		} else {
+			added = time.Now() // fallback if no time found
+		}
+		fmt.Printf("  %x - %s (%s)\n", entry.ID[:4], filename, added.Format("02 Jan 06 15:04 MST"))
+	}
+
+	fmt.Printf("\nNotes (%d):\n", len(notes))
+	for _, entry := range notes {
+		obj, err := repo.GetNode(fmt.Sprintf("%x", entry.ID[:]))
+		if err != nil {
+			continue
+		}
+		// Parse the added time from string
+		var added time.Time
+		if addedStr, ok := obj.Meta["added"].(string); ok {
+			added, _ = time.Parse(time.RFC3339, addedStr)
+		} else {
+			added = time.Now() // fallback if no time found
+		}
+		// Get first line of note as title
+		if content, ok := obj.Meta["content"].(string); ok {
+			title := content
+			if len(title) > 50 {
+				title = title[:47] + "..."
+			}
+			fmt.Printf("  %x - %s (%s)\n", entry.ID[:4], title, added.Format("02 Jan 06 15:04 MST"))
+		}
+	}
+
 	fmt.Println()
-
-	// List notes
-	notes, err := repo.FindByType("note")
-	if err != nil {
-		return fmt.Errorf("finding notes: %w", err)
-	}
-
-	if len(notes) > 0 {
-		fmt.Printf("Notes (%d):\n", len(notes))
-		for _, node := range notes {
-			title := "Untitled"
-			if t, ok := node.Meta["title"].(string); ok {
-				title = t
-			}
-			fmt.Printf("  %s - %s (%s)\n", node.ID[:8], title, node.Created.UTC().Format("02 Jan 06 15:04 MST"))
-		}
-		fmt.Println()
-	}
-
-	// List files
-	files, err := repo.FindByType("file")
-	if err != nil {
-		return fmt.Errorf("finding files: %w", err)
-	}
-
-	if len(files) > 0 {
-		fmt.Printf("Files (%d):\n", len(files))
-		for _, node := range files {
-			filename := "unknown"
-			if f, ok := node.Meta["filename"].(string); ok {
-				filename = f
-			}
-			fmt.Printf("  %s - %s (%s)\n", node.ID[:8], filename, node.Created.UTC().Format("02 Jan 06 15:04 MST"))
-		}
-		fmt.Println()
-	}
-
-	if len(notes) == 0 && len(files) == 0 {
-		fmt.Println("No content found")
-	}
-
 	return nil
 }
 
 // GetRepository returns the current repository instance
-func GetRepository() (*storage.DAGStore, error) {
+func GetRepository() (*storage.MXStore, error) {
 	if repo == nil {
 		return nil, fmt.Errorf("repository not initialized")
 	}

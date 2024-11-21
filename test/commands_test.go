@@ -1,6 +1,7 @@
 package test
 
 import (
+	"fmt"
 	"os"
 	"testing"
 
@@ -38,15 +39,20 @@ func TestCommands(t *testing.T) {
 		t.Fatalf("Error getting repository: %v", err)
 	}
 
-	// Test search
-	nodes, err := repo.Search(map[string]any{
-		"filename": "test.txt",
-	})
-	if err != nil {
-		t.Fatalf("Error searching: %v", err)
+	// Test finding file
+	var found bool
+	for _, entry := range repo.Nodes() {
+		node, err := repo.GetNode(fmt.Sprintf("%x", entry.ID[:]))
+		if err != nil {
+			continue
+		}
+		if filename, ok := node.Meta["filename"].(string); ok && filename == "test.txt" {
+			found = true
+			break
+		}
 	}
-	if len(nodes) != 1 {
-		t.Errorf("Expected 1 search result, got %d", len(nodes))
+	if !found {
+		t.Error("Expected to find test.txt, but didn't")
 	}
 
 	// Test status command
@@ -66,23 +72,34 @@ func TestCommands(t *testing.T) {
 		t.Fatalf("Error adding second file: %v", err)
 	}
 
-	// Test search again
-	nodes, err = repo.Search(map[string]any{
-		"filename": "test2.txt",
-	})
-	if err != nil {
-		t.Fatalf("Error searching: %v", err)
+	// Test finding second file
+	found = false
+	for _, entry := range repo.Nodes() {
+		node, err := repo.GetNode(fmt.Sprintf("%x", entry.ID[:]))
+		if err != nil {
+			continue
+		}
+		if filename, ok := node.Meta["filename"].(string); ok && filename == "test2.txt" {
+			found = true
+			break
+		}
 	}
-	if len(nodes) != 1 {
-		t.Errorf("Expected 1 search result, got %d", len(nodes))
+	if !found {
+		t.Error("Expected to find test2.txt, but didn't")
 	}
 
-	// Test finding by type
-	files, err := repo.FindByType("file")
-	if err != nil {
-		t.Fatalf("Error finding by type: %v", err)
+	// Test counting files
+	fileCount := 0
+	for _, entry := range repo.Nodes() {
+		node, err := repo.GetNode(fmt.Sprintf("%x", entry.ID[:]))
+		if err != nil {
+			continue
+		}
+		if node.Type == "file" {
+			fileCount++
+		}
 	}
-	if len(files) != 2 {
-		t.Errorf("Expected 2 files, got %d", len(files))
+	if fileCount != 2 {
+		t.Errorf("Expected 2 files, got %d", fileCount)
 	}
 }
