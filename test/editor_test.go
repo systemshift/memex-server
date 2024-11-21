@@ -9,7 +9,7 @@ import (
 // TestEditor tests the non-interactive parts of the editor
 func TestEditor(t *testing.T) {
 	t.Run("New Editor", func(t *testing.T) {
-		editor := memex.NewEditor()
+		editor := memex.NewEditor("test_repo.mx")
 		if editor == nil {
 			t.Fatal("NewEditor returned nil")
 		}
