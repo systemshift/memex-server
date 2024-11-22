@@ -21,6 +21,16 @@ Commands:
   links <id>               Show links for a node
   status                   Show repository status
   export <path>            Export repository to tar archive
+  import <path>            Import repository from tar archive
+
+Export options:
+  --nodes <id1,id2,...>    Export specific nodes and their subgraph
+  --depth <n>              Maximum depth for subgraph export
+
+Import options:
+  --on-conflict <strategy> How to handle ID conflicts (skip, replace, rename)
+  --merge                  Merge with existing content
+  --prefix <prefix>        Add prefix to imported node IDs
 
 `, filepath.Base(os.Args[0]))
 	os.Exit(1)
@@ -109,6 +119,16 @@ func main() {
 		defer memex.CloseRepository()
 
 		err = memex.ExportCommand(args...)
+
+	case "import":
+		// Try to open repository in current directory
+		if err := memex.OpenRepository(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		defer memex.CloseRepository()
+
+		err = memex.ImportCommand(args...)
 
 	default:
 		usage()

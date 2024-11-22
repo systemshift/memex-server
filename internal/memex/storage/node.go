@@ -64,8 +64,11 @@ func (s *MXStore) writeNode(node NodeData) (uint64, error) {
 // AddNode adds a node to the store
 func (s *MXStore) AddNode(content []byte, nodeType string, meta map[string]any) (string, error) {
 	// Store content first
-	blobHash, err := s.storeBlob(content)
-	if err != nil {
+	hash := sha256.Sum256(content)
+	blobHash := hex.EncodeToString(hash[:])
+
+	// Store blob content
+	if err := s.StoreBlob(content); err != nil {
 		return "", fmt.Errorf("storing content: %w", err)
 	}
 

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"memex/internal/memex/migration"
 	"memex/internal/memex/storage"
@@ -147,9 +148,14 @@ func StatusCommand(args ...string) error {
 		if err != nil {
 			continue
 		}
-		fmt.Printf("Node ID: %s\n", node.ID)
+		fmt.Printf("\nNode ID: %s\n", node.ID)
 		if filename, ok := node.Meta["filename"].(string); ok {
 			fmt.Printf("  File: %s\n", filename)
+		}
+		fmt.Printf("  Type: %s\n", node.Type)
+		fmt.Printf("  Created: %s\n", node.Created.Format(time.RFC3339))
+		if contentHash, ok := node.Meta["content"].(string); ok {
+			fmt.Printf("  Content: %s\n", contentHash[:8])
 		}
 	}
 	return nil
@@ -313,5 +319,74 @@ func ExportCommand(args ...string) error {
 	}
 
 	fmt.Printf("Repository exported to %s\n", outputPath)
+	return nil
+}
+
+// ImportCommand imports content from a tar archive
+func ImportCommand(args ...string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("import requires input file path")
+	}
+
+	// Get input path
+	inputPath := args[0]
+
+	// Parse flags
+	var opts migration.ImportOptions
+	opts.OnConflict = migration.Skip // Default to skip conflicts
+	opts.Merge = false               // Default to no merge
+
+	for i := 1; i < len(args); i++ {
+		switch args[i] {
+		case "--on-conflict":
+			if i+1 >= len(args) {
+				return fmt.Errorf("--on-conflict requires strategy (skip, replace, rename)")
+			}
+			i++
+			switch args[i] {
+			case "skip":
+				opts.OnConflict = migration.Skip
+			case "replace":
+				opts.OnConflict = migration.Replace
+			case "rename":
+				opts.OnConflict = migration.Rename
+			default:
+				return fmt.Errorf("invalid conflict strategy: %s", args[i])
+			}
+
+		case "--merge":
+			opts.Merge = true
+
+		case "--prefix":
+			if i+1 >= len(args) {
+				return fmt.Errorf("--prefix requires value")
+			}
+			i++
+			opts.Prefix = args[i]
+		}
+	}
+
+	// Open input file
+	input, err := os.Open(inputPath)
+	if err != nil {
+		return fmt.Errorf("opening input file: %w", err)
+	}
+	defer input.Close()
+
+	// Get current repository
+	repo, err := GetRepository()
+	if err != nil {
+		return fmt.Errorf("getting repository: %w", err)
+	}
+
+	// Create importer
+	importer := migration.NewImporter(repo, input, opts)
+
+	// Import
+	if err := importer.Import(); err != nil {
+		return fmt.Errorf("importing content: %w", err)
+	}
+
+	fmt.Printf("Content imported from %s\n", inputPath)
 	return nil
 }
