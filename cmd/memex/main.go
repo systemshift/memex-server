@@ -4,151 +4,118 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"memex/internal/memex"
 )
 
-func showHelp() {
-	fmt.Println(`memex - A personal knowledge graph
-
-Usage:
-  memex [command] [arguments]
+func usage() {
+	fmt.Printf(`Usage: %s <command> [arguments]
 
 Commands:
-  init <name>     Create a new repository
-  connect <path>  Connect to an existing repository
-  status          Show repository status
-  add <file>      Add a file to the repository
-  delete <id>     Delete an object
-  link <src> <dst> <type> [note]  Create a link between objects
-  links <id>      Show links for an object
-  help            Show this help message
+  init <name>                Create a new repository
+  connect <path>            Connect to existing repository
+  add <file>               Add a file to repository
+  delete <id>              Delete a node
+  link <src> <dst> <type>  Create a link between nodes
+  links <id>               Show links for a node
+  status                   Show repository status
+  export <path>            Export repository to tar archive
 
-When no command is provided and a repository is connected:
-  Opens an editor to create a new note
-
-Examples:
-  memex init my_repo              Create a new repository
-  memex connect my_repo.mx        Connect to existing repository
-  memex status                    Show repository status
-  memex add document.txt          Add a file
-  memex link abc123 def456 ref    Create a reference link
-  memex links abc123              Show links for an object
-
-For more information, visit: https://github.com/your/memex`)
-	os.Exit(0)
+`, filepath.Base(os.Args[0]))
+	os.Exit(1)
 }
 
 func main() {
-	// Handle help flags
-	flag.Usage = showHelp
-	help := flag.Bool("help", false, "Show help message")
-	h := flag.Bool("h", false, "Show help message")
+	flag.Usage = usage
 	flag.Parse()
 
-	if *help || *h {
-		showHelp()
-	}
-
-	args := flag.Args()
-
-	// Handle help command
-	if len(args) > 0 && (args[0] == "help" || args[0] == "--help") {
-		showHelp()
-	}
-
-	// Handle init and connect commands first
-	if len(args) > 0 {
-		switch args[0] {
-		case "init":
-			if len(args) != 2 {
-				fmt.Println("Error: Repository name required")
-				showHelp()
-			}
-			if err := memex.InitCommand(args[1]); err != nil {
-				fmt.Printf("Error: %v\n", err)
-				os.Exit(1)
-			}
-			return
-
-		case "connect":
-			if len(args) != 2 {
-				fmt.Println("Error: Repository path required")
-				showHelp()
-			}
-			if err := memex.ConnectCommand(args[1]); err != nil {
-				fmt.Printf("Error: %v\n", err)
-				os.Exit(1)
-			}
-			return
-		}
-	}
-
-	// For all other commands, need a connected repo
-	if err := memex.OpenRepository(); err != nil {
-		fmt.Printf("Error: %v\n", err)
-		showHelp()
-	}
-
-	defer memex.CloseRepository()
-
-	// If no command provided, open editor
-	if len(args) == 0 {
+	if flag.NArg() < 1 {
+		// No command provided, open editor for new note
 		if err := memex.EditCommand(); err != nil {
-			fmt.Printf("Error: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
-		return
+		os.Exit(0)
 	}
 
-	// Execute command
-	cmd := args[0]
-	args = args[1:]
+	cmd := flag.Arg(0)
+	args := flag.Args()[1:]
 
 	var err error
 	switch cmd {
-	case "status":
-		err = memex.StatusCommand()
+	case "init":
+		err = memex.InitCommand(args...)
+
+	case "connect":
+		err = memex.ConnectCommand(args...)
 
 	case "add":
-		if len(args) != 1 {
-			fmt.Println("Error: File path required")
-			showHelp()
+		// Try to open repository in current directory
+		if err := memex.OpenRepository(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
 		}
-		err = memex.AddCommand(args[0])
+		defer memex.CloseRepository()
+
+		err = memex.AddCommand(args...)
 
 	case "delete":
-		if len(args) != 1 {
-			fmt.Println("Error: ID required")
-			showHelp()
+		// Try to open repository in current directory
+		if err := memex.OpenRepository(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
 		}
-		err = memex.DeleteCommand(args[0])
+		defer memex.CloseRepository()
+
+		err = memex.DeleteCommand(args...)
 
 	case "link":
-		if len(args) < 3 {
-			fmt.Println("Error: Source, target, and link type required")
-			showHelp()
+		// Try to open repository in current directory
+		if err := memex.OpenRepository(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
 		}
-		note := ""
-		if len(args) > 3 {
-			note = args[3]
-		}
-		err = memex.LinkCommand(args[0], args[1], args[2], note)
+		defer memex.CloseRepository()
+
+		err = memex.LinkCommand(args...)
 
 	case "links":
-		if len(args) != 1 {
-			fmt.Println("Error: ID required")
-			showHelp()
+		// Try to open repository in current directory
+		if err := memex.OpenRepository(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
 		}
-		err = memex.LinksCommand(args[0])
+		defer memex.CloseRepository()
+
+		err = memex.LinksCommand(args...)
+
+	case "status":
+		// Try to open repository in current directory
+		if err := memex.OpenRepository(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		defer memex.CloseRepository()
+
+		err = memex.StatusCommand(args...)
+
+	case "export":
+		// Try to open repository in current directory
+		if err := memex.OpenRepository(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		defer memex.CloseRepository()
+
+		err = memex.ExportCommand(args...)
 
 	default:
-		fmt.Printf("Error: Unknown command: %s\n", cmd)
-		showHelp()
+		usage()
 	}
 
 	if err != nil {
-		fmt.Printf("Error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 }

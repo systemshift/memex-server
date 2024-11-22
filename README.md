@@ -1,6 +1,6 @@
 # Memex - Personal Knowledge Graph
 
-Memex is a modern knowledge graph system that uses a directed acyclic graph (DAG) to organize content and track relationships. It combines content-addressable storage with flexible linking capabilities, allowing you to build and navigate your personal knowledge network.
+A personal knowledge management system that helps you organize, connect, and explore your digital content through meaningful relationships.
 
 ## Key Features
 
@@ -145,6 +145,7 @@ go test ./internal/memex/storage/...
 - [Design Document](docs/DESIGN.md): Architecture and design decisions
 - [Development Guide](docs/DEVELOPMENT.md): Setup and contribution guidelines
 - [Storage Implementation](docs/STORAGE.md): Detailed explanation of the storage system
+- [Migration Guide](docs/MIGRATION.md): Graph import/export and content migration
 
 ## Contributing
 
@@ -156,12 +157,15 @@ go test ./internal/memex/storage/...
 
 ## Future Enhancements
 
+- Graph import/export capabilities
+- Subgraph selection and migration
 - Advanced graph queries
 - Content versioning
 - Collaborative features
-- Export/import capabilities
+- Export/import to other formats
 - Graph visualization improvements
 - Search enhancements
+- Remote graph synchronization
 
 ## License
 
