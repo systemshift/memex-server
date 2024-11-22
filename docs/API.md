@@ -12,25 +12,37 @@ All endpoints are relative to: `http://localhost:3000/`
 - Form submissions use `application/x-www-form-urlencoded`
 - Responses are HTML pages (web interface)
 
+## DAG Structure
+
+The API operates on a Directed Acyclic Graph (DAG) where:
+- Nodes represent files and notes
+- Edges represent typed relationships between nodes
+- Each node can have multiple versions
+- Links maintain the acyclic property
+
 ## Endpoints
 
-### View Repository
+### View DAG
 ```
 GET /
 ```
 
-View the repository contents, including files, notes, and their links.
+View the DAG structure, including nodes and their relationships.
 
 **Response:**
-- HTML page showing repository contents
+- HTML page showing:
+  - All nodes in the graph
+  - Their relationships
+  - Version information
+  - Metadata
 
-### Add File
+### Add Node
 ```
 POST /add
 Content-Type: multipart/form-data
 ```
 
-Upload a file to the repository.
+Add a new node to the DAG.
 
 **Parameters:**
 - `file`: The file to upload (form field)
@@ -39,13 +51,19 @@ Upload a file to the repository.
 - Redirects to `/` on success
 - Error page on failure
 
+**Notes:**
+- Creates a new node in the DAG
+- Stores content as a blob
+- Generates unique node ID
+- Records metadata (filename, timestamp)
+
 ### Delete Node
 ```
 POST /delete
 Content-Type: application/x-www-form-urlencoded
 ```
 
-Delete a node from the repository.
+Delete a node from the DAG.
 
 **Parameters:**
 - `id`: Node ID to delete
@@ -54,13 +72,18 @@ Delete a node from the repository.
 - Redirects to `/` on success
 - Error page on failure
 
+**Notes:**
+- Removes node from DAG
+- Maintains graph integrity
+- Updates affected relationships
+
 ### Create Link
 ```
 POST /link
 Content-Type: application/x-www-form-urlencoded
 ```
 
-Create a link between two nodes.
+Create a directed edge between nodes.
 
 **Parameters:**
 - `source`: Source node ID
@@ -72,18 +95,26 @@ Create a link between two nodes.
 - Redirects to `/` on success
 - Error page on failure
 
+**Notes:**
+- Creates directed relationship
+- Validates acyclic property
+- Stores link metadata
+
 ### Search
 ```
 GET /search
 ```
 
-Search for nodes based on query parameters.
+Search the DAG based on query parameters.
 
 **Parameters:**
 - Query parameters are converted to search criteria
 
 **Response:**
-- HTML page showing search results
+- HTML page showing:
+  - Matching nodes
+  - Their relationships
+  - Path information
 
 ## Error Handling
 
@@ -93,13 +124,13 @@ All errors result in:
 
 Common HTTP status codes:
 - 400: Bad Request - Invalid input
-- 404: Not Found - Resource doesn't exist
+- 404: Not Found - Node doesn't exist
 - 405: Method Not Allowed - Wrong HTTP method
 - 500: Internal Server Error - Server-side error
 
 ## Examples
 
-### Adding a File
+### Adding a Node
 ```html
 <form action="/add" method="post" enctype="multipart/form-data">
   <input type="file" name="file">
@@ -126,9 +157,9 @@ GET /search?type=file&filename=document.txt
 ## Future Enhancements
 
 Planned improvements:
-- JSON API endpoints
-- Authentication
+- Graph visualization endpoints
+- Path finding between nodes
 - Batch operations
-- WebSocket updates
-- Content versioning
-- Advanced search options
+- Advanced graph queries
+- WebSocket updates for graph changes
+- Version control operations

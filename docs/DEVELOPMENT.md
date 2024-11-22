@@ -38,8 +38,8 @@ go build -o ~/bin/memexd ./cmd/memexd
 │   └── memexd/            # Web server
 ├── internal/              # Internal packages
 │   └── memex/
-│       ├── core/          # Core types
-│       ├── storage/       # Storage implementation
+│       ├── core/          # Core DAG types
+│       ├── storage/       # DAG storage implementation
 │       ├── commands.go    # CLI commands
 │       ├── config.go      # Configuration
 │       └── editor.go      # Text editor
@@ -100,21 +100,25 @@ go test ./internal/memex/storage/...
 ### Writing Tests
 
 - Place tests in the test/ directory
-- Use table-driven tests when appropriate
-- Test both success and error cases
-- Use meaningful test names
+- Test both DAG structure and content storage
+- Verify link relationships
+- Ensure acyclic property is maintained
 
 Example:
 ```go
-func TestAddContent(t *testing.T) {
+func TestAddNode(t *testing.T) {
     tests := []struct {
         name    string
         content []byte
+        nodeType string
+        meta    map[string]any
         wantErr bool
     }{
         {
-            name:    "valid content",
-            content: []byte("test content"),
+            name:     "valid node",
+            content:  []byte("test content"),
+            nodeType: "file",
+            meta:    map[string]any{"filename": "test.txt"},
             wantErr: false,
         },
         // Add more test cases
@@ -130,18 +134,31 @@ func TestAddContent(t *testing.T) {
 
 ## Common Tasks
 
-### Adding a New Command
+### Adding a New Node Type
 
-1. Add command to internal/memex/commands.go:
+1. Define type in core/types.go:
 ```go
-// NewCommand implements a new command
-func NewCommand(args ...string) error {
-    // Implementation
-    return nil
-}
+// In core/types.go
+const (
+    NodeTypeFile = "file"
+    NodeTypeNote = "note"
+    NodeTypeYourType = "yourtype"
+)
 ```
 
-2. Add to switch statement in cmd/memex/main.go
+2. Add handling in storage implementation
+
+### Adding a New Link Type
+
+1. Define type constants:
+```go
+const (
+    LinkTypeRef = "ref"
+    LinkTypeYourType = "yourtype"
+)
+```
+
+2. Update link validation if needed
 
 ### Adding a New API Endpoint
 
@@ -159,10 +176,10 @@ http.HandleFunc("/newpath", server.handleNewEndpoint)
 
 ## Best Practices
 
-1. **Code Organization**
-   - Keep packages focused and cohesive
-   - Use meaningful package names
-   - Follow standard Go project layout
+1. **DAG Operations**
+   - Validate links to maintain acyclic property
+   - Handle node versions properly
+   - Maintain referential integrity
 
 2. **Error Handling**
    - Use meaningful error messages
@@ -170,13 +187,13 @@ http.HandleFunc("/newpath", server.handleNewEndpoint)
    - Handle all error cases
 
 3. **Documentation**
-   - Document all exported functions
-   - Include examples in documentation
+   - Document node and link types
+   - Include graph structure examples
    - Keep documentation up to date
 
 4. **Testing**
-   - Write tests for new code
-   - Maintain test coverage
+   - Test graph operations thoroughly
+   - Verify DAG properties
    - Use table-driven tests
 
 5. **Git Commits**

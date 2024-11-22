@@ -4,18 +4,19 @@ This document outlines the key design decisions and architectural choices made i
 
 ## Core Design Principles
 
-1. **Content-Addressable Storage**
-   - Content is stored as blobs identified by SHA-256 hash
+1. **Directed Acyclic Graph (DAG)**
+   - Content organized as nodes in a DAG
+   - Nodes connected by typed, directional links
+   - Supports versioning and relationships
+   - Prevents cycles in relationships
+
+2. **Content-Addressable Storage**
+   - Content stored as blobs identified by SHA-256 hash
    - Ensures data integrity and natural deduplication
    - Similar to Git's object storage model
 
-2. **Flexible Organization**
-   - No enforced hierarchy
-   - Content can be organized through arbitrary links
-   - Multiple independent graphs possible
-
-3. **Simple Storage Model**
-   - Single .mx file contains all data
+3. **Single File Storage**
+   - All data contained in one .mx file
    - Keeps implementation simple and reliable
    - Easy to backup and manage
 
@@ -27,32 +28,38 @@ example.mx          # Single file containing all data
 
 The .mx file format:
 - Fixed-size header with metadata
-- Content blobs
-- Node metadata
-- Link information
+- Content blobs (content-addressable)
+- Node data (DAG nodes)
+- Edge data (DAG edges)
 - Index for efficient lookup
 
-### Content Storage
-- Content is stored as blobs
-- Each blob is identified by its SHA-256 hash
-- Content is deduplicated automatically
-- Blobs are immutable
-
-### Node Storage
-- Nodes represent files or notes
-- Each node has:
+### DAG Structure
+- **Nodes**
   - Unique ID
   - Type (file/note)
-  - Metadata (filename, timestamps, etc)
+  - Metadata
   - Content reference (blob hash)
+  - Version history
+  - Links to other nodes
 
-### Link System
-- Links connect nodes
-- Each link has:
+- **Edges (Links)**
   - Source node ID
   - Target node ID
   - Link type
   - Optional metadata
+  - Directional relationships
+
+- **Versions**
+  - Content hash
+  - Chunk references
+  - Creation time
+  - Version metadata
+
+### Content Storage
+- Content stored as immutable blobs
+- Each blob identified by SHA-256 hash
+- Automatic content deduplication
+- Version tracking per node
 
 ## Component Architecture
 
@@ -60,34 +67,32 @@ The .mx file format:
 - Provides command-line interface
 - Commands:
   - init: Create new repository
-  - add: Add files
-  - status: Show repository state
-  - link: Create links between nodes
-  - links: Show node links
+  - add: Add files to DAG
+  - status: Show DAG state
+  - link: Create edges between nodes
+  - links: Show node connections
   - delete: Remove nodes
 
 ### Web Server (memexd)
-- Provides web interface and HTTP API
+- Provides web interface
 - Features:
-  - View repository contents
-  - Upload files
-  - Create links
-  - Search content
-  - Delete nodes
-- Embedded static files and templates
-- RESTful API endpoints
+  - View DAG structure
+  - Upload files as nodes
+  - Create relationships
+  - Search graph
+  - Visualize connections
 
 ### Storage Layer
 - MXStore: Main storage implementation
   - Header management
   - Node operations
-  - Link operations
+  - Edge operations
   - Blob storage
   - Index management
 
 ### Core Types
 ```go
-// Node represents a file or note
+// Node in the DAG
 type Node struct {
     ID       string
     Type     string
@@ -99,19 +104,30 @@ type Node struct {
     Current  string
 }
 
-// Link represents a relationship
+// Edge in the DAG
 type Link struct {
-    Source string
-    Target string
-    Type   string
-    Meta   map[string]any
+    Source      string
+    Target      string
+    Type        string
+    Meta        map[string]any
+    SourceChunk string
+    TargetChunk string
 }
 
-// IndexEntry for efficient lookup
-type IndexEntry struct {
-    ID     [32]byte
-    Offset uint64
-    Length uint32
+// Version history
+type Version struct {
+    Hash      string
+    Chunks    []string
+    Created   time.Time
+    Meta      map[string]any
+    Available bool
+}
+
+// DAG root
+type Root struct {
+    Hash     string
+    Modified time.Time
+    Nodes    []string
 }
 ```
 
@@ -122,61 +138,48 @@ type IndexEntry struct {
 - Version number for format changes
 - Fixed-size header with counts and offsets
 - Content blobs stored sequentially
-- Node and link data with metadata
+- Node and edge data with metadata
 - Index for efficient lookup
 
-### Operations
+### DAG Operations
 - Add nodes (files/notes)
-- Get node by ID
-- Create links between nodes
-- List nodes by type
-- Delete nodes and links
-- Automatic content deduplication
-
-### Web Interface
-- HTML templates for rendering
-- Static file serving
-- File upload handling
-- Search functionality
-- Link management
-- RESTful API endpoints
+- Create edges (links)
+- Traverse relationships
+- Track versions
+- Maintain acyclic property
+- Delete nodes and edges
 
 ## Future Considerations
 
 1. **Scalability**
-   - Split large repositories
-   - Efficient handling of large files
+   - Split large DAGs
+   - Efficient graph traversal
    - Improved indexing
 
 2. **Extended Features**
-   - Content versioning
-   - Advanced search capabilities
-   - Content type handlers
+   - Advanced graph queries
+   - Relationship types
+   - Graph visualization
    - Export/import
 
 3. **Performance Optimizations**
-   - Caching frequently accessed data
+   - Caching frequently accessed paths
    - Batch operations
    - Compression
 
 ## Design Decisions Log
 
+### Graph Structure
+- **Decision**: DAG with typed edges
+- **Rationale**: Flexible relationships, version tracking
+- **Trade-offs**: More complex than tree structure
+
 ### File Format
-- **Decision**: Single .mx file instead of directory structure
-- **Rationale**: Simpler to manage, move, and backup
-- **Trade-offs**: Need to manage file size and fragmentation
+- **Decision**: Single .mx file with sections
+- **Rationale**: Simple to manage and backup
+- **Trade-offs**: Need to handle file size
 
 ### Content Storage
-- **Decision**: Content-addressable blobs with SHA-256
-- **Rationale**: Automatic deduplication, integrity checking
-- **Trade-offs**: Larger hash size, but worth it for reliability
-
-### Link System
-- **Decision**: Direct node-to-node links with metadata
-- **Rationale**: Flexible relationships, rich metadata
-- **Trade-offs**: More complex querying, but more powerful
-
-### Web Interface
-- **Decision**: Embedded templates and static files
-- **Rationale**: Self-contained binary, easy deployment
-- **Trade-offs**: Less flexibility in customizing UI
+- **Decision**: Content-addressable blobs
+- **Rationale**: Deduplication, integrity
+- **Trade-offs**: Larger hash size
