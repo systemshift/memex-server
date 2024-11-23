@@ -1,286 +1,180 @@
 package main
 
 import (
-	"embed"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"html/template"
-	"io/fs"
 	"log"
 	"net/http"
-	"strings"
+	"path/filepath"
 
 	"memex/internal/memex/storage"
 )
 
-//go:embed static/* templates/*
-var content embed.FS
-
-// Server handles HTTP requests
 type Server struct {
-	memex     *storage.MXStore
-	templates *template.Template
+	memex    *storage.MXStore
+	template *template.Template
 }
 
-// NewServer creates a new server instance
-func NewServer(path string) (*Server, error) {
-	// Initialize memex
-	mx, err := storage.OpenMX(path)
-	if err != nil {
-		return nil, fmt.Errorf("initializing memex: %w", err)
-	}
-
-	// Load templates
-	tmpl, err := template.ParseFS(content, "templates/*.html")
-	if err != nil {
-		return nil, fmt.Errorf("parsing templates: %w", err)
-	}
-
-	return &Server{
-		memex:     mx,
-		templates: tmpl,
-	}, nil
+type GraphData struct {
+	Nodes []NodeData `json:"nodes"`
+	Edges []EdgeData `json:"edges"`
 }
 
-func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" {
-		http.NotFound(w, r)
-		return
-	}
-
-	// Get all nodes
-	var items []map[string]interface{}
-	for _, entry := range s.memex.Nodes() {
-		node, err := s.memex.GetNode(fmt.Sprintf("%x", entry.ID[:]))
-		if err != nil {
-			continue
-		}
-
-		// Get links for node
-		links, err := s.memex.GetLinks(fmt.Sprintf("%x", entry.ID[:]))
-		if err != nil {
-			links = []storage.Link{}
-		}
-
-		item := map[string]interface{}{
-			"ID":       fmt.Sprintf("%x", entry.ID[:]),
-			"Type":     node.Type,
-			"Meta":     node.Meta,
-			"Created":  node.Created,
-			"Modified": node.Modified,
-			"Links":    links,
-		}
-		items = append(items, item)
-	}
-
-	data := map[string]interface{}{
-		"Objects": items,
-	}
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.templates.ExecuteTemplate(w, "index.html", data); err != nil {
-		log.Printf("Error executing template: %v", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+type NodeData struct {
+	ID      string         `json:"id"`
+	Type    string         `json:"type"`
+	Meta    map[string]any `json:"meta"`
+	Created string         `json:"created"`
 }
 
-func (s *Server) handleAdd(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "POST" {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	// Parse multipart form
-	if err := r.ParseMultipartForm(32 << 20); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	file, header, err := r.FormFile("file")
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	defer file.Close()
-
-	// Read file content
-	content := make([]byte, header.Size)
-	if _, err := file.Read(content); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	// Add to memex
-	meta := map[string]any{
-		"filename": header.Filename,
-		"type":     "file",
-	}
-
-	if _, err := s.memex.AddNode(content, "file", meta); err != nil {
-		log.Printf("Error adding file: %v", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	// Redirect back to index
-	http.Redirect(w, r, "/", http.StatusSeeOther)
-}
-
-func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "POST" {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	id := r.Form.Get("id")
-	if id == "" {
-		http.Error(w, "ID required", http.StatusBadRequest)
-		return
-	}
-
-	// Delete the object
-	if err := s.memex.DeleteNode(id); err != nil {
-		log.Printf("Error deleting object: %v", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	// Redirect back to index
-	http.Redirect(w, r, "/", http.StatusSeeOther)
-}
-
-func (s *Server) handleLink(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "POST" {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	source := r.Form.Get("source")
-	target := r.Form.Get("target")
-	linkType := r.Form.Get("type")
-	note := r.Form.Get("note")
-
-	meta := map[string]any{}
-	if note != "" {
-		meta["note"] = note
-	}
-
-	if err := s.memex.AddLink(source, target, linkType, meta); err != nil {
-		log.Printf("Error creating link: %v", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	http.Redirect(w, r, "/", http.StatusSeeOther)
-}
-
-func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "GET" {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	query := r.URL.Query().Get("q")
-	if query == "" {
-		http.Redirect(w, r, "/", http.StatusSeeOther)
-		return
-	}
-
-	// Get all nodes and filter
-	var items []map[string]interface{}
-	for _, entry := range s.memex.Nodes() {
-		node, err := s.memex.GetNode(fmt.Sprintf("%x", entry.ID[:]))
-		if err != nil {
-			continue
-		}
-
-		// Simple text search in metadata
-		matched := false
-		for _, v := range node.Meta {
-			if str, ok := v.(string); ok {
-				if strings.Contains(strings.ToLower(str), strings.ToLower(query)) {
-					matched = true
-					break
-				}
-			}
-		}
-
-		if !matched {
-			continue
-		}
-
-		// Get links for node
-		links, err := s.memex.GetLinks(fmt.Sprintf("%x", entry.ID[:]))
-		if err != nil {
-			links = []storage.Link{}
-		}
-
-		item := map[string]interface{}{
-			"ID":       fmt.Sprintf("%x", entry.ID[:]),
-			"Type":     node.Type,
-			"Meta":     node.Meta,
-			"Created":  node.Created,
-			"Modified": node.Modified,
-			"Links":    links,
-		}
-		items = append(items, item)
-	}
-
-	data := map[string]interface{}{
-		"Objects": items,
-		"Query":   query,
-	}
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.templates.ExecuteTemplate(w, "index.html", data); err != nil {
-		log.Printf("Error executing template: %v", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+type EdgeData struct {
+	Source string         `json:"source"`
+	Target string         `json:"target"`
+	Type   string         `json:"type"`
+	Meta   map[string]any `json:"meta"`
 }
 
 func main() {
-	// Parse flags
 	addr := flag.String("addr", ":3000", "HTTP service address")
-	path := flag.String("path", "", "Path to memex repository")
+	repo := flag.String("repo", "", "Repository path")
 	flag.Parse()
 
-	if *path == "" {
-		log.Fatal("Path required")
+	if *repo == "" {
+		log.Fatal("Repository path required")
+	}
+
+	// Open repository
+	store, err := storage.OpenMX(*repo)
+	if err != nil {
+		log.Fatalf("Error opening repository: %v", err)
+	}
+	defer store.Close()
+
+	// Parse templates
+	tmpl, err := template.ParseGlob("cmd/memexd/templates/*.html")
+	if err != nil {
+		log.Fatalf("Error parsing templates: %v", err)
 	}
 
 	// Create server
-	server, err := NewServer(*path)
-	if err != nil {
-		log.Fatal(err)
+	server := &Server{
+		memex:    store,
+		template: tmpl,
 	}
 
 	// Setup routes
 	http.HandleFunc("/", server.handleIndex)
-	http.HandleFunc("/add", server.handleAdd)
-	http.HandleFunc("/delete", server.handleDelete)
-	http.HandleFunc("/link", server.handleLink)
-	http.HandleFunc("/search", server.handleSearch)
+	http.HandleFunc("/api/graph", server.handleGraph)
+	http.HandleFunc("/api/content/", server.handleContent)
+	http.HandleFunc("/node/", server.handleNode)
 
 	// Serve static files
-	staticFS, err := fs.Sub(content, "static")
-	if err != nil {
-		log.Fatal(err)
-	}
-	http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
+	fs := http.FileServer(http.Dir("cmd/memexd/static"))
+	http.Handle("/static/", http.StripPrefix("/static/", fs))
 
 	// Start server
 	log.Printf("Starting server on %s", *addr)
 	log.Fatal(http.ListenAndServe(*addr, nil))
+}
+
+func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
+	if err := s.template.ExecuteTemplate(w, "index.html", nil); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+}
+
+func (s *Server) handleGraph(w http.ResponseWriter, r *http.Request) {
+	// Get all nodes
+	var graph GraphData
+	for _, entry := range s.memex.Nodes() {
+		node, err := s.memex.GetNode(fmt.Sprintf("%x", entry.ID[:]))
+		if err != nil {
+			continue
+		}
+
+		// Add node
+		graph.Nodes = append(graph.Nodes, NodeData{
+			ID:      node.ID,
+			Type:    node.Type,
+			Meta:    node.Meta,
+			Created: node.Created.Format("2006-01-02 15:04:05"),
+		})
+
+		// Get links
+		links, err := s.memex.GetLinks(node.ID)
+		if err != nil {
+			continue
+		}
+
+		// Add edges
+		for _, link := range links {
+			graph.Edges = append(graph.Edges, EdgeData{
+				Source: node.ID,
+				Target: link.Target,
+				Type:   link.Type,
+				Meta:   link.Meta,
+			})
+		}
+	}
+
+	// Write response
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(graph); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+}
+
+func (s *Server) handleContent(w http.ResponseWriter, r *http.Request) {
+	// Get content hash from URL
+	hash := filepath.Base(r.URL.Path)
+
+	// Load content
+	content, err := s.memex.LoadBlob(hash)
+	if err != nil {
+		http.Error(w, "Content not found", http.StatusNotFound)
+		return
+	}
+
+	// Write response
+	w.Header().Set("Content-Type", "text/plain")
+	w.Write(content)
+}
+
+func (s *Server) handleNode(w http.ResponseWriter, r *http.Request) {
+	// Get node ID from URL
+	id := filepath.Base(r.URL.Path)
+
+	// Get node
+	node, err := s.memex.GetNode(id)
+	if err != nil {
+		http.Error(w, "Node not found", http.StatusNotFound)
+		return
+	}
+
+	// If file, serve content
+	if node.Type == "file" {
+		if contentHash, ok := node.Meta["content"].(string); ok {
+			content, err := s.memex.LoadBlob(contentHash)
+			if err != nil {
+				http.Error(w, "Content not found", http.StatusNotFound)
+				return
+			}
+
+			// Set filename for download
+			if filename, ok := node.Meta["filename"].(string); ok {
+				w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
+			}
+
+			w.Write(content)
+			return
+		}
+	}
+
+	// Otherwise show node info
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(node)
 }
