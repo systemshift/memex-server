@@ -7,23 +7,148 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"time"
+
+	"memex/internal/memex/core"
 )
 
 // EdgeData represents serialized edge data
 type EdgeData struct {
-	Source   [32]byte
-	Target   [32]byte
-	Type     [32]byte
-	Created  int64 // Unix timestamp
-	Modified int64 // Unix timestamp
-	MetaLen  uint32
-	Meta     []byte // JSON-encoded metadata
+	Source  [32]byte // Source node ID
+	Target  [32]byte // Target node ID
+	Type    [32]byte // Edge type
+	MetaLen uint32   // Length of metadata
+	Meta    []byte   // JSON-encoded metadata
+}
+
+// AddLink adds a link between nodes
+func (s *MXStore) AddLink(sourceID, targetID, linkType string, meta map[string]any) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Convert IDs to bytes
+	sourceBytes, err := hex.DecodeString(sourceID)
+	if err != nil {
+		return fmt.Errorf("invalid source ID: %w", err)
+	}
+	targetBytes, err := hex.DecodeString(targetID)
+	if err != nil {
+		return fmt.Errorf("invalid target ID: %w", err)
+	}
+
+	// Serialize metadata
+	metaJSON, err := json.Marshal(meta)
+	if err != nil {
+		return fmt.Errorf("serializing metadata: %w", err)
+	}
+
+	// Create edge data
+	var edgeData EdgeData
+	copy(edgeData.Source[:], sourceBytes)
+	copy(edgeData.Target[:], targetBytes)
+	copy(edgeData.Type[:], []byte(linkType))
+	edgeData.MetaLen = uint32(len(metaJSON))
+	edgeData.Meta = metaJSON
+
+	// Begin transaction
+	tx, err := s.beginTransaction()
+	if err != nil {
+		return fmt.Errorf("beginning transaction: %w", err)
+	}
+
+	// Write edge data
+	offset, err := s.writeEdge(edgeData)
+	if err != nil {
+		tx.rollback()
+		return fmt.Errorf("writing edge: %w", err)
+	}
+
+	// Add to index
+	entry := IndexEntry{
+		ID:     edgeData.Source, // Use source ID as edge ID
+		Offset: offset,
+		Length: uint32(72 + len(metaJSON)), // Fixed size + metadata
+	}
+	tx.addIndex(entry)
+
+	// Update header
+	s.header.EdgeCount++
+	s.header.Modified = s.header.Created
+
+	// Commit transaction
+	if err := tx.commit(); err != nil {
+		return fmt.Errorf("committing transaction: %w", err)
+	}
+
+	return nil
+}
+
+// GetLinks returns all links connected to a node
+func (s *MXStore) GetLinks(nodeID string) ([]core.Link, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	// Convert ID to bytes
+	idBytes, err := hex.DecodeString(nodeID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid ID: %w", err)
+	}
+
+	var links []core.Link
+	for _, entry := range s.edges {
+		// Read edge data
+		if _, err := s.seek(int64(entry.Offset), io.SeekStart); err != nil {
+			return nil, fmt.Errorf("seeking to edge: %w", err)
+		}
+
+		var edgeData EdgeData
+		// Read Source
+		if _, err := io.ReadFull(s.file, edgeData.Source[:]); err != nil {
+			return nil, fmt.Errorf("reading edge source: %w", err)
+		}
+		// Read Target
+		if _, err := io.ReadFull(s.file, edgeData.Target[:]); err != nil {
+			return nil, fmt.Errorf("reading edge target: %w", err)
+		}
+		// Read Type
+		if _, err := io.ReadFull(s.file, edgeData.Type[:]); err != nil {
+			return nil, fmt.Errorf("reading edge type: %w", err)
+		}
+		// Read metadata length
+		if err := binary.Read(s.file, binary.LittleEndian, &edgeData.MetaLen); err != nil {
+			return nil, fmt.Errorf("reading edge metadata length: %w", err)
+		}
+		// Read metadata
+		edgeData.Meta = make([]byte, edgeData.MetaLen)
+		if _, err := io.ReadFull(s.file, edgeData.Meta); err != nil {
+			return nil, fmt.Errorf("reading edge metadata: %w", err)
+		}
+
+		// Check if edge is connected to the node
+		if bytes.Equal(edgeData.Source[:], idBytes) || bytes.Equal(edgeData.Target[:], idBytes) {
+			// Parse metadata
+			var meta map[string]any
+			if err := json.Unmarshal(edgeData.Meta, &meta); err != nil {
+				return nil, fmt.Errorf("parsing edge metadata: %w", err)
+			}
+
+			// Create link
+			link := core.Link{
+				Source: hex.EncodeToString(edgeData.Source[:]),
+				Target: hex.EncodeToString(edgeData.Target[:]),
+				Type:   string(bytes.TrimRight(edgeData.Type[:], "\x00")),
+				Meta:   meta,
+			}
+			links = append(links, link)
+		}
+	}
+
+	return links, nil
 }
 
 // writeEdge writes edge data to the file
 func (s *MXStore) writeEdge(edge EdgeData) (uint64, error) {
-	offset, err := s.file.Seek(0, io.SeekEnd)
+	// Get current file size
+	offset, err := s.seek(0, io.SeekEnd)
 	if err != nil {
 		return 0, fmt.Errorf("seeking to end: %w", err)
 	}
@@ -43,16 +168,8 @@ func (s *MXStore) writeEdge(edge EdgeData) (uint64, error) {
 		return 0, fmt.Errorf("writing type: %w", err)
 	}
 
-	// Write timestamps
-	if err := binary.Write(s.file, binary.LittleEndian, &edge.Created); err != nil {
-		return 0, fmt.Errorf("writing created time: %w", err)
-	}
-	if err := binary.Write(s.file, binary.LittleEndian, &edge.Modified); err != nil {
-		return 0, fmt.Errorf("writing modified time: %w", err)
-	}
-
 	// Write metadata length
-	if err := binary.Write(s.file, binary.LittleEndian, &edge.MetaLen); err != nil {
+	if err := binary.Write(s.file, binary.LittleEndian, edge.MetaLen); err != nil {
 		return 0, fmt.Errorf("writing metadata length: %w", err)
 	}
 
@@ -62,172 +179,4 @@ func (s *MXStore) writeEdge(edge EdgeData) (uint64, error) {
 	}
 
 	return uint64(offset), nil
-}
-
-// AddLink creates a link between nodes
-func (s *MXStore) AddLink(source, target, linkType string, meta map[string]any) error {
-	// Convert source ID to bytes
-	sourceBytes, err := hex.DecodeString(source)
-	if err != nil {
-		return fmt.Errorf("invalid source ID: %w", err)
-	}
-	var sourceID [32]byte
-	copy(sourceID[:], sourceBytes)
-
-	// Convert target ID to bytes
-	targetBytes, err := hex.DecodeString(target)
-	if err != nil {
-		return fmt.Errorf("invalid target ID: %w", err)
-	}
-	var targetID [32]byte
-	copy(targetID[:], targetBytes)
-
-	// Verify nodes exist
-	sourceFound := false
-	targetFound := false
-	for _, node := range s.nodes {
-		if bytes.HasPrefix(node.ID[:], sourceBytes) {
-			sourceFound = true
-			copy(sourceID[:], node.ID[:])
-		}
-		if bytes.HasPrefix(node.ID[:], targetBytes) {
-			targetFound = true
-			copy(targetID[:], node.ID[:])
-		}
-	}
-	if !sourceFound {
-		return fmt.Errorf("source node not found")
-	}
-	if !targetFound {
-		return fmt.Errorf("target node not found")
-	}
-
-	// Serialize metadata
-	metaJSON, err := json.Marshal(meta)
-	if err != nil {
-		return fmt.Errorf("serializing metadata: %w", err)
-	}
-
-	// Create edge data
-	now := time.Now().Unix()
-	var edgeData EdgeData
-	copy(edgeData.Source[:], sourceID[:])
-	copy(edgeData.Target[:], targetID[:])
-	copy(edgeData.Type[:], []byte(linkType))
-	edgeData.Created = now
-	edgeData.Modified = now
-	edgeData.MetaLen = uint32(len(metaJSON))
-	edgeData.Meta = metaJSON
-
-	// Write edge data
-	offset, err := s.writeEdge(edgeData)
-	if err != nil {
-		return fmt.Errorf("writing edge: %w", err)
-	}
-
-	// Add to index
-	s.edges = append(s.edges, IndexEntry{
-		ID:     sourceID, // Use source ID as edge ID
-		Offset: offset,
-		Length: uint32(104 + len(metaJSON)), // Fixed size + metadata
-	})
-
-	// Update header
-	s.header.EdgeCount++
-	s.header.Modified = time.Now()
-	if err := s.writeHeader(); err != nil {
-		return fmt.Errorf("updating header: %w", err)
-	}
-
-	return nil
-}
-
-// GetLinks returns all links for a node
-func (s *MXStore) GetLinks(nodeID string) ([]Link, error) {
-	// Convert node ID to bytes
-	idBytes, err := hex.DecodeString(nodeID)
-	if err != nil {
-		return nil, fmt.Errorf("invalid ID: %w", err)
-	}
-
-	// Find full node ID
-	var fullID []byte
-	for _, node := range s.nodes {
-		if bytes.HasPrefix(node.ID[:], idBytes) {
-			fullID = node.ID[:]
-			break
-		}
-	}
-	if fullID == nil {
-		return nil, fmt.Errorf("node not found")
-	}
-
-	var links []Link
-	for _, e := range s.edges {
-		// Seek to edge data
-		if _, err := s.file.Seek(int64(e.Offset), io.SeekStart); err != nil {
-			return nil, fmt.Errorf("seeking to edge: %w", err)
-		}
-
-		// Read edge data
-		var edgeData EdgeData
-
-		// Read Source
-		if _, err := io.ReadFull(s.file, edgeData.Source[:]); err != nil {
-			return nil, fmt.Errorf("reading source: %w", err)
-		}
-
-		// Read Target
-		if _, err := io.ReadFull(s.file, edgeData.Target[:]); err != nil {
-			return nil, fmt.Errorf("reading target: %w", err)
-		}
-
-		// Read Type
-		if _, err := io.ReadFull(s.file, edgeData.Type[:]); err != nil {
-			return nil, fmt.Errorf("reading type: %w", err)
-		}
-
-		// Read timestamps
-		if err := binary.Read(s.file, binary.LittleEndian, &edgeData.Created); err != nil {
-			return nil, fmt.Errorf("reading created time: %w", err)
-		}
-		if err := binary.Read(s.file, binary.LittleEndian, &edgeData.Modified); err != nil {
-			return nil, fmt.Errorf("reading modified time: %w", err)
-		}
-
-		// Read metadata length
-		if err := binary.Read(s.file, binary.LittleEndian, &edgeData.MetaLen); err != nil {
-			return nil, fmt.Errorf("reading metadata length: %w", err)
-		}
-
-		// Read metadata
-		edgeData.Meta = make([]byte, edgeData.MetaLen)
-		if _, err := io.ReadFull(s.file, edgeData.Meta); err != nil {
-			return nil, fmt.Errorf("reading metadata: %w", err)
-		}
-
-		// Parse metadata
-		var meta map[string]any
-		if err := json.Unmarshal(edgeData.Meta, &meta); err != nil {
-			return nil, fmt.Errorf("parsing metadata: %w", err)
-		}
-
-		// Check if this edge is connected to the requested node
-		if bytes.Equal(edgeData.Source[:], fullID) {
-			links = append(links, Link{
-				Target: hex.EncodeToString(bytes.TrimRight(edgeData.Target[:], "\x00")),
-				Type:   string(bytes.TrimRight(edgeData.Type[:], "\x00")),
-				Meta:   meta,
-			})
-		}
-	}
-
-	return links, nil
-}
-
-// Link represents a link between nodes
-type Link struct {
-	Target string         // Target node ID
-	Type   string         // Link type
-	Meta   map[string]any // Link metadata
 }

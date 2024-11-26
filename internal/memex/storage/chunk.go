@@ -10,17 +10,17 @@ import (
 
 const (
 	// WindowSize is the size of the rolling hash window
-	WindowSize = 64
+	WindowSize = 16
 
 	// MinChunkSize is the minimum chunk size
-	MinChunkSize = 2048
+	MinChunkSize = 256
 
 	// MaxChunkSize is the maximum chunk size
-	MaxChunkSize = 8192
+	MaxChunkSize = 1024
 
 	// Boundary is the rolling hash boundary value
 	// When (hash % Boundary) == 0, we've found a chunk boundary
-	Boundary = 4096
+	Boundary = 32
 )
 
 // RollingHash implements Rabin-Karp rolling hash
@@ -75,6 +75,8 @@ func ChunkContent(content []byte) ([]Chunk, error) {
 	reader := bytes.NewReader(content)
 	buf := make([]byte, 1)
 
+	fmt.Printf("Chunking content of size %d bytes\n", len(content))
+
 	for {
 		n, err := reader.Read(buf)
 		if err == io.EOF {
@@ -100,6 +102,8 @@ func ChunkContent(content []byte) ([]Chunk, error) {
 				Content: chunkContent,
 			})
 
+			fmt.Printf("Created chunk of size %d bytes\n", chunk.Len())
+
 			// Reset for next chunk
 			chunk.Reset()
 			hash.Reset()
@@ -114,8 +118,10 @@ func ChunkContent(content []byte) ([]Chunk, error) {
 			Hash:    hex.EncodeToString(chunkHash[:]),
 			Content: chunkContent,
 		})
+		fmt.Printf("Created final chunk of size %d bytes\n", chunk.Len())
 	}
 
+	fmt.Printf("Total chunks created: %d\n", len(chunks))
 	return chunks, nil
 }
 

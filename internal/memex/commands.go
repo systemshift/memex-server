@@ -17,6 +17,65 @@ var (
 	repoPath    string
 )
 
+// StatusCommand shows repository status
+func StatusCommand(args ...string) error {
+	repo, err := GetRepository()
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("Repository: %s\n", repoPath)
+	fmt.Printf("Nodes: %d\n", len(repo.Nodes()))
+
+	// List all nodes
+	for _, entry := range repo.Nodes() {
+		node, err := repo.GetNode(fmt.Sprintf("%x", entry.ID[:]))
+		if err != nil {
+			continue
+		}
+		fmt.Printf("\nNode ID: %s\n", node.ID)
+		if filename, ok := node.Meta["filename"].(string); ok {
+			fmt.Printf("  File: %s\n", filename)
+		}
+		fmt.Printf("  Type: %s\n", node.Type)
+		fmt.Printf("  Created: %s\n", node.Created.Format(time.RFC3339))
+		if contentHash, ok := node.Meta["content"].(string); ok {
+			fmt.Printf("  Content: %s\n", contentHash[:8])
+		}
+
+		// Print chunks with more detailed type information
+		if chunksRaw, ok := node.Meta["chunks"]; ok {
+			var chunkList []string
+			switch chunks := chunksRaw.(type) {
+			case []interface{}:
+				for _, chunk := range chunks {
+					if chunkStr, ok := chunk.(string); ok {
+						chunkList = append(chunkList, chunkStr)
+					}
+				}
+			case []string:
+				chunkList = chunks
+			case string:
+				chunkList = strings.Fields(chunks)
+			}
+			if len(chunkList) > 0 {
+				fmt.Printf("  Chunks: %d [%v]\n", len(chunkList), chunkList)
+			} else {
+				fmt.Printf("  Chunks: none\n")
+			}
+		} else {
+			fmt.Printf("  Chunks: none (not found)\n")
+		}
+
+		// Print all metadata for debugging
+		fmt.Printf("  Metadata:\n")
+		for k, v := range node.Meta {
+			fmt.Printf("    %s: %v\n", k, v)
+		}
+	}
+	return nil
+}
+
 // InitCommand initializes a new repository
 func InitCommand(args ...string) error {
 	if len(args) < 1 {
@@ -132,35 +191,6 @@ func EditCommand(args ...string) error {
 	return nil
 }
 
-// StatusCommand shows repository status
-func StatusCommand(args ...string) error {
-	repo, err := GetRepository()
-	if err != nil {
-		return err
-	}
-
-	fmt.Printf("Repository: %s\n", repoPath)
-	fmt.Printf("Nodes: %d\n", len(repo.Nodes()))
-
-	// List all nodes
-	for _, entry := range repo.Nodes() {
-		node, err := repo.GetNode(fmt.Sprintf("%x", entry.ID[:]))
-		if err != nil {
-			continue
-		}
-		fmt.Printf("\nNode ID: %s\n", node.ID)
-		if filename, ok := node.Meta["filename"].(string); ok {
-			fmt.Printf("  File: %s\n", filename)
-		}
-		fmt.Printf("  Type: %s\n", node.Type)
-		fmt.Printf("  Created: %s\n", node.Created.Format(time.RFC3339))
-		if contentHash, ok := node.Meta["content"].(string); ok {
-			fmt.Printf("  Content: %s\n", contentHash[:8])
-		}
-	}
-	return nil
-}
-
 // AddCommand adds a file to the repository
 func AddCommand(args ...string) error {
 	if len(args) < 1 {
@@ -244,9 +274,17 @@ func LinksCommand(args ...string) error {
 	}
 
 	for _, link := range links {
-		fmt.Printf("%s -> %s [%s]\n", args[0], link.Target, link.Type)
+		fmt.Printf("%s -> %s [%s]\n", args[0][:8], link.Target[:8], link.Type)
 		if note, ok := link.Meta["note"].(string); ok {
 			fmt.Printf("  Note: %s\n", note)
+		}
+		if link.Type == "similar" {
+			if similarity, ok := link.Meta["similarity"].(float64); ok {
+				fmt.Printf("  Similarity: %.1f%%\n", similarity*100)
+			}
+			if shared, ok := link.Meta["shared"].(int); ok {
+				fmt.Printf("  Shared chunks: %d\n", shared)
+			}
 		}
 	}
 
