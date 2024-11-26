@@ -22,7 +22,6 @@ type MXStore struct {
 	blobs  []IndexEntry // Blob index
 	chunks *ChunkStore  // Chunk storage
 	mu     sync.RWMutex // Mutex for thread safety
-	pos    int64        // Current file position
 }
 
 // IndexEntry represents an index entry
@@ -151,13 +150,19 @@ func (s *MXStore) beginTransaction() (*Transaction, error) {
 // write adds data to the transaction
 func (tx *Transaction) write(data []byte) (uint64, error) {
 	// Get current position
-	pos := tx.store.pos
+	pos, err := tx.store.file.Seek(0, os.SEEK_CUR)
+	if err != nil {
+		return 0, fmt.Errorf("getting position: %w", err)
+	}
 
-	// Add write to transaction
-	tx.writes = append(tx.writes, data)
-
-	// Update position
-	tx.store.pos += int64(len(data))
+	// Write data immediately
+	n, err := tx.store.file.Write(data)
+	if err != nil {
+		return 0, fmt.Errorf("writing data: %w", err)
+	}
+	if n != len(data) {
+		return 0, fmt.Errorf("short write: wrote %d of %d bytes", n, len(data))
+	}
 
 	return uint64(pos), nil
 }
@@ -171,13 +176,6 @@ func (tx *Transaction) addIndex(entry IndexEntry) {
 func (tx *Transaction) commit() error {
 	s := tx.store
 
-	// Write all data
-	for _, data := range tx.writes {
-		if _, err := s.file.Write(data); err != nil {
-			return fmt.Errorf("writing data: %w", err)
-		}
-	}
-
 	// Update indexes
 	s.nodes = append(s.nodes, tx.indexes...)
 
@@ -185,47 +183,18 @@ func (tx *Transaction) commit() error {
 	s.header.NodeCount = uint32(len(s.nodes))
 	s.header.Modified = time.Now()
 
-	// Write indexes and header in a single operation
-	if err := s.writeIndexesAndHeader(); err != nil {
-		return fmt.Errorf("writing indexes and header: %w", err)
-	}
-
-	// Sync file
-	if err := s.file.Sync(); err != nil {
-		return fmt.Errorf("syncing file: %w", err)
-	}
-
-	return nil
-}
-
-// writeIndexesAndHeader writes both indexes and header in a single atomic operation
-func (s *MXStore) writeIndexesAndHeader() error {
-	// Save current position
-	currentPos := s.pos
-
-	// Get current file size for initial offset
-	size, err := s.file.Seek(0, os.SEEK_END)
+	// Get current position for index offsets
+	endPos, err := s.file.Seek(0, os.SEEK_CUR)
 	if err != nil {
-		return fmt.Errorf("getting file size: %w", err)
+		return fmt.Errorf("getting end position: %w", err)
 	}
 
 	// Update header with new index offsets
-	s.header.NodeIndex = uint64(size)
-	s.header.EdgeIndex = uint64(size + int64(binary.Size(s.nodes)))
-	s.header.BlobIndex = uint64(size + int64(binary.Size(s.nodes)) + int64(binary.Size(s.edges)))
+	s.header.NodeIndex = uint64(endPos)
+	s.header.EdgeIndex = uint64(endPos + int64(binary.Size(s.nodes)))
+	s.header.BlobIndex = uint64(endPos + int64(binary.Size(s.nodes)) + int64(binary.Size(s.edges)))
 
-	// Write header first
-	if _, err := s.file.Seek(0, os.SEEK_SET); err != nil {
-		return fmt.Errorf("seeking to start: %w", err)
-	}
-	if err := s.writeHeader(); err != nil {
-		return fmt.Errorf("writing header: %w", err)
-	}
-
-	// Write indexes at end of file
-	if _, err := s.file.Seek(size, os.SEEK_SET); err != nil {
-		return fmt.Errorf("seeking to end: %w", err)
-	}
+	// Write indexes
 	if err := binary.Write(s.file, binary.LittleEndian, s.nodes); err != nil {
 		return fmt.Errorf("writing node index: %w", err)
 	}
@@ -236,11 +205,18 @@ func (s *MXStore) writeIndexesAndHeader() error {
 		return fmt.Errorf("writing blob index: %w", err)
 	}
 
-	// Restore position
-	if _, err := s.file.Seek(currentPos, os.SEEK_SET); err != nil {
-		return fmt.Errorf("restoring position: %w", err)
+	// Write header at start of file
+	if _, err := s.file.Seek(0, os.SEEK_SET); err != nil {
+		return fmt.Errorf("seeking to start: %w", err)
 	}
-	s.pos = currentPos
+	if err := s.writeHeader(); err != nil {
+		return fmt.Errorf("writing header: %w", err)
+	}
+
+	// Sync file
+	if err := s.file.Sync(); err != nil {
+		return fmt.Errorf("syncing file: %w", err)
+	}
 
 	return nil
 }
@@ -251,17 +227,10 @@ func (tx *Transaction) rollback() error {
 	if _, err := tx.store.file.Seek(tx.startPos, os.SEEK_SET); err != nil {
 		return fmt.Errorf("restoring position: %w", err)
 	}
-
-	tx.store.pos = tx.startPos
 	return nil
 }
 
 // seek moves the file pointer
 func (s *MXStore) seek(offset int64, whence int) (int64, error) {
-	pos, err := s.file.Seek(offset, whence)
-	if err != nil {
-		return 0, err
-	}
-	s.pos = pos
-	return pos, nil
+	return s.file.Seek(offset, whence)
 }

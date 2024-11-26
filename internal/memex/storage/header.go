@@ -28,10 +28,13 @@ func (s *MXStore) writeHeader() error {
 		s.header.NodeIndex, s.header.EdgeIndex, s.header.BlobIndex)
 
 	// Save current position
-	currentPos := s.pos
+	currentPos, err := s.file.Seek(0, io.SeekCurrent)
+	if err != nil {
+		return fmt.Errorf("getting current position: %w", err)
+	}
 
 	// Seek to start
-	if _, err := s.seek(0, io.SeekStart); err != nil {
+	if _, err := s.file.Seek(0, io.SeekStart); err != nil {
 		return fmt.Errorf("seeking to start: %w", err)
 	}
 
@@ -71,7 +74,7 @@ func (s *MXStore) writeHeader() error {
 	}
 
 	// Restore position
-	if _, err := s.seek(currentPos, io.SeekStart); err != nil {
+	if _, err := s.file.Seek(currentPos, io.SeekStart); err != nil {
 		return fmt.Errorf("restoring position: %w", err)
 	}
 
@@ -81,10 +84,13 @@ func (s *MXStore) writeHeader() error {
 // readHeader reads the header from the file
 func (s *MXStore) readHeader() error {
 	// Save current position
-	currentPos := s.pos
+	currentPos, err := s.file.Seek(0, io.SeekCurrent)
+	if err != nil {
+		return fmt.Errorf("getting current position: %w", err)
+	}
 
 	// Seek to start
-	if _, err := s.seek(0, io.SeekStart); err != nil {
+	if _, err := s.file.Seek(0, io.SeekStart); err != nil {
 		return fmt.Errorf("seeking to start: %w", err)
 	}
 
@@ -127,7 +133,7 @@ func (s *MXStore) readHeader() error {
 	}
 
 	// Restore position
-	if _, err := s.seek(currentPos, io.SeekStart); err != nil {
+	if _, err := s.file.Seek(currentPos, io.SeekStart); err != nil {
 		return fmt.Errorf("restoring position: %w", err)
 	}
 

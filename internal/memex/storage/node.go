@@ -25,11 +25,20 @@ type NodeData struct {
 }
 
 const (
-	maxMetaLen = 1024 * 1024 // 1MB max metadata size
+	maxMetaLen     = 1024 * 1024         // 1MB max metadata size
+	nodeHeaderSize = 32 + 32 + 8 + 8 + 4 // Size of fixed fields in NodeData
 )
 
 // AddNode adds a node to the store
 func (s *MXStore) AddNode(content []byte, nodeType string, meta map[string]any) (string, error) {
+	// Validate input parameters
+	if content == nil {
+		return "", fmt.Errorf("content cannot be nil")
+	}
+	if nodeType == "" {
+		return "", fmt.Errorf("type cannot be empty")
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -109,7 +118,7 @@ func (s *MXStore) AddNode(content []byte, nodeType string, meta map[string]any) 
 	entry := IndexEntry{
 		ID:     idBytes,
 		Offset: offset,
-		Length: uint32(80 + len(metaJSON)), // Fixed size + metadata
+		Length: uint32(nodeHeaderSize + len(metaJSON)), // Fixed size fields + metadata
 	}
 	tx.addIndex(entry)
 
@@ -120,17 +129,76 @@ func (s *MXStore) AddNode(content []byte, nodeType string, meta map[string]any) 
 		return "", fmt.Errorf("committing transaction: %w", err)
 	}
 
-	// Create similarity links after transaction is committed
-	go s.createSimilarityLinks(nodeIDStr, chunkHashes)
+	// Create similarity links in a separate goroutine
+	go func() {
+		// Make a copy of the data we need
+		s.mu.RLock()
+		nodes := make([]IndexEntry, len(s.nodes))
+		copy(nodes, s.nodes)
+		s.mu.RUnlock()
+
+		// Calculate similarities
+		for _, entry := range nodes {
+			otherID := hex.EncodeToString(entry.ID[:])
+			if otherID == nodeIDStr {
+				continue // Skip self
+			}
+
+			// Get other node's chunks
+			s.mu.RLock()
+			node, err := s.GetNode(otherID)
+			if err != nil {
+				s.mu.RUnlock()
+				continue
+			}
+			s.mu.RUnlock()
+
+			// Get chunks from metadata
+			var otherChunks []string
+			if chunksRaw, ok := node.Meta["chunks"]; ok {
+				if chunks, ok := chunksRaw.([]string); ok {
+					otherChunks = chunks
+				}
+			}
+
+			if len(otherChunks) == 0 {
+				continue
+			}
+
+			// Calculate similarity
+			chunkMap := make(map[string]struct{}, len(chunkHashes))
+			for _, chunk := range chunkHashes {
+				chunkMap[chunk] = struct{}{}
+			}
+
+			sharedChunks := 0
+			for _, chunk := range otherChunks {
+				if _, ok := chunkMap[chunk]; ok {
+					sharedChunks++
+				}
+			}
+
+			// Create link if similarity threshold met
+			if sharedChunks > 0 {
+				similarity := float64(sharedChunks) / float64(len(chunkHashes))
+				if similarity >= 0.3 { // At least 30% similar
+					meta := map[string]any{
+						"similarity": similarity,
+						"shared":     sharedChunks,
+					}
+					s.mu.Lock()
+					s.AddLink(nodeIDStr, otherID, "similar", meta)
+					s.mu.Unlock()
+				}
+			}
+		}
+	}()
 
 	return nodeIDStr, nil
 }
 
 // GetNode retrieves a node by ID
 func (s *MXStore) GetNode(id string) (core.Node, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
 	// Convert ID to bytes
 	idBytes, err := hex.DecodeString(id)
 	if err != nil {
@@ -218,9 +286,6 @@ func (s *MXStore) GetNode(id string) (core.Node, error) {
 				meta["chunks"] = chunkList
 			}
 		case []string:
-			for i, chunk := range chunks {
-				chunks[i] = strings.Trim(chunk, `"`)
-			}
 			chunkList = chunks
 			meta["chunks"] = chunkList
 		case string:
@@ -368,9 +433,6 @@ func (s *MXStore) DeleteNode(id string) error {
 				}
 			}
 		case []string:
-			for i, chunk := range chunks {
-				chunks[i] = strings.Trim(chunk, `"`)
-			}
 			chunkList = chunks
 		case string:
 			chunks = strings.Trim(chunks, `"`)
@@ -427,76 +489,6 @@ func (s *MXStore) DeleteNode(id string) error {
 	return nil
 }
 
-// createSimilarityLinks creates links between nodes that share chunks
-func (s *MXStore) createSimilarityLinks(nodeID string, chunks []string) error {
-	// Get all nodes
-	for _, entry := range s.nodes {
-		otherID := hex.EncodeToString(entry.ID[:])
-		if otherID == nodeID {
-			continue // Skip self
-		}
-
-		// Get other node's chunks
-		node, err := s.GetNode(otherID)
-		if err != nil {
-			continue
-		}
-
-		// Get chunks from metadata
-		var otherChunks []string
-		if chunksRaw, ok := node.Meta["chunks"]; ok {
-			switch chunks := chunksRaw.(type) {
-			case []interface{}:
-				for _, chunk := range chunks {
-					if chunkStr, ok := chunk.(string); ok {
-						chunkStr = strings.Trim(chunkStr, `"`)
-						otherChunks = append(otherChunks, chunkStr)
-					}
-				}
-			case []string:
-				for i, chunk := range chunks {
-					chunks[i] = strings.Trim(chunk, `"`)
-				}
-				otherChunks = chunks
-			case string:
-				chunks = strings.Trim(chunks, `"`)
-				otherChunks = strings.Fields(chunks)
-			}
-		}
-
-		if len(otherChunks) == 0 {
-			continue
-		}
-
-		// Calculate similarity
-		sharedChunks := 0
-		for _, chunk := range chunks {
-			for _, otherChunk := range otherChunks {
-				if chunk == otherChunk {
-					sharedChunks++
-					break
-				}
-			}
-		}
-
-		// Create link if similarity threshold met
-		if sharedChunks > 0 {
-			similarity := float64(sharedChunks) / float64(len(chunks))
-			if similarity >= 0.3 { // At least 30% similar
-				meta := map[string]any{
-					"similarity": similarity,
-					"shared":     sharedChunks,
-				}
-				if err := s.AddLink(nodeID, otherID, "similar", meta); err != nil {
-					return fmt.Errorf("adding similarity link: %w", err)
-				}
-			}
-		}
-	}
-
-	return nil
-}
-
 // generateID generates a unique ID
 func generateID() []byte {
 	id := sha256.Sum256([]byte(fmt.Sprintf("%d", time.Now().UnixNano())))
@@ -511,32 +503,29 @@ func (s *MXStore) writeNode(node NodeData) (uint64, error) {
 		return 0, fmt.Errorf("seeking to end: %w", err)
 	}
 
+	// Create a buffer to write all data atomically
+	var buf bytes.Buffer
+	buf.Grow(nodeHeaderSize + len(node.Meta))
+
 	// Write ID
-	if _, err := s.file.Write(node.ID[:]); err != nil {
-		return 0, fmt.Errorf("writing ID: %w", err)
-	}
+	buf.Write(node.ID[:])
 
 	// Write Type
-	if _, err := s.file.Write(node.Type[:]); err != nil {
-		return 0, fmt.Errorf("writing type: %w", err)
-	}
+	buf.Write(node.Type[:])
 
 	// Write timestamps
-	if err := binary.Write(s.file, binary.LittleEndian, node.Created); err != nil {
-		return 0, fmt.Errorf("writing created time: %w", err)
-	}
-	if err := binary.Write(s.file, binary.LittleEndian, node.Modified); err != nil {
-		return 0, fmt.Errorf("writing modified time: %w", err)
-	}
+	binary.Write(&buf, binary.LittleEndian, node.Created)
+	binary.Write(&buf, binary.LittleEndian, node.Modified)
 
 	// Write metadata length
-	if err := binary.Write(s.file, binary.LittleEndian, node.MetaLen); err != nil {
-		return 0, fmt.Errorf("writing metadata length: %w", err)
-	}
+	binary.Write(&buf, binary.LittleEndian, node.MetaLen)
 
 	// Write metadata
-	if _, err := s.file.Write(node.Meta); err != nil {
-		return 0, fmt.Errorf("writing metadata: %w", err)
+	buf.Write(node.Meta)
+
+	// Write buffer to file
+	if _, err := s.file.Write(buf.Bytes()); err != nil {
+		return 0, fmt.Errorf("writing node data: %w", err)
 	}
 
 	return uint64(offset), nil

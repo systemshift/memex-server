@@ -5,22 +5,24 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"io"
 )
 
 const (
 	// WindowSize is the size of the rolling hash window
-	WindowSize = 16
+	WindowSize = 64
 
-	// MinChunkSize is the minimum chunk size
-	MinChunkSize = 256
+	// MinChunkSize is the minimum chunk size (32KB)
+	MinChunkSize = 32 * 1024
 
-	// MaxChunkSize is the maximum chunk size
-	MaxChunkSize = 1024
+	// MaxChunkSize is the maximum chunk size (256KB)
+	MaxChunkSize = 256 * 1024
 
 	// Boundary is the rolling hash boundary value
 	// When (hash % Boundary) == 0, we've found a chunk boundary
 	Boundary = 32
+
+	// ReadBufferSize is the size of the read buffer (64KB)
+	ReadBufferSize = 64 * 1024
 )
 
 // RollingHash implements Rabin-Karp rolling hash
@@ -72,25 +74,13 @@ func ChunkContent(content []byte) ([]Chunk, error) {
 	var chunk bytes.Buffer
 	hash := NewRollingHash()
 
-	reader := bytes.NewReader(content)
-	buf := make([]byte, 1)
-
 	fmt.Printf("Chunking content of size %d bytes\n", len(content))
 
-	for {
-		n, err := reader.Read(buf)
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return nil, fmt.Errorf("reading content: %w", err)
-		}
-		if n == 0 {
-			continue
-		}
-
-		chunk.Write(buf)
-		h := hash.Update(buf[0])
+	// Process content in larger blocks for efficiency
+	for i := 0; i < len(content); i++ {
+		b := content[i]
+		chunk.WriteByte(b)
+		h := hash.Update(b)
 
 		// Check if we've found a chunk boundary
 		if (h%Boundary == 0 && chunk.Len() >= MinChunkSize) || chunk.Len() >= MaxChunkSize {
@@ -128,6 +118,7 @@ func ChunkContent(content []byte) ([]Chunk, error) {
 // ReassembleContent reassembles content from chunks
 func ReassembleContent(chunks []Chunk) []byte {
 	var content bytes.Buffer
+	content.Grow(len(chunks) * MinChunkSize) // Pre-allocate estimated size
 	for _, chunk := range chunks {
 		content.Write(chunk.Content)
 	}
