@@ -6,24 +6,25 @@ import (
 	"fmt"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"memex/internal/memex/storage"
 )
 
 func TestComprehensiveStorage(t *testing.T) {
-	// Create test directory
-	testDir := t.TempDir()
-	repoPath := filepath.Join(testDir, "test.mx")
-
-	// Create repository
-	repo, err := storage.CreateMX(repoPath)
-	if err != nil {
-		t.Fatalf("creating repository: %v", err)
-	}
-	defer repo.Close()
-
 	// Test basic node operations
 	t.Run("Basic Node Operations", func(t *testing.T) {
+		// Create test directory
+		testDir := t.TempDir()
+		repoPath := filepath.Join(testDir, "test.mx")
+
+		// Create repository
+		repo, err := storage.CreateMX(repoPath)
+		if err != nil {
+			t.Fatalf("creating repository: %v", err)
+		}
+		defer repo.Close()
+
 		// Add node
 		content := []byte("test content 1")
 		meta := map[string]any{
@@ -61,6 +62,17 @@ func TestComprehensiveStorage(t *testing.T) {
 
 	// Test multiple nodes
 	t.Run("Multiple Nodes", func(t *testing.T) {
+		// Create test directory
+		testDir := t.TempDir()
+		repoPath := filepath.Join(testDir, "test.mx")
+
+		// Create repository
+		repo, err := storage.CreateMX(repoPath)
+		if err != nil {
+			t.Fatalf("creating repository: %v", err)
+		}
+		defer repo.Close()
+
 		// Add multiple nodes
 		nodes := []struct {
 			content []byte
@@ -94,6 +106,17 @@ func TestComprehensiveStorage(t *testing.T) {
 
 	// Test node deletion
 	t.Run("Node Deletion", func(t *testing.T) {
+		// Create test directory
+		testDir := t.TempDir()
+		repoPath := filepath.Join(testDir, "test.mx")
+
+		// Create repository
+		repo, err := storage.CreateMX(repoPath)
+		if err != nil {
+			t.Fatalf("creating repository: %v", err)
+		}
+		defer repo.Close()
+
 		// Add node
 		content := []byte("delete me")
 		id, err := repo.AddNode(content, "test", nil)
@@ -114,9 +137,20 @@ func TestComprehensiveStorage(t *testing.T) {
 
 	// Test similar content detection
 	t.Run("Similar Content", func(t *testing.T) {
-		// Add two nodes with similar content
-		content1 := []byte("This is a test document with some unique content")
-		content2 := []byte("This is a test document with different content")
+		// Create test directory
+		testDir := t.TempDir()
+		repoPath := filepath.Join(testDir, "test.mx")
+
+		// Create repository
+		repo, err := storage.CreateMX(repoPath)
+		if err != nil {
+			t.Fatalf("creating repository: %v", err)
+		}
+		defer repo.Close()
+
+		// Add two nodes with similar content (under 1KB to use word-based chunking)
+		content1 := []byte("The quick brown fox jumps over the lazy dog. This is a test document with some shared content.")
+		content2 := []byte("The quick brown fox jumps over the lazy cat. This is a test document with some shared content.")
 
 		id1, err := repo.AddNode(content1, "test", nil)
 		if err != nil {
@@ -128,34 +162,55 @@ func TestComprehensiveStorage(t *testing.T) {
 			t.Fatalf("adding second node: %v", err)
 		}
 
-		// Get nodes
-		node1, err := repo.GetNode(id1)
+		// Wait for similarity links to be created
+		time.Sleep(100 * time.Millisecond)
+
+		// Get links
+		links, err := repo.GetLinks(id1)
 		if err != nil {
-			t.Fatalf("getting first node: %v", err)
+			t.Fatalf("getting links: %v", err)
 		}
 
-		node2, err := repo.GetNode(id2)
-		if err != nil {
-			t.Fatalf("getting second node: %v", err)
+		t.Logf("Found %d links for node %s", len(links), id1)
+		for _, link := range links {
+			t.Logf("Link: %s -> %s [%s] meta: %v", link.Source, link.Target, link.Type, link.Meta)
 		}
 
-		// Verify chunks are stored
-		chunks1, ok := node1.Meta["chunks"].([]string)
-		if !ok {
-			t.Fatal("chunks not found in first node metadata")
+		// Verify similarity link exists
+		var found bool
+		for _, link := range links {
+			if link.Target == id2 && link.Type == "similar" {
+				found = true
+				if similarity, ok := link.Meta["similarity"].(float64); !ok {
+					t.Error("similarity not found in link metadata")
+				} else if similarity < 0.3 {
+					t.Errorf("similarity too low: got %f, want >= 0.3", similarity)
+				}
+				if shared, ok := link.Meta["shared"].(int); !ok {
+					t.Error("shared chunks not found in link metadata")
+				} else if shared == 0 {
+					t.Error("no shared chunks found")
+				}
+				break
+			}
 		}
-		chunks2, ok := node2.Meta["chunks"].([]string)
-		if !ok {
-			t.Fatal("chunks not found in second node metadata")
-		}
-
-		if len(chunks1) == 0 || len(chunks2) == 0 {
-			t.Error("no chunks found in nodes")
+		if !found {
+			t.Error("similarity link not found")
 		}
 	})
 
 	// Test file persistence
 	t.Run("File Persistence", func(t *testing.T) {
+		// Create test directory
+		testDir := t.TempDir()
+		repoPath := filepath.Join(testDir, "test.mx")
+
+		// Create repository
+		repo, err := storage.CreateMX(repoPath)
+		if err != nil {
+			t.Fatalf("creating repository: %v", err)
+		}
+
 		// Add node
 		content := []byte("persistence test")
 		id, err := repo.AddNode(content, "test", nil)
@@ -173,6 +228,7 @@ func TestComprehensiveStorage(t *testing.T) {
 		if err != nil {
 			t.Fatalf("reopening repository: %v", err)
 		}
+		defer repo.Close()
 
 		// Get node
 		node, err := repo.GetNode(id)
@@ -190,6 +246,17 @@ func TestComprehensiveStorage(t *testing.T) {
 
 	// Test large content
 	t.Run("Large Content", func(t *testing.T) {
+		// Create test directory
+		testDir := t.TempDir()
+		repoPath := filepath.Join(testDir, "test.mx")
+
+		// Create repository
+		repo, err := storage.CreateMX(repoPath)
+		if err != nil {
+			t.Fatalf("creating repository: %v", err)
+		}
+		defer repo.Close()
+
 		// Create large content (1MB)
 		content := make([]byte, 1024*1024)
 		for i := range content {
@@ -227,6 +294,17 @@ func TestComprehensiveStorage(t *testing.T) {
 
 	// Test error cases
 	t.Run("Error Cases", func(t *testing.T) {
+		// Create test directory
+		testDir := t.TempDir()
+		repoPath := filepath.Join(testDir, "test.mx")
+
+		// Create repository
+		repo, err := storage.CreateMX(repoPath)
+		if err != nil {
+			t.Fatalf("creating repository: %v", err)
+		}
+		defer repo.Close()
+
 		// Test invalid node ID
 		if _, err := repo.GetNode("invalid"); err == nil {
 			t.Error("expected error for invalid node ID")
