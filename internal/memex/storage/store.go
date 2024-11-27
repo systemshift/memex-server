@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"os"
@@ -11,6 +12,12 @@ import (
 
 // Current file format version
 const Version = 1
+
+// Common constants
+const (
+	maxMetaLen     = 1024 * 1024 // 1MB max metadata size
+	indexEntrySize = 32 + 8 + 4  // ID (32) + Offset (8) + Length (4)
+)
 
 // MXStore implements a graph-oriented file format
 type MXStore struct {
@@ -37,6 +44,26 @@ type Transaction struct {
 	startPos int64
 	writes   [][]byte
 	indexes  []IndexEntry
+	isEdge   bool // Whether this transaction is for an edge
+}
+
+// getChunksPath returns the path to the chunks directory
+func getChunksPath(repoPath string) string {
+	// Get absolute path to repository
+	absPath, err := filepath.Abs(repoPath)
+	if err != nil {
+		return filepath.Join(filepath.Dir(repoPath), filepath.Base(repoPath)+".chunks")
+	}
+
+	// Get the repository directory and base name
+	dir := filepath.Dir(absPath)
+	base := filepath.Base(absPath)
+
+	// Create chunks directory name by appending .chunks to the repository name
+	chunksDir := base + ".chunks"
+
+	// Return full path to chunks directory
+	return filepath.Join(dir, chunksDir)
 }
 
 // CreateMX creates a new repository
@@ -59,7 +86,7 @@ func CreateMX(path string) (*MXStore, error) {
 	}
 
 	// Create chunk store
-	chunksPath := filepath.Join(filepath.Dir(path), ".chunks")
+	chunksPath := getChunksPath(path)
 	if err := os.MkdirAll(chunksPath, 0755); err != nil {
 		file.Close()
 		return nil, fmt.Errorf("creating chunks directory: %w", err)
@@ -77,15 +104,21 @@ func CreateMX(path string) (*MXStore, error) {
 
 // OpenMX opens an existing repository
 func OpenMX(path string) (*MXStore, error) {
+	// Get absolute path to repository
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		absPath = path
+	}
+
 	// Open file
-	file, err := os.OpenFile(path, os.O_RDWR, 0644)
+	file, err := os.OpenFile(absPath, os.O_RDWR, 0644)
 	if err != nil {
 		return nil, fmt.Errorf("opening file: %w", err)
 	}
 
 	// Create store
 	store := &MXStore{
-		path: path,
+		path: absPath,
 		file: file,
 	}
 
@@ -96,7 +129,7 @@ func OpenMX(path string) (*MXStore, error) {
 	}
 
 	// Open chunk store
-	chunksPath := filepath.Join(filepath.Dir(path), ".chunks")
+	chunksPath := getChunksPath(absPath)
 	store.chunks = NewChunkStore(chunksPath)
 
 	// Read indexes
@@ -177,10 +210,17 @@ func (tx *Transaction) commit() error {
 	s := tx.store
 
 	// Update indexes
-	s.nodes = append(s.nodes, tx.indexes...)
+	for _, entry := range tx.indexes {
+		if tx.isEdge {
+			s.edges = append(s.edges, entry)
+			s.header.EdgeCount++
+		} else {
+			s.nodes = append(s.nodes, entry)
+			s.header.NodeCount++
+		}
+	}
 
 	// Update header
-	s.header.NodeCount = uint32(len(s.nodes))
 	s.header.Modified = time.Now()
 
 	// Get current position for index offsets
@@ -189,20 +229,42 @@ func (tx *Transaction) commit() error {
 		return fmt.Errorf("getting end position: %w", err)
 	}
 
+	// Calculate index offsets based on actual sizes
+	nodeIndexSize := len(s.nodes) * indexEntrySize
+	edgeIndexSize := len(s.edges) * indexEntrySize
+
 	// Update header with new index offsets
 	s.header.NodeIndex = uint64(endPos)
-	s.header.EdgeIndex = uint64(endPos + int64(binary.Size(s.nodes)))
-	s.header.BlobIndex = uint64(endPos + int64(binary.Size(s.nodes)) + int64(binary.Size(s.edges)))
+	s.header.EdgeIndex = uint64(endPos + int64(nodeIndexSize))
+	s.header.BlobIndex = uint64(endPos + int64(nodeIndexSize) + int64(edgeIndexSize))
 
-	// Write indexes
-	if err := binary.Write(s.file, binary.LittleEndian, s.nodes); err != nil {
-		return fmt.Errorf("writing node index: %w", err)
+	// Write indexes using a buffer
+	var buf bytes.Buffer
+
+	// Write node index
+	for _, entry := range s.nodes {
+		buf.Write(entry.ID[:])
+		binary.Write(&buf, binary.LittleEndian, entry.Offset)
+		binary.Write(&buf, binary.LittleEndian, entry.Length)
 	}
-	if err := binary.Write(s.file, binary.LittleEndian, s.edges); err != nil {
-		return fmt.Errorf("writing edge index: %w", err)
+
+	// Write edge index
+	for _, entry := range s.edges {
+		buf.Write(entry.ID[:])
+		binary.Write(&buf, binary.LittleEndian, entry.Offset)
+		binary.Write(&buf, binary.LittleEndian, entry.Length)
 	}
-	if err := binary.Write(s.file, binary.LittleEndian, s.blobs); err != nil {
-		return fmt.Errorf("writing blob index: %w", err)
+
+	// Write blob index
+	for _, entry := range s.blobs {
+		buf.Write(entry.ID[:])
+		binary.Write(&buf, binary.LittleEndian, entry.Offset)
+		binary.Write(&buf, binary.LittleEndian, entry.Length)
+	}
+
+	// Write buffer to file
+	if _, err := s.file.Write(buf.Bytes()); err != nil {
+		return fmt.Errorf("writing indexes: %w", err)
 	}
 
 	// Write header at start of file

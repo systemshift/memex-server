@@ -20,10 +20,19 @@ type EdgeData struct {
 	Meta    []byte   // JSON-encoded metadata
 }
 
+const (
+	edgeHeaderSize = 32 + 32 + 32 + 4 // Size of fixed fields in EdgeData
+)
+
+// EdgeMetadata represents the metadata for an edge
+type EdgeMetadata struct {
+	Similarity float64 `json:"similarity"`
+	Shared     int     `json:"shared"`
+}
+
 // AddLink adds a link between nodes
 func (s *MXStore) AddLink(sourceID, targetID, linkType string, meta map[string]any) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	fmt.Printf("DEBUG: Adding link %s -> %s [%s]\n", sourceID[:8], targetID[:8], linkType)
 
 	// Convert IDs to bytes
 	sourceBytes, err := hex.DecodeString(sourceID)
@@ -35,10 +44,20 @@ func (s *MXStore) AddLink(sourceID, targetID, linkType string, meta map[string]a
 		return fmt.Errorf("invalid target ID: %w", err)
 	}
 
-	// Serialize metadata
-	metaJSON, err := json.Marshal(meta)
+	// Create metadata struct with proper formatting
+	edgeMeta := EdgeMetadata{
+		Similarity: meta["similarity"].(float64),
+		Shared:     meta["shared"].(int),
+	}
+
+	// Serialize metadata with consistent formatting
+	metaJSON, err := json.MarshalIndent(edgeMeta, "", "")
 	if err != nil {
 		return fmt.Errorf("serializing metadata: %w", err)
+	}
+
+	if len(metaJSON) > maxMetaLen {
+		return fmt.Errorf("metadata too large: %d > %d bytes", len(metaJSON), maxMetaLen)
 	}
 
 	// Create edge data
@@ -54,6 +73,7 @@ func (s *MXStore) AddLink(sourceID, targetID, linkType string, meta map[string]a
 	if err != nil {
 		return fmt.Errorf("beginning transaction: %w", err)
 	}
+	tx.isEdge = true // Mark this as an edge transaction
 
 	// Write edge data
 	offset, err := s.writeEdge(edgeData)
@@ -62,30 +82,31 @@ func (s *MXStore) AddLink(sourceID, targetID, linkType string, meta map[string]a
 		return fmt.Errorf("writing edge: %w", err)
 	}
 
+	// Calculate total length
+	totalLen := edgeHeaderSize + len(metaJSON)
+
 	// Add to index
 	entry := IndexEntry{
 		ID:     edgeData.Source, // Use source ID as edge ID
 		Offset: offset,
-		Length: uint32(72 + len(metaJSON)), // Fixed size + metadata
+		Length: uint32(totalLen),
 	}
 	tx.addIndex(entry)
-
-	// Update header
-	s.header.EdgeCount++
-	s.header.Modified = s.header.Created
 
 	// Commit transaction
 	if err := tx.commit(); err != nil {
 		return fmt.Errorf("committing transaction: %w", err)
 	}
 
+	fmt.Printf("DEBUG: Added link successfully at offset %d with length %d (header=%d + meta=%d)\n",
+		offset, totalLen, edgeHeaderSize, len(metaJSON))
 	return nil
 }
 
 // GetLinks returns all links connected to a node
 func (s *MXStore) GetLinks(nodeID string) ([]core.Link, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	fmt.Printf("DEBUG: Getting links for node %s\n", nodeID[:8])
+	fmt.Printf("DEBUG: Found %d edges in index\n", len(s.edges))
 
 	// Convert ID to bytes
 	idBytes, err := hex.DecodeString(nodeID)
@@ -94,40 +115,62 @@ func (s *MXStore) GetLinks(nodeID string) ([]core.Link, error) {
 	}
 
 	var links []core.Link
-	for _, entry := range s.edges {
+	for i, entry := range s.edges {
+		fmt.Printf("DEBUG: Reading edge %d at offset %d with length %d\n", i, entry.Offset, entry.Length)
+
 		// Read edge data
 		if _, err := s.seek(int64(entry.Offset), io.SeekStart); err != nil {
 			return nil, fmt.Errorf("seeking to edge: %w", err)
 		}
 
+		// Create a buffer to read all data atomically
+		buf := make([]byte, entry.Length)
+		n, err := io.ReadFull(s.file, buf)
+		if err != nil {
+			return nil, fmt.Errorf("reading edge data (%d/%d bytes): %w", n, entry.Length, err)
+		}
+
+		// Create a reader for the buffer
+		reader := bytes.NewReader(buf)
+
 		var edgeData EdgeData
 		// Read Source
-		if _, err := io.ReadFull(s.file, edgeData.Source[:]); err != nil {
+		if _, err := io.ReadFull(reader, edgeData.Source[:]); err != nil {
 			return nil, fmt.Errorf("reading edge source: %w", err)
 		}
 		// Read Target
-		if _, err := io.ReadFull(s.file, edgeData.Target[:]); err != nil {
+		if _, err := io.ReadFull(reader, edgeData.Target[:]); err != nil {
 			return nil, fmt.Errorf("reading edge target: %w", err)
 		}
 		// Read Type
-		if _, err := io.ReadFull(s.file, edgeData.Type[:]); err != nil {
+		if _, err := io.ReadFull(reader, edgeData.Type[:]); err != nil {
 			return nil, fmt.Errorf("reading edge type: %w", err)
 		}
 		// Read metadata length
-		if err := binary.Read(s.file, binary.LittleEndian, &edgeData.MetaLen); err != nil {
+		if err := binary.Read(reader, binary.LittleEndian, &edgeData.MetaLen); err != nil {
 			return nil, fmt.Errorf("reading edge metadata length: %w", err)
 		}
+
+		fmt.Printf("DEBUG: Edge %d metadata length: %d\n", i, edgeData.MetaLen)
+
+		// Validate metadata length
+		if edgeData.MetaLen == 0 || edgeData.MetaLen > maxMetaLen {
+			return nil, fmt.Errorf("invalid metadata length: %d", edgeData.MetaLen)
+		}
+
 		// Read metadata
 		edgeData.Meta = make([]byte, edgeData.MetaLen)
-		if _, err := io.ReadFull(s.file, edgeData.Meta); err != nil {
+		if _, err := io.ReadFull(reader, edgeData.Meta); err != nil {
 			return nil, fmt.Errorf("reading edge metadata: %w", err)
 		}
+
+		fmt.Printf("DEBUG: Edge %d metadata: %s\n", i, string(edgeData.Meta))
 
 		// Check if edge is connected to the node
 		if bytes.Equal(edgeData.Source[:], idBytes) || bytes.Equal(edgeData.Target[:], idBytes) {
 			// Parse metadata
-			var meta map[string]any
-			if err := json.Unmarshal(edgeData.Meta, &meta); err != nil {
+			var edgeMeta EdgeMetadata
+			if err := json.Unmarshal(edgeData.Meta, &edgeMeta); err != nil {
 				return nil, fmt.Errorf("parsing edge metadata: %w", err)
 			}
 
@@ -136,12 +179,16 @@ func (s *MXStore) GetLinks(nodeID string) ([]core.Link, error) {
 				Source: hex.EncodeToString(edgeData.Source[:]),
 				Target: hex.EncodeToString(edgeData.Target[:]),
 				Type:   string(bytes.TrimRight(edgeData.Type[:], "\x00")),
-				Meta:   meta,
+				Meta: map[string]any{
+					"similarity": edgeMeta.Similarity,
+					"shared":     edgeMeta.Shared,
+				},
 			}
 			links = append(links, link)
 		}
 	}
 
+	fmt.Printf("DEBUG: Returning %d links\n", len(links))
 	return links, nil
 }
 
@@ -153,29 +200,28 @@ func (s *MXStore) writeEdge(edge EdgeData) (uint64, error) {
 		return 0, fmt.Errorf("seeking to end: %w", err)
 	}
 
+	// Create a buffer to write all data atomically
+	var buf bytes.Buffer
+	buf.Grow(edgeHeaderSize + len(edge.Meta))
+
 	// Write Source
-	if _, err := s.file.Write(edge.Source[:]); err != nil {
-		return 0, fmt.Errorf("writing source: %w", err)
-	}
+	buf.Write(edge.Source[:])
 
 	// Write Target
-	if _, err := s.file.Write(edge.Target[:]); err != nil {
-		return 0, fmt.Errorf("writing target: %w", err)
-	}
+	buf.Write(edge.Target[:])
 
 	// Write Type
-	if _, err := s.file.Write(edge.Type[:]); err != nil {
-		return 0, fmt.Errorf("writing type: %w", err)
-	}
+	buf.Write(edge.Type[:])
 
 	// Write metadata length
-	if err := binary.Write(s.file, binary.LittleEndian, edge.MetaLen); err != nil {
-		return 0, fmt.Errorf("writing metadata length: %w", err)
-	}
+	binary.Write(&buf, binary.LittleEndian, edge.MetaLen)
 
 	// Write metadata
-	if _, err := s.file.Write(edge.Meta); err != nil {
-		return 0, fmt.Errorf("writing metadata: %w", err)
+	buf.Write(edge.Meta)
+
+	// Write buffer to file
+	if _, err := s.file.Write(buf.Bytes()); err != nil {
+		return 0, fmt.Errorf("writing edge data: %w", err)
 	}
 
 	return uint64(offset), nil

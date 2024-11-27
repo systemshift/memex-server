@@ -25,7 +25,6 @@ type NodeData struct {
 }
 
 const (
-	maxMetaLen     = 1024 * 1024         // 1MB max metadata size
 	nodeHeaderSize = 32 + 32 + 8 + 8 + 4 // Size of fixed fields in NodeData
 )
 
@@ -63,6 +62,11 @@ func (s *MXStore) AddNode(content []byte, nodeType string, meta map[string]any) 
 	hash := sha256.Sum256(content)
 	contentHash := hex.EncodeToString(hash[:])
 
+	// Store full content as a blob
+	if _, err := s.chunks.Store(content); err != nil {
+		return "", fmt.Errorf("storing content blob: %w", err)
+	}
+
 	// Add content info to metadata
 	if meta == nil {
 		meta = make(map[string]any)
@@ -72,6 +76,7 @@ func (s *MXStore) AddNode(content []byte, nodeType string, meta map[string]any) 
 
 	// Generate node ID
 	id := generateID()
+	nodeIDStr := hex.EncodeToString(id)
 
 	// Serialize metadata
 	metaJSON, err := json.Marshal(meta)
@@ -122,77 +127,76 @@ func (s *MXStore) AddNode(content []byte, nodeType string, meta map[string]any) 
 	}
 	tx.addIndex(entry)
 
-	nodeIDStr := hex.EncodeToString(idBytes[:])
-
 	// Commit transaction
 	if err := tx.commit(); err != nil {
 		return "", fmt.Errorf("committing transaction: %w", err)
 	}
 
-	// Create similarity links in a separate goroutine
-	go func() {
-		// Make a copy of the data we need
-		s.mu.RLock()
-		nodes := make([]IndexEntry, len(s.nodes))
-		copy(nodes, s.nodes)
-		s.mu.RUnlock()
+	// Calculate similarities synchronously
+	fmt.Printf("DEBUG: Starting similarity calculation for node %s\n", nodeIDStr)
+	nodes := make([]IndexEntry, len(s.nodes))
+	copy(nodes, s.nodes)
+	fmt.Printf("DEBUG: Found %d existing nodes to compare\n", len(nodes))
 
-		// Calculate similarities
-		for _, entry := range nodes {
-			otherID := hex.EncodeToString(entry.ID[:])
-			if otherID == nodeIDStr {
-				continue // Skip self
-			}
+	for _, entry := range nodes {
+		otherID := hex.EncodeToString(entry.ID[:])
+		if otherID == nodeIDStr {
+			continue // Skip self
+		}
 
-			// Get other node's chunks
-			s.mu.RLock()
-			node, err := s.GetNode(otherID)
-			if err != nil {
-				s.mu.RUnlock()
-				continue
-			}
-			s.mu.RUnlock()
+		node, err := s.GetNode(otherID)
+		if err != nil {
+			fmt.Printf("DEBUG: Error getting node %s: %v\n", otherID, err)
+			continue
+		}
 
-			// Get chunks from metadata
-			var otherChunks []string
-			if chunksRaw, ok := node.Meta["chunks"]; ok {
-				if chunks, ok := chunksRaw.([]string); ok {
-					otherChunks = chunks
-				}
-			}
-
-			if len(otherChunks) == 0 {
-				continue
-			}
-
-			// Calculate similarity
-			chunkMap := make(map[string]struct{}, len(chunkHashes))
-			for _, chunk := range chunkHashes {
-				chunkMap[chunk] = struct{}{}
-			}
-
-			sharedChunks := 0
-			for _, chunk := range otherChunks {
-				if _, ok := chunkMap[chunk]; ok {
-					sharedChunks++
-				}
-			}
-
-			// Create link if similarity threshold met
-			if sharedChunks > 0 {
-				similarity := float64(sharedChunks) / float64(len(chunkHashes))
-				if similarity >= 0.3 { // At least 30% similar
-					meta := map[string]any{
-						"similarity": similarity,
-						"shared":     sharedChunks,
-					}
-					s.mu.Lock()
-					s.AddLink(nodeIDStr, otherID, "similar", meta)
-					s.mu.Unlock()
-				}
+		var otherChunks []string
+		if chunksRaw, ok := node.Meta["chunks"]; ok {
+			if chunks, ok := chunksRaw.([]string); ok {
+				otherChunks = chunks
 			}
 		}
-	}()
+
+		if len(otherChunks) == 0 {
+			fmt.Printf("DEBUG: No chunks found for node %s\n", otherID)
+			continue
+		}
+
+		fmt.Printf("DEBUG: Comparing chunks: current=%d other=%d\n", len(chunkHashes), len(otherChunks))
+
+		// Calculate Jaccard similarity
+		union := make(map[string]struct{})
+		intersection := 0
+
+		for _, chunk := range chunkHashes {
+			union[chunk] = struct{}{}
+		}
+
+		for _, chunk := range otherChunks {
+			if _, exists := union[chunk]; exists {
+				intersection++
+			}
+			union[chunk] = struct{}{}
+		}
+
+		similarity := float64(intersection) / float64(len(union))
+		fmt.Printf("DEBUG: Found similarity between %s and %s: %.2f (%d shared chunks)\n",
+			nodeIDStr[:8], otherID[:8], similarity, intersection)
+
+		if similarity >= 0.3 {
+			meta := map[string]any{
+				"similarity": similarity,
+				"shared":     intersection,
+			}
+			if err := s.AddLink(nodeIDStr, otherID, "similar", meta); err != nil {
+				fmt.Printf("DEBUG: Error creating forward link: %v\n", err)
+			}
+			if err := s.AddLink(otherID, nodeIDStr, "similar", meta); err != nil {
+				fmt.Printf("DEBUG: Error creating reverse link: %v\n", err)
+			}
+		}
+	}
+	fmt.Printf("DEBUG: Finished similarity calculation for node %s\n", nodeIDStr)
 
 	return nodeIDStr, nil
 }
@@ -222,30 +226,39 @@ func (s *MXStore) GetNode(id string) (core.Node, error) {
 		return core.Node{}, fmt.Errorf("seeking to node: %w", err)
 	}
 
+	// Create a buffer to read all data atomically
+	buf := make([]byte, entry.Length)
+	if _, err := io.ReadFull(s.file, buf); err != nil {
+		return core.Node{}, fmt.Errorf("reading node data: %w", err)
+	}
+
+	// Create a reader for the buffer
+	reader := bytes.NewReader(buf)
+
 	// Read node data
 	var nodeData NodeData
 
 	// Read ID
-	if _, err := io.ReadFull(s.file, nodeData.ID[:]); err != nil {
+	if _, err := io.ReadFull(reader, nodeData.ID[:]); err != nil {
 		return core.Node{}, fmt.Errorf("reading ID: %w", err)
 	}
 
 	// Read Type
-	if _, err := io.ReadFull(s.file, nodeData.Type[:]); err != nil {
+	if _, err := io.ReadFull(reader, nodeData.Type[:]); err != nil {
 		return core.Node{}, fmt.Errorf("reading type: %w", err)
 	}
 	nodeType := string(bytes.TrimRight(nodeData.Type[:], "\x00"))
 
 	// Read timestamps
-	if err := binary.Read(s.file, binary.LittleEndian, &nodeData.Created); err != nil {
+	if err := binary.Read(reader, binary.LittleEndian, &nodeData.Created); err != nil {
 		return core.Node{}, fmt.Errorf("reading created time: %w", err)
 	}
-	if err := binary.Read(s.file, binary.LittleEndian, &nodeData.Modified); err != nil {
+	if err := binary.Read(reader, binary.LittleEndian, &nodeData.Modified); err != nil {
 		return core.Node{}, fmt.Errorf("reading modified time: %w", err)
 	}
 
 	// Read metadata length
-	if err := binary.Read(s.file, binary.LittleEndian, &nodeData.MetaLen); err != nil {
+	if err := binary.Read(reader, binary.LittleEndian, &nodeData.MetaLen); err != nil {
 		return core.Node{}, fmt.Errorf("reading metadata length: %w", err)
 	}
 
@@ -256,7 +269,7 @@ func (s *MXStore) GetNode(id string) (core.Node, error) {
 
 	// Read metadata
 	nodeData.Meta = make([]byte, nodeData.MetaLen)
-	if _, err := io.ReadFull(s.file, nodeData.Meta); err != nil {
+	if _, err := io.ReadFull(reader, nodeData.Meta); err != nil {
 		return core.Node{}, fmt.Errorf("reading metadata: %w", err)
 	}
 
@@ -327,6 +340,7 @@ func (s *MXStore) GetNode(id string) (core.Node, error) {
 		Created:  time.Unix(nodeData.Created, 0),
 		Modified: time.Unix(nodeData.Modified, 0),
 		Versions: versions,
+		Current:  "",
 	}
 	if len(versions) > 0 {
 		node.Current = versions[0].Hash
@@ -372,31 +386,41 @@ func (s *MXStore) DeleteNode(id string) error {
 		return fmt.Errorf("seeking to node: %w", err)
 	}
 
+	// Create a buffer to read all data atomically
+	buf := make([]byte, entry.Length)
+	if _, err := io.ReadFull(s.file, buf); err != nil {
+		tx.rollback()
+		return fmt.Errorf("reading node data: %w", err)
+	}
+
+	// Create a reader for the buffer
+	reader := bytes.NewReader(buf)
+
 	var nodeData NodeData
 	// Read ID
-	if _, err := io.ReadFull(s.file, nodeData.ID[:]); err != nil {
+	if _, err := io.ReadFull(reader, nodeData.ID[:]); err != nil {
 		tx.rollback()
 		return fmt.Errorf("reading ID: %w", err)
 	}
 
 	// Read Type
-	if _, err := io.ReadFull(s.file, nodeData.Type[:]); err != nil {
+	if _, err := io.ReadFull(reader, nodeData.Type[:]); err != nil {
 		tx.rollback()
 		return fmt.Errorf("reading type: %w", err)
 	}
 
 	// Read timestamps
-	if err := binary.Read(s.file, binary.LittleEndian, &nodeData.Created); err != nil {
+	if err := binary.Read(reader, binary.LittleEndian, &nodeData.Created); err != nil {
 		tx.rollback()
 		return fmt.Errorf("reading created time: %w", err)
 	}
-	if err := binary.Read(s.file, binary.LittleEndian, &nodeData.Modified); err != nil {
+	if err := binary.Read(reader, binary.LittleEndian, &nodeData.Modified); err != nil {
 		tx.rollback()
 		return fmt.Errorf("reading modified time: %w", err)
 	}
 
 	// Read metadata length
-	if err := binary.Read(s.file, binary.LittleEndian, &nodeData.MetaLen); err != nil {
+	if err := binary.Read(reader, binary.LittleEndian, &nodeData.MetaLen); err != nil {
 		tx.rollback()
 		return fmt.Errorf("reading metadata length: %w", err)
 	}
@@ -409,7 +433,7 @@ func (s *MXStore) DeleteNode(id string) error {
 
 	// Read metadata
 	nodeData.Meta = make([]byte, nodeData.MetaLen)
-	if _, err := io.ReadFull(s.file, nodeData.Meta); err != nil {
+	if _, err := io.ReadFull(reader, nodeData.Meta); err != nil {
 		tx.rollback()
 		return fmt.Errorf("reading metadata: %w", err)
 	}
@@ -419,6 +443,14 @@ func (s *MXStore) DeleteNode(id string) error {
 	if err := json.Unmarshal(nodeData.Meta, &meta); err != nil {
 		tx.rollback()
 		return fmt.Errorf("parsing metadata: %w", err)
+	}
+
+	// Remove content blob if available
+	if contentHash, ok := meta["content"].(string); ok {
+		if err := s.chunks.Delete(contentHash); err != nil {
+			tx.rollback()
+			return fmt.Errorf("deleting content blob: %w", err)
+		}
 	}
 
 	// Remove chunks if available

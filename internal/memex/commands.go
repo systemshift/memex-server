@@ -259,8 +259,8 @@ func LinkCommand(args ...string) error {
 
 // LinksCommand shows links for a node
 func LinksCommand(args ...string) error {
-	if len(args) < 1 {
-		return fmt.Errorf("links requires node ID")
+	if len(args) < 2 {
+		return fmt.Errorf("links requires repository path and node ID")
 	}
 
 	repo, err := GetRepository()
@@ -268,13 +268,15 @@ func LinksCommand(args ...string) error {
 		return err
 	}
 
-	links, err := repo.GetLinks(args[0])
+	nodeID := args[1]
+	links, err := repo.GetLinks(nodeID)
 	if err != nil {
 		return err
 	}
 
+	fmt.Printf("Links for node %s:\n", nodeID)
 	for _, link := range links {
-		fmt.Printf("%s -> %s [%s]\n", args[0][:8], link.Target[:8], link.Type)
+		fmt.Printf("%s -> %s [%s]\n", nodeID[:8], link.Target[:8], link.Type)
 		if note, ok := link.Meta["note"].(string); ok {
 			fmt.Printf("  Note: %s\n", note)
 		}

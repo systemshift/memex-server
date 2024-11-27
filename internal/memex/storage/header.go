@@ -27,55 +27,21 @@ func (s *MXStore) writeHeader() error {
 	fmt.Printf("DEBUG: Writing header indexes: node=%d edge=%d blob=%d\n",
 		s.header.NodeIndex, s.header.EdgeIndex, s.header.BlobIndex)
 
-	// Save current position
-	currentPos, err := s.file.Seek(0, io.SeekCurrent)
-	if err != nil {
-		return fmt.Errorf("getting current position: %w", err)
-	}
+	// Create a buffer to write all data atomically
+	var buf [128]byte // Fixed size header
+	binary.LittleEndian.PutUint32(buf[0:], s.header.Version)
+	binary.LittleEndian.PutUint64(buf[4:], uint64(s.header.Created.Unix()))
+	binary.LittleEndian.PutUint64(buf[12:], uint64(s.header.Modified.Unix()))
+	binary.LittleEndian.PutUint32(buf[20:], s.header.NodeCount)
+	binary.LittleEndian.PutUint32(buf[24:], s.header.EdgeCount)
+	binary.LittleEndian.PutUint32(buf[28:], s.header.BlobCount)
+	binary.LittleEndian.PutUint64(buf[32:], s.header.NodeIndex)
+	binary.LittleEndian.PutUint64(buf[40:], s.header.EdgeIndex)
+	binary.LittleEndian.PutUint64(buf[48:], s.header.BlobIndex)
 
-	// Seek to start
-	if _, err := s.file.Seek(0, io.SeekStart); err != nil {
-		return fmt.Errorf("seeking to start: %w", err)
-	}
-
-	// Write version
-	if err := binary.Write(s.file, binary.LittleEndian, s.header.Version); err != nil {
-		return fmt.Errorf("writing version: %w", err)
-	}
-
-	// Write timestamps
-	if err := binary.Write(s.file, binary.LittleEndian, s.header.Created.Unix()); err != nil {
-		return fmt.Errorf("writing created time: %w", err)
-	}
-	if err := binary.Write(s.file, binary.LittleEndian, s.header.Modified.Unix()); err != nil {
-		return fmt.Errorf("writing modified time: %w", err)
-	}
-
-	// Write counts
-	if err := binary.Write(s.file, binary.LittleEndian, s.header.NodeCount); err != nil {
-		return fmt.Errorf("writing node count: %w", err)
-	}
-	if err := binary.Write(s.file, binary.LittleEndian, s.header.EdgeCount); err != nil {
-		return fmt.Errorf("writing edge count: %w", err)
-	}
-	if err := binary.Write(s.file, binary.LittleEndian, s.header.BlobCount); err != nil {
-		return fmt.Errorf("writing blob count: %w", err)
-	}
-
-	// Write index offsets
-	if err := binary.Write(s.file, binary.LittleEndian, s.header.NodeIndex); err != nil {
-		return fmt.Errorf("writing node index offset: %w", err)
-	}
-	if err := binary.Write(s.file, binary.LittleEndian, s.header.EdgeIndex); err != nil {
-		return fmt.Errorf("writing edge index offset: %w", err)
-	}
-	if err := binary.Write(s.file, binary.LittleEndian, s.header.BlobIndex); err != nil {
-		return fmt.Errorf("writing blob index offset: %w", err)
-	}
-
-	// Restore position
-	if _, err := s.file.Seek(currentPos, io.SeekStart); err != nil {
-		return fmt.Errorf("restoring position: %w", err)
+	// Write buffer to file
+	if _, err := s.file.Write(buf[:]); err != nil {
+		return fmt.Errorf("writing header: %w", err)
 	}
 
 	return nil
@@ -83,64 +49,102 @@ func (s *MXStore) writeHeader() error {
 
 // readHeader reads the header from the file
 func (s *MXStore) readHeader() error {
-	// Save current position
-	currentPos, err := s.file.Seek(0, io.SeekCurrent)
-	if err != nil {
-		return fmt.Errorf("getting current position: %w", err)
-	}
-
-	// Seek to start
+	// Seek to start of file
 	if _, err := s.file.Seek(0, io.SeekStart); err != nil {
 		return fmt.Errorf("seeking to start: %w", err)
 	}
 
-	// Read version
-	if err := binary.Read(s.file, binary.LittleEndian, &s.header.Version); err != nil {
-		return fmt.Errorf("reading version: %w", err)
+	// Read header data
+	var buf [128]byte // Fixed size header
+	if _, err := io.ReadFull(s.file, buf[:]); err != nil {
+		return fmt.Errorf("reading header: %w", err)
 	}
 
-	// Read timestamps
-	var created, modified int64
-	if err := binary.Read(s.file, binary.LittleEndian, &created); err != nil {
-		return fmt.Errorf("reading created time: %w", err)
-	}
-	if err := binary.Read(s.file, binary.LittleEndian, &modified); err != nil {
-		return fmt.Errorf("reading modified time: %w", err)
-	}
-	s.header.Created = time.Unix(created, 0)
-	s.header.Modified = time.Unix(modified, 0)
-
-	// Read counts
-	if err := binary.Read(s.file, binary.LittleEndian, &s.header.NodeCount); err != nil {
-		return fmt.Errorf("reading node count: %w", err)
-	}
-	if err := binary.Read(s.file, binary.LittleEndian, &s.header.EdgeCount); err != nil {
-		return fmt.Errorf("reading edge count: %w", err)
-	}
-	if err := binary.Read(s.file, binary.LittleEndian, &s.header.BlobCount); err != nil {
-		return fmt.Errorf("reading blob count: %w", err)
-	}
-
-	// Read index offsets
-	if err := binary.Read(s.file, binary.LittleEndian, &s.header.NodeIndex); err != nil {
-		return fmt.Errorf("reading node index offset: %w", err)
-	}
-	if err := binary.Read(s.file, binary.LittleEndian, &s.header.EdgeIndex); err != nil {
-		return fmt.Errorf("reading edge index offset: %w", err)
-	}
-	if err := binary.Read(s.file, binary.LittleEndian, &s.header.BlobIndex); err != nil {
-		return fmt.Errorf("reading blob index offset: %w", err)
-	}
-
-	// Restore position
-	if _, err := s.file.Seek(currentPos, io.SeekStart); err != nil {
-		return fmt.Errorf("restoring position: %w", err)
-	}
+	// Parse header fields
+	s.header.Version = binary.LittleEndian.Uint32(buf[0:])
+	s.header.Created = time.Unix(int64(binary.LittleEndian.Uint64(buf[4:])), 0)
+	s.header.Modified = time.Unix(int64(binary.LittleEndian.Uint64(buf[12:])), 0)
+	s.header.NodeCount = binary.LittleEndian.Uint32(buf[20:])
+	s.header.EdgeCount = binary.LittleEndian.Uint32(buf[24:])
+	s.header.BlobCount = binary.LittleEndian.Uint32(buf[28:])
+	s.header.NodeIndex = binary.LittleEndian.Uint64(buf[32:])
+	s.header.EdgeIndex = binary.LittleEndian.Uint64(buf[40:])
+	s.header.BlobIndex = binary.LittleEndian.Uint64(buf[48:])
 
 	fmt.Printf("DEBUG: Read header: version=%d nodes=%d edges=%d blobs=%d\n",
 		s.header.Version, s.header.NodeCount, s.header.EdgeCount, s.header.BlobCount)
 	fmt.Printf("DEBUG: Read header indexes: node=%d edge=%d blob=%d\n",
 		s.header.NodeIndex, s.header.EdgeIndex, s.header.BlobIndex)
+
+	return nil
+}
+
+// readIndexes reads the indexes from the file
+func (s *MXStore) readIndexes() error {
+	fmt.Printf("DEBUG: Reading indexes from header: node=%d edge=%d blob=%d count=%d\n",
+		s.header.NodeIndex, s.header.EdgeIndex, s.header.BlobIndex, s.header.NodeCount*40)
+
+	// Read node index
+	if s.header.NodeCount > 0 {
+		if _, err := s.file.Seek(int64(s.header.NodeIndex), io.SeekStart); err != nil {
+			return fmt.Errorf("seeking to node index: %w", err)
+		}
+
+		s.nodes = make([]IndexEntry, s.header.NodeCount)
+		for i := range s.nodes {
+			var buf [44]byte // 32 bytes ID + 8 bytes offset + 4 bytes length
+			if _, err := io.ReadFull(s.file, buf[:]); err != nil {
+				return fmt.Errorf("reading node entry: %w", err)
+			}
+			copy(s.nodes[i].ID[:], buf[:32])
+			s.nodes[i].Offset = binary.LittleEndian.Uint64(buf[32:40])
+			s.nodes[i].Length = binary.LittleEndian.Uint32(buf[40:44])
+		}
+
+		fmt.Printf("DEBUG: Read %d node index entries\n", len(s.nodes))
+		for i, entry := range s.nodes {
+			fmt.Printf("DEBUG: Node[%d] offset=%d length=%d id=%x\n",
+				i, entry.Offset, entry.Length, entry.ID[:8])
+		}
+	}
+
+	// Read edge index
+	if s.header.EdgeCount > 0 {
+		if _, err := s.file.Seek(int64(s.header.EdgeIndex), io.SeekStart); err != nil {
+			return fmt.Errorf("seeking to edge index: %w", err)
+		}
+
+		s.edges = make([]IndexEntry, s.header.EdgeCount)
+		for i := range s.edges {
+			var buf [44]byte // 32 bytes ID + 8 bytes offset + 4 bytes length
+			if _, err := io.ReadFull(s.file, buf[:]); err != nil {
+				return fmt.Errorf("reading edge entry: %w", err)
+			}
+			copy(s.edges[i].ID[:], buf[:32])
+			s.edges[i].Offset = binary.LittleEndian.Uint64(buf[32:40])
+			s.edges[i].Length = binary.LittleEndian.Uint32(buf[40:44])
+		}
+
+		fmt.Printf("DEBUG: Read %d edge index entries\n", len(s.edges))
+	}
+
+	// Read blob index
+	if s.header.BlobCount > 0 {
+		if _, err := s.file.Seek(int64(s.header.BlobIndex), io.SeekStart); err != nil {
+			return fmt.Errorf("seeking to blob index: %w", err)
+		}
+
+		s.blobs = make([]IndexEntry, s.header.BlobCount)
+		for i := range s.blobs {
+			var buf [44]byte // 32 bytes ID + 8 bytes offset + 4 bytes length
+			if _, err := io.ReadFull(s.file, buf[:]); err != nil {
+				return fmt.Errorf("reading blob entry: %w", err)
+			}
+			copy(s.blobs[i].ID[:], buf[:32])
+			s.blobs[i].Offset = binary.LittleEndian.Uint64(buf[32:40])
+			s.blobs[i].Length = binary.LittleEndian.Uint32(buf[40:44])
+		}
+	}
 
 	return nil
 }
