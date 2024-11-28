@@ -275,8 +275,8 @@ func ChunkContent(content []byte) ([]Chunk, error) {
 		start := 0
 		for i := 0; i < len(content); i++ {
 			if content[i] == ' ' || content[i] == '\n' || content[i] == '.' || i == len(content)-1 {
-				end := i
-				if i == len(content)-1 {
+				end := i + 1 // Include the delimiter in the chunk
+				if i == len(content)-1 && content[i] != ' ' && content[i] != '\n' && content[i] != '.' {
 					end = i + 1
 				}
 				chunk := Chunk{Content: content[start:end]}

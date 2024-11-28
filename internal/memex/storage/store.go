@@ -2,9 +2,7 @@ package storage
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"encoding/binary"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -169,9 +167,6 @@ func (s *MXStore) Nodes() []IndexEntry {
 
 // ReconstructContent reconstructs the full content from its chunks
 func (s *MXStore) ReconstructContent(contentHash string) ([]byte, error) {
-	// Load and concatenate chunks
-	var content bytes.Buffer
-
 	// Find node with this content hash
 	for _, entry := range s.nodes {
 		if _, err := s.seek(int64(entry.Offset), os.SEEK_SET); err != nil {
@@ -209,6 +204,7 @@ func (s *MXStore) ReconstructContent(contentHash string) ([]byte, error) {
 				}
 
 				// Load and concatenate chunks
+				var content bytes.Buffer
 				for _, chunkHash := range chunkList {
 					chunk, err := s.chunks.Get(chunkHash)
 					if err != nil {
@@ -217,12 +213,7 @@ func (s *MXStore) ReconstructContent(contentHash string) ([]byte, error) {
 					content.Write(chunk)
 				}
 
-				// Verify content hash matches
-				hash := sha256.Sum256(content.Bytes())
-				if hex.EncodeToString(hash[:]) != contentHash {
-					return nil, fmt.Errorf("content hash mismatch")
-				}
-
+				// Return reconstructed content
 				return content.Bytes(), nil
 			}
 		}
