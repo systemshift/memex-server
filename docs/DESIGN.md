@@ -10,10 +10,12 @@ This document outlines the key design decisions and architectural choices made i
    - Supports versioning and relationships
    - Prevents cycles in relationships
 
-2. **Content-Addressable Storage**
-   - Content stored as blobs identified by SHA-256 hash
-   - Ensures data integrity and natural deduplication
-   - Similar to Git's object storage model
+2. **Content-Addressable Chunked Storage**
+   - Content split into chunks for efficient storage
+   - Each chunk identified by SHA-256 hash
+   - Reference counting for chunk management
+   - Enables deduplication and sharing between files
+   - Similar content detection through shared chunks
 
 3. **Single File Storage**
    - All data contained in one .mx file
@@ -28,7 +30,7 @@ example.mx          # Single file containing all data
 
 The .mx file format:
 - Fixed-size header with metadata
-- Content blobs (content-addressable)
+- Content chunks (content-addressable)
 - Node data (DAG nodes)
 - Edge data (DAG edges)
 - Index for efficient lookup
@@ -38,7 +40,8 @@ The .mx file format:
   - Unique ID
   - Type (file/note)
   - Metadata
-  - Content reference (blob hash)
+  - Content hash
+  - Chunk references
   - Version history
   - Links to other nodes
 
@@ -56,9 +59,13 @@ The .mx file format:
   - Version metadata
 
 ### Content Storage
-- Content stored as immutable blobs
-- Each blob identified by SHA-256 hash
+- Content split into chunks:
+  - Small content (≤1024 bytes): Word-based chunks
+  - Large content (>1024 bytes): Fixed-size chunks
+- Each chunk identified by SHA-256 hash
+- Reference counting for chunk management
 - Automatic content deduplication
+- Similar content detection through shared chunks
 - Version tracking per node
 
 ## Component Architecture
@@ -87,7 +94,7 @@ The .mx file format:
   - Header management
   - Node operations
   - Edge operations
-  - Blob storage
+  - Chunk storage with reference counting
   - Index management
 
 ### Core Types
@@ -137,7 +144,7 @@ type Root struct {
 - Magic number for identification
 - Version number for format changes
 - Fixed-size header with counts and offsets
-- Content blobs stored sequentially
+- Content chunks with reference counting
 - Node and edge data with metadata
 - Index for efficient lookup
 
@@ -148,6 +155,7 @@ type Root struct {
 - Track versions
 - Maintain acyclic property
 - Delete nodes and edges
+- Manage chunk references
 
 ## Future Considerations
 
@@ -155,17 +163,20 @@ type Root struct {
    - Split large DAGs
    - Efficient graph traversal
    - Improved indexing
+   - Optimized chunk sizes
 
 2. **Extended Features**
    - Advanced graph queries
    - Relationship types
    - Graph visualization
    - Export/import
+   - Similarity detection tuning
 
 3. **Performance Optimizations**
-   - Caching frequently accessed paths
+   - Caching frequently accessed chunks
    - Batch operations
    - Compression
+   - Smarter chunking algorithms
 
 ## Design Decisions Log
 
@@ -180,6 +191,10 @@ type Root struct {
 - **Trade-offs**: Need to handle file size
 
 ### Content Storage
-- **Decision**: Content-addressable blobs
-- **Rationale**: Deduplication, integrity
-- **Trade-offs**: Larger hash size
+- **Decision**: Content-addressable chunks with reference counting
+- **Rationale**: Deduplication, sharing, similarity detection
+- **Trade-offs**: More complex chunk management
+- **Benefits**: 
+  * Space efficiency through shared chunks
+  * Natural similarity detection
+  * Flexible content reconstruction

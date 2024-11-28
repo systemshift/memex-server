@@ -54,7 +54,6 @@ func (i *Importer) Import() error {
 	// First pass: read manifest and collect files
 	nodes := make(map[string][]byte) // node ID -> JSON content
 	edges := make(map[string][]byte) // edge ID -> JSON content
-	blobs := make(map[string][]byte) // blob hash -> content
 	manifest := ExportManifest{}
 	manifestFound := false
 
@@ -88,10 +87,6 @@ func (i *Importer) Import() error {
 		case strings.HasPrefix(header.Name, "edges/"):
 			id := strings.TrimSuffix(filepath.Base(header.Name), ".json")
 			edges[id] = content
-
-		case strings.HasPrefix(header.Name, "blobs/"):
-			hash := filepath.Base(header.Name)
-			blobs[hash] = content
 		}
 	}
 
@@ -100,14 +95,6 @@ func (i *Importer) Import() error {
 	}
 
 	i.manifest = manifest
-
-	// Import blobs first
-	fmt.Printf("Importing blobs...\n")
-	for hash, content := range blobs {
-		if err := i.importBlob(hash, content); err != nil {
-			return fmt.Errorf("importing blob %s: %w", hash, err)
-		}
-	}
 
 	// Import nodes
 	fmt.Printf("Importing nodes...\n")
@@ -128,22 +115,6 @@ func (i *Importer) Import() error {
 	return nil
 }
 
-func (i *Importer) importBlob(hash string, content []byte) error {
-	// Check if blob already exists
-	if i.store.HasBlob(hash) {
-		fmt.Printf("Blob %s already exists, skipping\n", hash)
-		return nil
-	}
-
-	// Store blob
-	fmt.Printf("Storing blob %s\n", hash)
-	if err := i.store.StoreBlob(content); err != nil {
-		return fmt.Errorf("storing blob: %w", err)
-	}
-
-	return nil
-}
-
 func (i *Importer) importNode(oldID string, content []byte) error {
 	var node core.Node
 	if err := json.Unmarshal(content, &node); err != nil {
@@ -154,12 +125,6 @@ func (i *Importer) importNode(oldID string, content []byte) error {
 	contentHash, ok := node.Meta["content"].(string)
 	if !ok {
 		return fmt.Errorf("node missing content hash")
-	}
-
-	// Load blob content first to ensure we have it
-	content, err := i.store.LoadBlob(contentHash)
-	if err != nil {
-		return fmt.Errorf("loading blob: %w", err)
 	}
 
 	// Check if node exists
@@ -198,6 +163,12 @@ func (i *Importer) importNode(oldID string, content []byte) error {
 			newID = i.options.Prefix + oldID
 			fmt.Printf("Node exists, using new ID %s\n", newID)
 		}
+	}
+
+	// Reconstruct content from chunks
+	content, err := i.store.ReconstructContent(contentHash)
+	if err != nil {
+		return fmt.Errorf("reconstructing content: %w", err)
 	}
 
 	// Add node

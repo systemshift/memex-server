@@ -8,7 +8,7 @@ The .mx file is structured as:
 
 ```
 [Header]     Fixed 128 bytes
-[Blobs]      Content storage
+[Chunks]     Content storage
 [Nodes]      Node metadata
 [Edges]      Link data
 [Indexes]    Lookup tables
@@ -24,32 +24,37 @@ type Header struct {
     Modified  time.Time // Last modified timestamp
     NodeCount uint32    // Number of nodes
     EdgeCount uint32    // Number of edges
-    BlobCount uint32    // Number of content blobs
     NodeIndex uint64    // Offset to node index
     EdgeIndex uint64    // Offset to edge index
-    BlobIndex uint64    // Offset to blob index
     Reserved  [64]byte  // Future use
 }
 ```
 
-## Content Storage (Blobs)
+## Content Storage (Chunks)
 
-Content is stored in content-addressable blobs:
+Content is stored in content-addressable chunks:
 
-1. Content is hashed using SHA-256
-2. Hash becomes the blob's identifier
-3. Blob is stored with length prefix
-4. Automatic deduplication through hash identity
+1. Content is split into chunks:
+   - Small content (≤1024 bytes): Split on word boundaries
+   - Large content (>1024 bytes): Split into fixed 512-byte chunks
+2. Each chunk is hashed using SHA-256
+3. Hash becomes the chunk's identifier
+4. Chunks are stored with reference counting
+5. Automatic deduplication through hash identity
 
 ```go
-// Writing a blob:
-1. Calculate SHA-256 hash
-2. Check if hash exists in blob index
-3. If not exists:
-   - Write uint32 length
-   - Write content bytes
-   - Add entry to blob index
-4. Return hash as identifier
+// Writing content:
+1. Split content into chunks
+2. For each chunk:
+   - Calculate SHA-256 hash
+   - Check if hash exists (reference counting)
+   - If not exists:
+     * Write chunk content
+     * Initialize reference count
+   - If exists:
+     * Increment reference count
+3. Store chunk list in node metadata
+4. Calculate content hash from chunk hashes
 ```
 
 ## Node Storage
@@ -63,16 +68,17 @@ type NodeData struct {
     Created  int64    // Unix timestamp
     Modified int64    // Unix timestamp
     MetaLen  uint32   // Metadata length
-    Meta     []byte   // JSON metadata
+    Meta     []byte   // JSON metadata with content hash and chunk list
 }
 ```
 
 Node writing process:
-1. Store content as blob
-2. Generate node ID
-3. Create metadata with content hash
-4. Write node data
-5. Add to node index
+1. Split content into chunks
+2. Store each chunk with reference counting
+3. Generate node ID
+4. Create metadata with content hash and chunk list
+5. Write node data
+6. Add to node index
 
 ## Edge Storage (Links)
 
@@ -97,7 +103,7 @@ Edge writing process:
 
 ## Index System
 
-Three index types for efficient lookup:
+Two index types for efficient lookup:
 
 ```go
 type IndexEntry struct {
@@ -109,7 +115,6 @@ type IndexEntry struct {
 
 1. **Node Index**: Maps node IDs to node data
 2. **Edge Index**: Maps source IDs to edge data
-3. **Blob Index**: Maps content hashes to blobs
 
 ## Implementation Files
 
@@ -126,7 +131,7 @@ type MXStore struct {
     header Header       // File header
     nodes  []IndexEntry // Node index
     edges  []IndexEntry // Edge index
-    blobs  []IndexEntry // Blob index
+    chunks *ChunkStore  // Chunk storage
 }
 ```
 
@@ -135,14 +140,16 @@ Key methods:
 - `OpenMX`: Opens existing repository
 - `Close`: Writes indexes and closes file
 
-### blob.go
-- Content storage implementation
-- Blob reading/writing
+### chunk.go
+- Content chunking implementation
+- Chunk storage with reference counting
 - Content deduplication
 
 Key methods:
-- `storeBlob`: Stores content, returns hash
-- `LoadBlob`: Retrieves content by hash
+- `ChunkContent`: Splits content into chunks
+- `Store`: Stores chunk with reference counting
+- `Get`: Retrieves chunk content
+- `Delete`: Decrements reference count and removes if zero
 
 ### node.go
 - Node operations
@@ -153,6 +160,7 @@ Key methods:
 - `AddNode`: Creates new node
 - `GetNode`: Retrieves node by ID
 - `DeleteNode`: Removes node and its edges
+- `ReconstructContent`: Rebuilds content from chunks
 
 ### link.go
 - Edge operations
@@ -201,19 +209,20 @@ Key methods:
 
 - Indexes kept in memory
 - Sequential writes for data
-- Content deduplication
+- Content deduplication through chunks
+- Reference counting for chunk cleanup
 - No file fragmentation handling (yet)
 - No compaction (yet)
 
 ## Future Improvements
 
 1. **Compaction**
-   - Remove deleted content
+   - Remove unreferenced chunks
    - Rewrite file without gaps
    - Update all offsets
 
 2. **Caching**
-   - Cache frequently accessed blobs
+   - Cache frequently accessed chunks
    - Cache node metadata
    - LRU cache implementation
 
@@ -226,3 +235,4 @@ Key methods:
    - Index compression
    - Content compression
    - Batch operations
+   - Smarter chunking algorithms

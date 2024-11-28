@@ -132,8 +132,8 @@ func (s *Server) handleContent(w http.ResponseWriter, r *http.Request) {
 	// Get content hash from URL
 	hash := filepath.Base(r.URL.Path)
 
-	// Load content
-	content, err := s.memex.LoadBlob(hash)
+	// Reconstruct content from chunks
+	content, err := s.memex.ReconstructContent(hash)
 	if err != nil {
 		http.Error(w, "Content not found", http.StatusNotFound)
 		return
@@ -158,7 +158,7 @@ func (s *Server) handleNode(w http.ResponseWriter, r *http.Request) {
 	// If file, serve content
 	if node.Type == "file" {
 		if contentHash, ok := node.Meta["content"].(string); ok {
-			content, err := s.memex.LoadBlob(contentHash)
+			content, err := s.memex.ReconstructContent(contentHash)
 			if err != nil {
 				http.Error(w, "Content not found", http.StatusNotFound)
 				return

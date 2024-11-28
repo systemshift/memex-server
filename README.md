@@ -89,7 +89,7 @@ Then visit `http://localhost:3000` to access the web interface, which provides:
 ### Storage Format (.mx file)
 
 - Fixed-size header with metadata
-- Content blobs (content-addressable)
+- Content chunks with reference counting
 - Node data (DAG nodes)
 - Edge data (DAG edges)
 - Index for efficient lookup
@@ -100,7 +100,7 @@ Then visit `http://localhost:3000` to access the web interface, which provides:
 - **Notes**: Text content created within Memex
 - Each node has:
   - Unique ID
-  - Content (stored as blob)
+  - Content (stored as chunks)
   - Metadata
   - Links to other nodes
 
@@ -110,6 +110,16 @@ Then visit `http://localhost:3000` to access the web interface, which provides:
 - Typed links (e.g., "references", "relates-to")
 - Optional metadata/notes on links
 - Maintains acyclic property
+
+### Content Storage
+
+- Content split into chunks:
+  - Small content (≤1024 bytes): Word-based chunks
+  - Large content (>1024 bytes): Fixed-size chunks
+- Each chunk identified by SHA-256 hash
+- Reference counting for chunk management
+- Automatic content deduplication
+- Similar content detection through shared chunks
 
 ## Development
 
@@ -166,6 +176,8 @@ go test ./internal/memex/storage/...
 - Graph visualization improvements
 - Search enhancements
 - Remote graph synchronization
+- Smarter chunking algorithms
+- Similarity detection tuning
 
 ## License
 

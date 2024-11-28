@@ -58,14 +58,9 @@ func (s *MXStore) AddNode(content []byte, nodeType string, meta map[string]any) 
 		chunkHashes = append(chunkHashes, hash)
 	}
 
-	// Calculate full content hash
+	// Calculate content hash directly from content
 	hash := sha256.Sum256(content)
 	contentHash := hex.EncodeToString(hash[:])
-
-	// Store full content as a blob
-	if _, err := s.chunks.Store(content); err != nil {
-		return "", fmt.Errorf("storing content blob: %w", err)
-	}
 
 	// Add content info to metadata
 	if meta == nil {
@@ -318,7 +313,7 @@ func (s *MXStore) GetNode(id string) (core.Node, error) {
 		if chunks, ok := meta["chunks"].([]string); ok {
 			chunkList = chunks
 		} else {
-			chunkList = []string{contentHash} // Fallback for old nodes
+			return core.Node{}, fmt.Errorf("no chunks found for content")
 		}
 
 		// Create version for content
@@ -443,14 +438,6 @@ func (s *MXStore) DeleteNode(id string) error {
 	if err := json.Unmarshal(nodeData.Meta, &meta); err != nil {
 		tx.rollback()
 		return fmt.Errorf("parsing metadata: %w", err)
-	}
-
-	// Remove content blob if available
-	if contentHash, ok := meta["content"].(string); ok {
-		if err := s.chunks.Delete(contentHash); err != nil {
-			tx.rollback()
-			return fmt.Errorf("deleting content blob: %w", err)
-		}
 	}
 
 	// Remove chunks if available

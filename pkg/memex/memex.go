@@ -42,7 +42,7 @@ func (m *Memex) GetRepository() (*storage.MXStore, error) {
 
 // Add adds content to the repository
 func (m *Memex) Add(content []byte, nodeType string, meta map[string]any) (string, error) {
-	// Store content in blob store
+	// Store content as chunks
 	if meta == nil {
 		meta = make(map[string]any)
 	}
@@ -56,11 +56,11 @@ func (m *Memex) Get(id string) (Node, error) {
 		return Node{}, fmt.Errorf("getting node: %w", err)
 	}
 
-	// Get content from blob store
+	// Reconstruct content from chunks if available
 	if contentHash, ok := node.Meta["content"].(string); ok {
-		content, err := m.repo.LoadBlob(contentHash)
+		content, err := m.repo.ReconstructContent(contentHash)
 		if err != nil {
-			return Node{}, fmt.Errorf("loading content: %w", err)
+			return Node{}, fmt.Errorf("reconstructing content: %w", err)
 		}
 		return Node{
 			ID:       node.ID,
@@ -92,7 +92,7 @@ func (m *Memex) Update(id string, content []byte) error {
 	// Store new content
 	meta := make(map[string]any)
 	for k, v := range node.Meta {
-		if k != "content" { // Don't copy old content hash
+		if k != "content" && k != "chunks" { // Don't copy old content hash or chunks
 			meta[k] = v
 		}
 	}

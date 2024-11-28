@@ -75,7 +75,7 @@ func TestExport(t *testing.T) {
 		depth       int
 		wantNodes   int
 		wantEdges   int
-		wantBlobs   int
+		wantChunks  int
 		wantContent [][]byte
 	}{
 		{0, 1, 1, 1, [][]byte{content1}},
@@ -102,7 +102,7 @@ func TestExport(t *testing.T) {
 			foundManifest := false
 			foundNodes := 0
 			foundEdges := 0
-			foundBlobs := 0
+			foundChunks := 0
 			foundContent := make([][]byte, 0)
 
 			// Read each entry
@@ -134,8 +134,8 @@ func TestExport(t *testing.T) {
 					if manifest.Edges != tt.wantEdges {
 						t.Errorf("Expected %d edges in manifest, got %d", tt.wantEdges, manifest.Edges)
 					}
-					if manifest.Blobs != tt.wantBlobs {
-						t.Errorf("Expected %d blobs in manifest, got %d", tt.wantBlobs, manifest.Blobs)
+					if manifest.Chunks != tt.wantChunks {
+						t.Errorf("Expected %d chunks in manifest, got %d", tt.wantChunks, manifest.Chunks)
 					}
 
 				case filepath.Dir(header.Name) == "nodes":
@@ -144,8 +144,8 @@ func TestExport(t *testing.T) {
 				case filepath.Dir(header.Name) == "edges":
 					foundEdges++
 
-				case filepath.Dir(header.Name) == "blobs":
-					foundBlobs++
+				case filepath.Dir(header.Name) == "chunks":
+					foundChunks++
 					foundContent = append(foundContent, content)
 				}
 			}
@@ -160,11 +160,11 @@ func TestExport(t *testing.T) {
 			if foundEdges != tt.wantEdges {
 				t.Errorf("Expected %d edges in export, found %d", tt.wantEdges, foundEdges)
 			}
-			if foundBlobs != tt.wantBlobs {
-				t.Errorf("Expected %d blobs in export, found %d", tt.wantBlobs, foundBlobs)
+			if foundChunks != tt.wantChunks {
+				t.Errorf("Expected %d chunks in export, found %d", tt.wantChunks, foundChunks)
 			}
 
-			// Verify blob content
+			// Verify chunk content
 			for _, want := range tt.wantContent {
 				found := false
 				for _, got := range foundContent {

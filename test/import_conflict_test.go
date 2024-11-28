@@ -113,9 +113,9 @@ func TestImportConflicts(t *testing.T) {
 					continue
 				}
 
-				nodeContent, err := dstRepo.LoadBlob(contentHash)
+				nodeContent, err := dstRepo.ReconstructContent(contentHash)
 				if err != nil {
-					t.Errorf("Error loading content: %v", err)
+					t.Errorf("Error reconstructing content: %v", err)
 					continue
 				}
 

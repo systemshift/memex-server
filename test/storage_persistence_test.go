@@ -67,13 +67,13 @@ func TestPersistence(t *testing.T) {
 			t.Errorf("content hash mismatch: got %s, want %s", contentHash, expected)
 		}
 
-		// Verify content can be loaded
-		blob, err := repo.LoadBlob(contentHash)
+		// Verify content can be reconstructed
+		reconstructed, err := repo.ReconstructContent(contentHash)
 		if err != nil {
-			t.Fatalf("loading blob after reopen: %v", err)
+			t.Fatalf("reconstructing content after reopen: %v", err)
 		}
 
-		if !bytes.Equal(content, blob) {
+		if !bytes.Equal(content, reconstructed) {
 			t.Error("content not preserved correctly")
 		}
 	})
@@ -208,13 +208,13 @@ func TestPersistence(t *testing.T) {
 			t.Error("large content should have many chunks")
 		}
 
-		// Verify content can be loaded
-		blob, err := repo.LoadBlob(contentHash)
+		// Verify content can be reconstructed
+		reconstructed, err := repo.ReconstructContent(contentHash)
 		if err != nil {
-			t.Fatalf("loading large blob after reopen: %v", err)
+			t.Fatalf("reconstructing large content after reopen: %v", err)
 		}
 
-		if !bytes.Equal(content, blob) {
+		if !bytes.Equal(content, reconstructed) {
 			t.Error("large content not preserved correctly")
 		}
 	})

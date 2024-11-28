@@ -147,9 +147,9 @@ func TestImport(t *testing.T) {
 			continue
 		}
 
-		content, err := dstRepo.LoadBlob(contentHash)
+		content, err := dstRepo.ReconstructContent(contentHash)
 		if err != nil {
-			t.Errorf("Error loading content: %v", err)
+			t.Errorf("Error reconstructing content: %v", err)
 			continue
 		}
 

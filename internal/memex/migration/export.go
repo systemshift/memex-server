@@ -16,7 +16,7 @@ type ExportManifest struct {
 	Created time.Time `json:"created"`
 	Nodes   int       `json:"nodes"`
 	Edges   int       `json:"edges"`
-	Blobs   int       `json:"blobs"`
+	Chunks  int       `json:"chunks"`
 	Source  string    `json:"source"`
 }
 
@@ -71,12 +71,12 @@ func (e *Exporter) Export() error {
 	}
 	fmt.Printf("Exported %d edges\n", manifest.Edges)
 
-	// Export blobs
-	fmt.Printf("Exporting blobs...\n")
-	if err := e.exportBlobs(e.store.Nodes(), &manifest); err != nil {
-		return fmt.Errorf("exporting blobs: %w", err)
+	// Export chunks
+	fmt.Printf("Exporting chunks...\n")
+	if err := e.exportChunks(e.store.Nodes(), &manifest); err != nil {
+		return fmt.Errorf("exporting chunks: %w", err)
 	}
-	fmt.Printf("Exported %d blobs\n", manifest.Blobs)
+	fmt.Printf("Exported %d chunks\n", manifest.Chunks)
 
 	// Write manifest last (now has correct counts)
 	fmt.Printf("Writing manifest...\n")
@@ -187,12 +187,12 @@ func (e *Exporter) ExportSubgraph(seeds []string, depth int) error {
 	}
 	fmt.Printf("Exported %d edges\n", manifest.Edges)
 
-	// Export blobs for collected nodes
-	fmt.Printf("Exporting blobs...\n")
-	if err := e.exportBlobs(entries, &manifest); err != nil {
-		return fmt.Errorf("exporting blobs: %w", err)
+	// Export chunks for collected nodes
+	fmt.Printf("Exporting chunks...\n")
+	if err := e.exportChunks(entries, &manifest); err != nil {
+		return fmt.Errorf("exporting chunks: %w", err)
 	}
-	fmt.Printf("Exported %d blobs\n", manifest.Blobs)
+	fmt.Printf("Exported %d chunks\n", manifest.Chunks)
 
 	// Write manifest last (now has correct counts)
 	fmt.Printf("Writing manifest...\n")
@@ -309,53 +309,55 @@ func (e *Exporter) exportEdges(entries []storage.IndexEntry, manifest *ExportMan
 	return nil
 }
 
-func (e *Exporter) exportBlobs(entries []storage.IndexEntry, manifest *ExportManifest) error {
-	// Track exported blobs to avoid duplicates
+func (e *Exporter) exportChunks(entries []storage.IndexEntry, manifest *ExportManifest) error {
+	// Track exported chunks to avoid duplicates
 	exported := make(map[string]bool)
 
-	// Get all nodes to find content hashes
+	// Get all nodes to find chunks
 	for _, entry := range entries {
 		nodeID := fmt.Sprintf("%x", entry.ID[:])
-		fmt.Printf("Getting content for node %s\n", nodeID)
+		fmt.Printf("Getting chunks for node %s\n", nodeID)
 
 		node, err := e.store.GetNode(nodeID)
 		if err != nil {
 			return fmt.Errorf("getting node: %w", err)
 		}
 
-		// Get content hash from metadata
-		if contentHash, ok := node.Meta["content"].(string); ok {
-			// Skip if already exported
-			if exported[contentHash] {
-				continue
+		// Get chunks from metadata
+		if chunks, ok := node.Meta["chunks"].([]string); ok {
+			for _, chunkHash := range chunks {
+				// Skip if already exported
+				if exported[chunkHash] {
+					continue
+				}
+
+				fmt.Printf("Exporting chunk %s\n", chunkHash)
+
+				// Get chunk content
+				content, err := e.store.ReconstructContent(chunkHash)
+				if err != nil {
+					return fmt.Errorf("reconstructing chunk content: %w", err)
+				}
+
+				// Write chunk data
+				header := &tar.Header{
+					Name:    fmt.Sprintf("chunks/%s", chunkHash),
+					Size:    int64(len(content)),
+					Mode:    0644,
+					ModTime: time.Now(),
+				}
+
+				if err := e.writer.WriteHeader(header); err != nil {
+					return fmt.Errorf("writing chunk header: %w", err)
+				}
+
+				if _, err := e.writer.Write(content); err != nil {
+					return fmt.Errorf("writing chunk data: %w", err)
+				}
+
+				exported[chunkHash] = true
+				manifest.Chunks++
 			}
-
-			fmt.Printf("Exporting blob %s\n", contentHash)
-
-			// Load blob content
-			content, err := e.store.LoadBlob(contentHash)
-			if err != nil {
-				return fmt.Errorf("loading blob: %w", err)
-			}
-
-			// Write blob data
-			header := &tar.Header{
-				Name:    fmt.Sprintf("blobs/%s", contentHash),
-				Size:    int64(len(content)),
-				Mode:    0644,
-				ModTime: time.Now(),
-			}
-
-			if err := e.writer.WriteHeader(header); err != nil {
-				return fmt.Errorf("writing blob header: %w", err)
-			}
-
-			if _, err := e.writer.Write(content); err != nil {
-				return fmt.Errorf("writing blob data: %w", err)
-			}
-
-			exported[contentHash] = true
-			manifest.Blobs++
 		}
 	}
 

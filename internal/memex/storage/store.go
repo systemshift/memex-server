@@ -2,10 +2,14 @@ package storage
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -26,14 +30,13 @@ type MXStore struct {
 	header Header       // File header
 	nodes  []IndexEntry // Node index
 	edges  []IndexEntry // Edge index
-	blobs  []IndexEntry // Blob index
 	chunks *ChunkStore  // Chunk storage
 	mu     sync.RWMutex // Mutex for thread safety
 }
 
 // IndexEntry represents an index entry
 type IndexEntry struct {
-	ID     [32]byte // Node ID, edge ID, or content hash
+	ID     [32]byte // Node ID or edge ID
 	Offset uint64   // File offset to data
 	Length uint32   // Length of data
 }
@@ -164,6 +167,70 @@ func (s *MXStore) Nodes() []IndexEntry {
 	return s.nodes
 }
 
+// ReconstructContent reconstructs the full content from its chunks
+func (s *MXStore) ReconstructContent(contentHash string) ([]byte, error) {
+	// Load and concatenate chunks
+	var content bytes.Buffer
+
+	// Find node with this content hash
+	for _, entry := range s.nodes {
+		if _, err := s.seek(int64(entry.Offset), os.SEEK_SET); err != nil {
+			continue
+		}
+
+		// Read node metadata
+		buf := make([]byte, entry.Length)
+		if _, err := s.file.Read(buf); err != nil {
+			continue
+		}
+
+		// Skip fixed header fields to get to metadata
+		metaStart := 32 + 32 + 8 + 8 + 4 // ID + Type + Created + Modified + MetaLen
+		if len(buf) <= metaStart {
+			continue
+		}
+
+		// Parse metadata to check content hash and get chunks
+		var meta map[string]interface{}
+		if err := json.Unmarshal(buf[metaStart:], &meta); err != nil {
+			continue
+		}
+
+		if hash, ok := meta["content"].(string); ok && hash == contentHash {
+			// Found the node, now get its chunks
+			if chunksRaw, ok := meta["chunks"].([]interface{}); ok {
+				// Convert chunks to []string
+				var chunkList []string
+				for _, chunk := range chunksRaw {
+					if chunkStr, ok := chunk.(string); ok {
+						chunkStr = strings.Trim(chunkStr, `"`)
+						chunkList = append(chunkList, chunkStr)
+					}
+				}
+
+				// Load and concatenate chunks
+				for _, chunkHash := range chunkList {
+					chunk, err := s.chunks.Get(chunkHash)
+					if err != nil {
+						return nil, fmt.Errorf("loading chunk %s: %w", chunkHash, err)
+					}
+					content.Write(chunk)
+				}
+
+				// Verify content hash matches
+				hash := sha256.Sum256(content.Bytes())
+				if hex.EncodeToString(hash[:]) != contentHash {
+					return nil, fmt.Errorf("content hash mismatch")
+				}
+
+				return content.Bytes(), nil
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("content not found: %s", contentHash)
+}
+
 // beginTransaction starts a new transaction
 func (s *MXStore) beginTransaction() (*Transaction, error) {
 	// Get current position
@@ -229,14 +296,9 @@ func (tx *Transaction) commit() error {
 		return fmt.Errorf("getting end position: %w", err)
 	}
 
-	// Calculate index offsets based on actual sizes
-	nodeIndexSize := len(s.nodes) * indexEntrySize
-	edgeIndexSize := len(s.edges) * indexEntrySize
-
 	// Update header with new index offsets
 	s.header.NodeIndex = uint64(endPos)
-	s.header.EdgeIndex = uint64(endPos + int64(nodeIndexSize))
-	s.header.BlobIndex = uint64(endPos + int64(nodeIndexSize) + int64(edgeIndexSize))
+	s.header.EdgeIndex = uint64(endPos + int64(len(s.nodes)*indexEntrySize))
 
 	// Write indexes using a buffer
 	var buf bytes.Buffer
@@ -250,13 +312,6 @@ func (tx *Transaction) commit() error {
 
 	// Write edge index
 	for _, entry := range s.edges {
-		buf.Write(entry.ID[:])
-		binary.Write(&buf, binary.LittleEndian, entry.Offset)
-		binary.Write(&buf, binary.LittleEndian, entry.Length)
-	}
-
-	// Write blob index
-	for _, entry := range s.blobs {
 		buf.Write(entry.ID[:])
 		binary.Write(&buf, binary.LittleEndian, entry.Offset)
 		binary.Write(&buf, binary.LittleEndian, entry.Length)

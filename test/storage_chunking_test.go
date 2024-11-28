@@ -157,9 +157,9 @@ func TestChunking(t *testing.T) {
 
 		// Verify content can be reconstructed
 		contentHash := node.Meta["content"].(string)
-		reconstructed, err := repo.LoadBlob(contentHash)
+		reconstructed, err := repo.ReconstructContent(contentHash)
 		if err != nil {
-			t.Fatalf("loading large content: %v", err)
+			t.Fatalf("reconstructing large content: %v", err)
 		}
 
 		if !bytes.Equal(content, reconstructed) {

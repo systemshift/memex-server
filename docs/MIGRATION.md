@@ -14,7 +14,7 @@ graph-export/
 ├── edges/           # Edge data
 │   ├── edge1.json
 │   └── edge2.json
-├── blobs/           # Content blobs
+├── chunks/          # Content chunks
 │   ├── hash1
 │   └── hash2
 └── index.json       # Node/edge mapping
@@ -27,7 +27,7 @@ graph-export/
     "created": "2024-01-21T15:04:05Z",
     "nodes": 42,
     "edges": 23,
-    "blobs": 15,
+    "chunks": 15,
     "source": "repo-name.mx"
 }
 ```
@@ -41,7 +41,8 @@ graph-export/
         "filename": "example.txt",
         "added": "2024-01-21T15:04:05Z"
     },
-    "content": "hash1",
+    "content": "content-hash",
+    "chunks": ["chunk-hash-1", "chunk-hash-2"],
     "created": "2024-01-21T15:04:05Z",
     "modified": "2024-01-21T15:04:05Z"
 }
@@ -92,7 +93,7 @@ func (e *Exporter) Export(nodes []Node, edges []Edge) error {
     // Write manifest
     // Export nodes
     // Export edges
-    // Export referenced blobs
+    // Export referenced chunks
     // Create index
 }
 ```
@@ -109,7 +110,7 @@ type Importer struct {
 
 func (i *Importer) Import(opts ImportOptions) error {
     // Read manifest
-    // Import blobs
+    // Import chunks with reference counting
     // Import nodes (generate new IDs)
     // Update edge references
     // Import edges
@@ -177,20 +178,24 @@ memex import --prefix="imported/" graph.tar
 - Maintain ID mapping for edge updates
 - Handle circular references
 
-### Content Deduplication
-- Check for existing blobs
-- Update references to existing content
-- Handle modified content with same name
+### Content Management
+- Check for existing chunks
+- Update chunk reference counts
+- Handle shared chunks between files
+- Maintain chunk integrity
+- Track chunk dependencies
 
 ### Validation
 - Verify graph integrity
-- Check for missing references
+- Check for missing chunks
 - Validate content hashes
+- Verify chunk references
 
 ### Performance
 - Stream large exports
 - Batch imports
 - Progress reporting
+- Efficient chunk handling
 
 ## Future Extensions
 
@@ -213,3 +218,9 @@ memex import --prefix="imported/" graph.tar
    - Merge graphs from different sources
    - Conflict resolution strategies
    - Change history
+
+5. **Content Optimization**
+   - Smarter chunking algorithms
+   - Chunk size optimization
+   - Similarity detection tuning
+   - Reference count optimization

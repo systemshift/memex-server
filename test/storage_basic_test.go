@@ -74,12 +74,12 @@ func TestBasicNodeOperations(t *testing.T) {
 		}
 
 		contentHash := node.Meta["content"].(string)
-		blob, err := repo.LoadBlob(contentHash)
+		reconstructed, err := repo.ReconstructContent(contentHash)
 		if err != nil {
-			t.Fatalf("loading blob: %v", err)
+			t.Fatalf("reconstructing content: %v", err)
 		}
 
-		if !bytes.Equal(content, blob) {
+		if !bytes.Equal(content, reconstructed) {
 			t.Error("content not preserved correctly")
 		}
 	})

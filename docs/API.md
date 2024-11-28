@@ -19,6 +19,7 @@ The API operates on a Directed Acyclic Graph (DAG) where:
 - Edges represent typed relationships between nodes
 - Each node can have multiple versions
 - Links maintain the acyclic property
+- Content is stored as chunks for efficiency and deduplication
 
 ## Endpoints
 
@@ -53,9 +54,11 @@ Add a new node to the DAG.
 
 **Notes:**
 - Creates a new node in the DAG
-- Stores content as a blob
+- Splits content into chunks for efficient storage
 - Generates unique node ID
-- Records metadata (filename, timestamp)
+- Records metadata (filename, timestamp, chunk list)
+- Enables content deduplication through shared chunks
+- Detects similar content through chunk analysis
 
 ### Delete Node
 ```
@@ -74,6 +77,7 @@ Delete a node from the DAG.
 
 **Notes:**
 - Removes node from DAG
+- Decrements chunk reference counts
 - Maintains graph integrity
 - Updates affected relationships
 
@@ -99,6 +103,7 @@ Create a directed edge between nodes.
 - Creates directed relationship
 - Validates acyclic property
 - Stores link metadata
+- Can include similarity information based on shared chunks
 
 ### Search
 ```
@@ -115,6 +120,7 @@ Search the DAG based on query parameters.
   - Matching nodes
   - Their relationships
   - Path information
+  - Similarity information
 
 ## Error Handling
 
@@ -163,3 +169,6 @@ Planned improvements:
 - Advanced graph queries
 - WebSocket updates for graph changes
 - Version control operations
+- Similarity-based search
+- Chunk-based content analysis
+- Storage optimization features
