@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -163,22 +164,47 @@ func (s *MXStore) ReconstructContent(contentHash string) ([]byte, error) {
 		}
 
 		// Read node data
-		data := make([]byte, length)
-		if _, err := s.file.Read(data); err != nil {
+		buf := make([]byte, length)
+		if _, err := io.ReadFull(s.file, buf); err != nil {
 			continue
 		}
 
-		// Parse node data
-		var node struct {
-			Meta map[string]interface{} `json:"meta"`
+		// Create a reader for the buffer
+		reader := bytes.NewReader(buf)
+
+		// Read node data
+		var nodeData NodeData
+		if err := binary.Read(reader, binary.LittleEndian, &nodeData.ID); err != nil {
+			continue
 		}
-		if err := json.Unmarshal(data, &node); err != nil {
+		if err := binary.Read(reader, binary.LittleEndian, &nodeData.Type); err != nil {
+			continue
+		}
+		if err := binary.Read(reader, binary.LittleEndian, &nodeData.Created); err != nil {
+			continue
+		}
+		if err := binary.Read(reader, binary.LittleEndian, &nodeData.Modified); err != nil {
+			continue
+		}
+		if err := binary.Read(reader, binary.LittleEndian, &nodeData.MetaLen); err != nil {
 			continue
 		}
 
-		if hash, ok := node.Meta["content"].(string); ok && hash == contentHash {
+		// Read metadata
+		nodeData.Meta = make([]byte, nodeData.MetaLen)
+		if _, err := io.ReadFull(reader, nodeData.Meta); err != nil {
+			continue
+		}
+
+		// Parse metadata
+		var meta map[string]any
+		if err := json.Unmarshal(nodeData.Meta, &meta); err != nil {
+			continue
+		}
+
+		if hash, ok := meta["content"].(string); ok && hash == contentHash {
 			// Found the node, now get its chunks
-			if chunksRaw, ok := node.Meta["chunks"].([]interface{}); ok {
+			if chunksRaw, ok := meta["chunks"].([]interface{}); ok {
 				// Convert chunks to []string
 				var chunkList []string
 				for _, chunk := range chunksRaw {
@@ -225,22 +251,35 @@ func (s *MXStore) beginTransaction() (*Transaction, error) {
 
 // write adds data to the transaction
 func (tx *Transaction) write(data []byte) (uint64, error) {
+	// Create a buffer for atomic write
+	var buf bytes.Buffer
+
 	// Write length prefix
 	length := uint32(len(data))
-	if err := binary.Write(tx.store.file, binary.LittleEndian, length); err != nil {
+	if err := binary.Write(&buf, binary.LittleEndian, length); err != nil {
 		return 0, fmt.Errorf("writing length: %w", err)
 	}
 
 	// Write data
-	n, err := tx.store.file.Write(data)
-	if err != nil {
+	if _, err := buf.Write(data); err != nil {
 		return 0, fmt.Errorf("writing data: %w", err)
 	}
-	if n != len(data) {
-		return 0, fmt.Errorf("short write: wrote %d of %d bytes", n, len(data))
+
+	// Get current position
+	pos, err := tx.store.file.Seek(0, os.SEEK_CUR)
+	if err != nil {
+		return 0, fmt.Errorf("getting position: %w", err)
 	}
 
-	return uint64(tx.startPos), nil
+	// Write buffer to file
+	if _, err := tx.store.file.Write(buf.Bytes()); err != nil {
+		return 0, fmt.Errorf("writing to file: %w", err)
+	}
+
+	// Add to writes list
+	tx.writes = append(tx.writes, buf.Bytes())
+
+	return uint64(pos), nil
 }
 
 // addIndex adds an index entry to the transaction
@@ -251,6 +290,12 @@ func (tx *Transaction) addIndex(entry IndexEntry) {
 // commit applies the transaction
 func (tx *Transaction) commit() error {
 	s := tx.store
+
+	// Calculate total writes size
+	var totalSize int64
+	for _, write := range tx.writes {
+		totalSize += int64(len(write))
+	}
 
 	// Update indexes
 	for _, entry := range tx.indexes {
@@ -267,7 +312,7 @@ func (tx *Transaction) commit() error {
 	s.header.Modified = time.Now()
 
 	// Update header with new index offsets
-	s.header.NodeIndex = uint64(tx.startPos + int64(len(tx.writes)))
+	s.header.NodeIndex = uint64(tx.startPos + totalSize)
 	s.header.EdgeIndex = s.header.NodeIndex + uint64(len(s.nodes)*indexEntrySize)
 
 	// Write indexes

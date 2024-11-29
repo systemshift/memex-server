@@ -92,8 +92,38 @@ func (s *MXStore) AddNode(content []byte, nodeType string, meta map[string]any) 
 		return "", fmt.Errorf("beginning transaction: %w", err)
 	}
 
+	// Create a buffer for the node data
+	var buf bytes.Buffer
+	buf.Grow(nodeHeaderSize + len(metaJSON))
+
 	// Write node data
-	offset, err := s.writeNode(nodeData)
+	if err := binary.Write(&buf, binary.LittleEndian, nodeData.ID); err != nil {
+		tx.rollback()
+		return "", fmt.Errorf("writing ID: %w", err)
+	}
+	if err := binary.Write(&buf, binary.LittleEndian, nodeData.Type); err != nil {
+		tx.rollback()
+		return "", fmt.Errorf("writing type: %w", err)
+	}
+	if err := binary.Write(&buf, binary.LittleEndian, nodeData.Created); err != nil {
+		tx.rollback()
+		return "", fmt.Errorf("writing created time: %w", err)
+	}
+	if err := binary.Write(&buf, binary.LittleEndian, nodeData.Modified); err != nil {
+		tx.rollback()
+		return "", fmt.Errorf("writing modified time: %w", err)
+	}
+	if err := binary.Write(&buf, binary.LittleEndian, nodeData.MetaLen); err != nil {
+		tx.rollback()
+		return "", fmt.Errorf("writing metadata length: %w", err)
+	}
+	if _, err := buf.Write(nodeData.Meta); err != nil {
+		tx.rollback()
+		return "", fmt.Errorf("writing metadata: %w", err)
+	}
+
+	// Write node data to file
+	offset, err := tx.write(buf.Bytes())
 	if err != nil {
 		tx.rollback()
 		return "", fmt.Errorf("writing node: %w", err)
@@ -105,7 +135,7 @@ func (s *MXStore) AddNode(content []byte, nodeType string, meta map[string]any) 
 	entry := IndexEntry{
 		ID:     idBytes,
 		Offset: offset,
-		Length: uint32(nodeHeaderSize + len(metaJSON)), // Fixed size fields + metadata
+		Length: uint32(buf.Len() + 4), // Include length prefix
 	}
 	tx.addIndex(entry)
 
@@ -208,8 +238,14 @@ func (s *MXStore) GetNode(id string) (core.Node, error) {
 		return core.Node{}, fmt.Errorf("seeking to node: %w", err)
 	}
 
+	// Read length prefix
+	var length uint32
+	if err := binary.Read(s.file, binary.LittleEndian, &length); err != nil {
+		return core.Node{}, fmt.Errorf("reading length prefix: %w", err)
+	}
+
 	// Create a buffer to read all data atomically
-	buf := make([]byte, entry.Length)
+	buf := make([]byte, length)
 	if _, err := io.ReadFull(s.file, buf); err != nil {
 		return core.Node{}, fmt.Errorf("reading node data: %w", err)
 	}
@@ -221,12 +257,12 @@ func (s *MXStore) GetNode(id string) (core.Node, error) {
 	var nodeData NodeData
 
 	// Read ID
-	if _, err := io.ReadFull(reader, nodeData.ID[:]); err != nil {
+	if err := binary.Read(reader, binary.LittleEndian, &nodeData.ID); err != nil {
 		return core.Node{}, fmt.Errorf("reading ID: %w", err)
 	}
 
 	// Read Type
-	if _, err := io.ReadFull(reader, nodeData.Type[:]); err != nil {
+	if err := binary.Read(reader, binary.LittleEndian, &nodeData.Type); err != nil {
 		return core.Node{}, fmt.Errorf("reading type: %w", err)
 	}
 	nodeType := string(bytes.TrimRight(nodeData.Type[:], "\x00"))
@@ -368,8 +404,15 @@ func (s *MXStore) DeleteNode(id string) error {
 		return fmt.Errorf("seeking to node: %w", err)
 	}
 
+	// Read length prefix
+	var length uint32
+	if err := binary.Read(s.file, binary.LittleEndian, &length); err != nil {
+		tx.rollback()
+		return fmt.Errorf("reading length prefix: %w", err)
+	}
+
 	// Create a buffer to read all data atomically
-	buf := make([]byte, entry.Length)
+	buf := make([]byte, length)
 	if _, err := io.ReadFull(s.file, buf); err != nil {
 		tx.rollback()
 		return fmt.Errorf("reading node data: %w", err)
@@ -380,13 +423,13 @@ func (s *MXStore) DeleteNode(id string) error {
 
 	var nodeData NodeData
 	// Read ID
-	if _, err := io.ReadFull(reader, nodeData.ID[:]); err != nil {
+	if err := binary.Read(reader, binary.LittleEndian, &nodeData.ID); err != nil {
 		tx.rollback()
 		return fmt.Errorf("reading ID: %w", err)
 	}
 
 	// Read Type
-	if _, err := io.ReadFull(reader, nodeData.Type[:]); err != nil {
+	if err := binary.Read(reader, binary.LittleEndian, &nodeData.Type); err != nil {
 		tx.rollback()
 		return fmt.Errorf("reading type: %w", err)
 	}
@@ -462,14 +505,31 @@ func (s *MXStore) DeleteNode(id string) error {
 			return fmt.Errorf("seeking to edge: %w", err)
 		}
 
+		// Read length prefix
+		var length uint32
+		if err := binary.Read(s.file, binary.LittleEndian, &length); err != nil {
+			tx.rollback()
+			return fmt.Errorf("reading edge length prefix: %w", err)
+		}
+
+		// Create a buffer to read all data atomically
+		buf := make([]byte, length)
+		if _, err := io.ReadFull(s.file, buf); err != nil {
+			tx.rollback()
+			return fmt.Errorf("reading edge data: %w", err)
+		}
+
+		// Create a reader for the buffer
+		reader := bytes.NewReader(buf)
+
 		var edgeData EdgeData
 		// Read Source
-		if _, err := io.ReadFull(s.file, edgeData.Source[:]); err != nil {
+		if err := binary.Read(reader, binary.LittleEndian, &edgeData.Source); err != nil {
 			tx.rollback()
 			return fmt.Errorf("reading edge source: %w", err)
 		}
 		// Read Target
-		if _, err := io.ReadFull(s.file, edgeData.Target[:]); err != nil {
+		if err := binary.Read(reader, binary.LittleEndian, &edgeData.Target); err != nil {
 			tx.rollback()
 			return fmt.Errorf("reading edge target: %w", err)
 		}
@@ -499,40 +559,4 @@ func (s *MXStore) DeleteNode(id string) error {
 func generateID() []byte {
 	id := sha256.Sum256([]byte(fmt.Sprintf("%d", time.Now().UnixNano())))
 	return id[:]
-}
-
-// writeNode writes node data to the file
-func (s *MXStore) writeNode(node NodeData) (uint64, error) {
-	// Get current file size
-	offset, err := s.seek(0, io.SeekEnd)
-	if err != nil {
-		return 0, fmt.Errorf("seeking to end: %w", err)
-	}
-
-	// Create a buffer to write all data atomically
-	var buf bytes.Buffer
-	buf.Grow(nodeHeaderSize + len(node.Meta))
-
-	// Write ID
-	buf.Write(node.ID[:])
-
-	// Write Type
-	buf.Write(node.Type[:])
-
-	// Write timestamps
-	binary.Write(&buf, binary.LittleEndian, node.Created)
-	binary.Write(&buf, binary.LittleEndian, node.Modified)
-
-	// Write metadata length
-	binary.Write(&buf, binary.LittleEndian, node.MetaLen)
-
-	// Write metadata
-	buf.Write(node.Meta)
-
-	// Write buffer to file
-	if _, err := s.file.Write(buf.Bytes()); err != nil {
-		return 0, fmt.Errorf("writing node data: %w", err)
-	}
-
-	return uint64(offset), nil
 }

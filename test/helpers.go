@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"memex/internal/memex/core"
+	"memex/internal/memex/logger"
 	"memex/internal/memex/storage"
 )
 
@@ -55,14 +56,14 @@ func CreateTestRepo(t *testing.T) (string, *storage.MXStore) {
 		os.RemoveAll(tmpDir)
 	})
 
+	// Set test logger
+	logger.SetLogger(NewTestLogger(t))
+
 	repoPath := filepath.Join(tmpDir, "test.mx")
 	store, err := storage.CreateMX(repoPath)
 	if err != nil {
 		t.Fatalf("Failed to create repository: %v", err)
 	}
-
-	// Set test logger
-	store.SetLogger(NewTestLogger(t))
 
 	t.Cleanup(func() {
 		store.Close()
@@ -75,13 +76,13 @@ func CreateTestRepo(t *testing.T) (string, *storage.MXStore) {
 func OpenTestRepo(t *testing.T, path string) *storage.MXStore {
 	t.Helper()
 
+	// Set test logger
+	logger.SetLogger(NewTestLogger(t))
+
 	store, err := storage.OpenMX(path)
 	if err != nil {
 		t.Fatalf("Failed to open repository: %v", err)
 	}
-
-	// Set test logger
-	store.SetLogger(NewTestLogger(t))
 
 	t.Cleanup(func() {
 		store.Close()

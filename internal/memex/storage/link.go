@@ -80,21 +80,44 @@ func (s *MXStore) AddLink(sourceID, targetID, linkType string, meta map[string]a
 	}
 	tx.isEdge = true // Mark this as an edge transaction
 
+	// Create a buffer for the edge data
+	var buf bytes.Buffer
+	buf.Grow(edgeHeaderSize + len(metaJSON))
+
 	// Write edge data
-	offset, err := s.writeEdge(edgeData)
+	if err := binary.Write(&buf, binary.LittleEndian, edgeData.Source); err != nil {
+		tx.rollback()
+		return fmt.Errorf("writing source: %w", err)
+	}
+	if err := binary.Write(&buf, binary.LittleEndian, edgeData.Target); err != nil {
+		tx.rollback()
+		return fmt.Errorf("writing target: %w", err)
+	}
+	if err := binary.Write(&buf, binary.LittleEndian, edgeData.Type); err != nil {
+		tx.rollback()
+		return fmt.Errorf("writing type: %w", err)
+	}
+	if err := binary.Write(&buf, binary.LittleEndian, edgeData.MetaLen); err != nil {
+		tx.rollback()
+		return fmt.Errorf("writing metadata length: %w", err)
+	}
+	if _, err := buf.Write(edgeData.Meta); err != nil {
+		tx.rollback()
+		return fmt.Errorf("writing metadata: %w", err)
+	}
+
+	// Write edge data to file
+	offset, err := tx.write(buf.Bytes())
 	if err != nil {
 		tx.rollback()
 		return fmt.Errorf("writing edge: %w", err)
 	}
 
-	// Calculate total length
-	totalLen := edgeHeaderSize + len(metaJSON)
-
 	// Add to index
 	entry := IndexEntry{
 		ID:     edgeData.Source, // Use source ID as edge ID
 		Offset: offset,
-		Length: uint32(totalLen),
+		Length: uint32(buf.Len() + 4), // Include length prefix
 	}
 	tx.addIndex(entry)
 
@@ -104,7 +127,7 @@ func (s *MXStore) AddLink(sourceID, targetID, linkType string, meta map[string]a
 	}
 
 	logger.Log("Added link successfully at offset %d with length %d (header=%d + meta=%d)",
-		offset, totalLen, edgeHeaderSize, len(metaJSON))
+		offset, buf.Len()+4, edgeHeaderSize, len(metaJSON))
 	return nil
 }
 
@@ -128,11 +151,16 @@ func (s *MXStore) GetLinks(nodeID string) ([]core.Link, error) {
 			return nil, fmt.Errorf("seeking to edge: %w", err)
 		}
 
+		// Read length prefix
+		var length uint32
+		if err := binary.Read(s.file, binary.LittleEndian, &length); err != nil {
+			return nil, fmt.Errorf("reading length prefix: %w", err)
+		}
+
 		// Create a buffer to read all data atomically
-		buf := make([]byte, entry.Length)
-		n, err := io.ReadFull(s.file, buf)
-		if err != nil {
-			return nil, fmt.Errorf("reading edge data (%d/%d bytes): %w", n, entry.Length, err)
+		buf := make([]byte, length)
+		if _, err := io.ReadFull(s.file, buf); err != nil {
+			return nil, fmt.Errorf("reading edge data: %w", err)
 		}
 
 		// Create a reader for the buffer
@@ -140,15 +168,15 @@ func (s *MXStore) GetLinks(nodeID string) ([]core.Link, error) {
 
 		var edgeData EdgeData
 		// Read Source
-		if _, err := io.ReadFull(reader, edgeData.Source[:]); err != nil {
+		if err := binary.Read(reader, binary.LittleEndian, &edgeData.Source); err != nil {
 			return nil, fmt.Errorf("reading edge source: %w", err)
 		}
 		// Read Target
-		if _, err := io.ReadFull(reader, edgeData.Target[:]); err != nil {
+		if err := binary.Read(reader, binary.LittleEndian, &edgeData.Target); err != nil {
 			return nil, fmt.Errorf("reading edge target: %w", err)
 		}
 		// Read Type
-		if _, err := io.ReadFull(reader, edgeData.Type[:]); err != nil {
+		if err := binary.Read(reader, binary.LittleEndian, &edgeData.Type); err != nil {
 			return nil, fmt.Errorf("reading edge type: %w", err)
 		}
 		// Read metadata length
@@ -227,39 +255,4 @@ func (s *MXStore) GetLinks(nodeID string) ([]core.Link, error) {
 
 	logger.Log("Returning %d links", len(links))
 	return links, nil
-}
-
-// writeEdge writes edge data to the file
-func (s *MXStore) writeEdge(edge EdgeData) (uint64, error) {
-	// Get current file size
-	offset, err := s.seek(0, io.SeekEnd)
-	if err != nil {
-		return 0, fmt.Errorf("seeking to end: %w", err)
-	}
-
-	// Create a buffer to write all data atomically
-	var buf bytes.Buffer
-	buf.Grow(edgeHeaderSize + len(edge.Meta))
-
-	// Write Source
-	buf.Write(edge.Source[:])
-
-	// Write Target
-	buf.Write(edge.Target[:])
-
-	// Write Type
-	buf.Write(edge.Type[:])
-
-	// Write metadata length
-	binary.Write(&buf, binary.LittleEndian, edge.MetaLen)
-
-	// Write metadata
-	buf.Write(edge.Meta)
-
-	// Write buffer to file
-	if _, err := s.file.Write(buf.Bytes()); err != nil {
-		return 0, fmt.Errorf("writing edge data: %w", err)
-	}
-
-	return uint64(offset), nil
 }
