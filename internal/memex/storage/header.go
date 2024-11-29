@@ -7,17 +7,6 @@ import (
 	"time"
 )
 
-// Header represents the file header
-type Header struct {
-	Version   uint32    // File format version
-	Created   time.Time // Creation timestamp
-	Modified  time.Time // Last modified timestamp
-	NodeCount uint32    // Number of nodes
-	EdgeCount uint32    // Number of edges
-	NodeIndex uint64    // Offset to node index
-	EdgeIndex uint64    // Offset to edge index
-}
-
 // readHeader reads the header from the file
 func (s *MXStore) readHeader() error {
 	// Seek to start of file

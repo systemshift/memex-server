@@ -14,20 +14,6 @@ import (
 	"memex/internal/memex/core"
 )
 
-// NodeData represents serialized node data
-type NodeData struct {
-	ID       [32]byte
-	Type     [32]byte
-	Created  int64 // Unix timestamp
-	Modified int64 // Unix timestamp
-	MetaLen  uint32
-	Meta     []byte // JSON-encoded metadata
-}
-
-const (
-	nodeHeaderSize = 32 + 32 + 8 + 8 + 4 // Size of fixed fields in NodeData
-)
-
 // AddNode adds a node to the store
 func (s *MXStore) AddNode(content []byte, nodeType string, meta map[string]any) (string, error) {
 	// Validate input parameters
@@ -128,10 +114,10 @@ func (s *MXStore) AddNode(content []byte, nodeType string, meta map[string]any) 
 	}
 
 	// Calculate similarities synchronously
-	fmt.Printf("DEBUG: Starting similarity calculation for node %s\n", nodeIDStr)
+	s.logger.Log("Starting similarity calculation for node %s", nodeIDStr)
 	nodes := make([]IndexEntry, len(s.nodes))
 	copy(nodes, s.nodes)
-	fmt.Printf("DEBUG: Found %d existing nodes to compare\n", len(nodes))
+	s.logger.Log("Found %d existing nodes to compare", len(nodes))
 
 	for _, entry := range nodes {
 		otherID := hex.EncodeToString(entry.ID[:])
@@ -141,7 +127,7 @@ func (s *MXStore) AddNode(content []byte, nodeType string, meta map[string]any) 
 
 		node, err := s.GetNode(otherID)
 		if err != nil {
-			fmt.Printf("DEBUG: Error getting node %s: %v\n", otherID, err)
+			s.logger.Log("Error getting node %s: %v", otherID, err)
 			continue
 		}
 
@@ -153,11 +139,11 @@ func (s *MXStore) AddNode(content []byte, nodeType string, meta map[string]any) 
 		}
 
 		if len(otherChunks) == 0 {
-			fmt.Printf("DEBUG: No chunks found for node %s\n", otherID)
+			s.logger.Log("No chunks found for node %s", otherID)
 			continue
 		}
 
-		fmt.Printf("DEBUG: Comparing chunks: current=%d other=%d\n", len(chunkHashes), len(otherChunks))
+		s.logger.Log("Comparing chunks: current=%d other=%d", len(chunkHashes), len(otherChunks))
 
 		// Calculate Jaccard similarity
 		union := make(map[string]struct{})
@@ -175,7 +161,7 @@ func (s *MXStore) AddNode(content []byte, nodeType string, meta map[string]any) 
 		}
 
 		similarity := float64(intersection) / float64(len(union))
-		fmt.Printf("DEBUG: Found similarity between %s and %s: %.2f (%d shared chunks)\n",
+		s.logger.Log("Found similarity between %s and %s: %.2f (%d shared chunks)",
 			nodeIDStr[:8], otherID[:8], similarity, intersection)
 
 		if similarity >= 0.3 {
@@ -184,14 +170,14 @@ func (s *MXStore) AddNode(content []byte, nodeType string, meta map[string]any) 
 				"shared":     intersection,
 			}
 			if err := s.AddLink(nodeIDStr, otherID, "similar", meta); err != nil {
-				fmt.Printf("DEBUG: Error creating forward link: %v\n", err)
+				s.logger.Log("Error creating forward link: %v", err)
 			}
 			if err := s.AddLink(otherID, nodeIDStr, "similar", meta); err != nil {
-				fmt.Printf("DEBUG: Error creating reverse link: %v\n", err)
+				s.logger.Log("Error creating reverse link: %v", err)
 			}
 		}
 	}
-	fmt.Printf("DEBUG: Finished similarity calculation for node %s\n", nodeIDStr)
+	s.logger.Log("Finished similarity calculation for node %s", nodeIDStr)
 
 	return nodeIDStr, nil
 }

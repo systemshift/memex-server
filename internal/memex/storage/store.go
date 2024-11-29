@@ -15,12 +15,6 @@ import (
 // Current file format version
 const Version = 1
 
-// Common constants
-const (
-	maxMetaLen     = 1024 * 1024 // 1MB max metadata size
-	indexEntrySize = 32 + 8 + 4  // ID (32) + Offset (8) + Length (4)
-)
-
 // MXStore implements a graph-oriented file format
 type MXStore struct {
 	path   string       // Path to .mx file
@@ -30,41 +24,7 @@ type MXStore struct {
 	edges  []IndexEntry // Edge index
 	chunks *ChunkStore  // Chunk storage
 	mu     sync.RWMutex // Mutex for thread safety
-}
-
-// IndexEntry represents an index entry
-type IndexEntry struct {
-	ID     [32]byte // Node ID or edge ID
-	Offset uint64   // File offset to data
-	Length uint32   // Length of data
-}
-
-// Transaction represents an atomic operation
-type Transaction struct {
-	store    *MXStore
-	startPos int64
-	writes   [][]byte
-	indexes  []IndexEntry
-	isEdge   bool // Whether this transaction is for an edge
-}
-
-// getChunksPath returns the path to the chunks directory
-func getChunksPath(repoPath string) string {
-	// Get absolute path to repository
-	absPath, err := filepath.Abs(repoPath)
-	if err != nil {
-		return filepath.Join(filepath.Dir(repoPath), filepath.Base(repoPath)+".chunks")
-	}
-
-	// Get the repository directory and base name
-	dir := filepath.Dir(absPath)
-	base := filepath.Base(absPath)
-
-	// Create chunks directory name by appending .chunks to the repository name
-	chunksDir := base + ".chunks"
-
-	// Return full path to chunks directory
-	return filepath.Join(dir, chunksDir)
+	logger Logger       // Logger interface
 }
 
 // CreateMX creates a new repository
@@ -84,6 +44,7 @@ func CreateMX(path string) (*MXStore, error) {
 			Created:  time.Now(),
 			Modified: time.Now(),
 		},
+		logger: &NoopLogger{},
 	}
 
 	// Create chunk store
@@ -119,8 +80,9 @@ func OpenMX(path string) (*MXStore, error) {
 
 	// Create store
 	store := &MXStore{
-		path: absPath,
-		file: file,
+		path:   absPath,
+		file:   file,
+		logger: &NoopLogger{},
 	}
 
 	// Read header
@@ -147,9 +109,23 @@ func (s *MXStore) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// Write header and indexes before closing
+	if err := s.writeHeader(); err != nil {
+		return fmt.Errorf("writing header: %w", err)
+	}
+
+	if err := s.writeIndexes(); err != nil {
+		return fmt.Errorf("writing indexes: %w", err)
+	}
+
+	if err := s.file.Sync(); err != nil {
+		return fmt.Errorf("syncing file: %w", err)
+	}
+
 	if err := s.file.Close(); err != nil {
 		return fmt.Errorf("closing file: %w", err)
 	}
+
 	return nil
 }
 
@@ -179,31 +155,33 @@ func (s *MXStore) StoreChunk(content []byte) (string, error) {
 func (s *MXStore) ReconstructContent(contentHash string) ([]byte, error) {
 	// Find node with this content hash
 	for _, entry := range s.nodes {
-		if _, err := s.seek(int64(entry.Offset), os.SEEK_SET); err != nil {
+		if _, err := s.seek(int64(entry.Offset), 0); err != nil {
 			continue
 		}
 
-		// Read node metadata
-		buf := make([]byte, entry.Length)
-		if _, err := s.file.Read(buf); err != nil {
+		// Read length prefix
+		var length uint32
+		if err := binary.Read(s.file, binary.LittleEndian, &length); err != nil {
 			continue
 		}
 
-		// Skip fixed header fields to get to metadata
-		metaStart := 32 + 32 + 8 + 8 + 4 // ID + Type + Created + Modified + MetaLen
-		if len(buf) <= metaStart {
+		// Read node data
+		data := make([]byte, length)
+		if _, err := s.file.Read(data); err != nil {
 			continue
 		}
 
-		// Parse metadata to check content hash and get chunks
-		var meta map[string]interface{}
-		if err := json.Unmarshal(buf[metaStart:], &meta); err != nil {
+		// Parse node data
+		var node struct {
+			Meta map[string]interface{} `json:"meta"`
+		}
+		if err := json.Unmarshal(data, &node); err != nil {
 			continue
 		}
 
-		if hash, ok := meta["content"].(string); ok && hash == contentHash {
+		if hash, ok := node.Meta["content"].(string); ok && hash == contentHash {
 			// Found the node, now get its chunks
-			if chunksRaw, ok := meta["chunks"].([]interface{}); ok {
+			if chunksRaw, ok := node.Meta["chunks"].([]interface{}); ok {
 				// Convert chunks to []string
 				var chunkList []string
 				for _, chunk := range chunksRaw {
@@ -235,7 +213,7 @@ func (s *MXStore) ReconstructContent(contentHash string) ([]byte, error) {
 // beginTransaction starts a new transaction
 func (s *MXStore) beginTransaction() (*Transaction, error) {
 	// Get current position
-	pos, err := s.file.Seek(0, os.SEEK_CUR)
+	pos, err := s.file.Seek(0, os.SEEK_END)
 	if err != nil {
 		return nil, fmt.Errorf("getting position: %w", err)
 	}
@@ -250,13 +228,13 @@ func (s *MXStore) beginTransaction() (*Transaction, error) {
 
 // write adds data to the transaction
 func (tx *Transaction) write(data []byte) (uint64, error) {
-	// Get current position
-	pos, err := tx.store.file.Seek(0, os.SEEK_CUR)
-	if err != nil {
-		return 0, fmt.Errorf("getting position: %w", err)
+	// Write length prefix
+	length := uint32(len(data))
+	if err := binary.Write(tx.store.file, binary.LittleEndian, length); err != nil {
+		return 0, fmt.Errorf("writing length: %w", err)
 	}
 
-	// Write data immediately
+	// Write data
 	n, err := tx.store.file.Write(data)
 	if err != nil {
 		return 0, fmt.Errorf("writing data: %w", err)
@@ -265,7 +243,7 @@ func (tx *Transaction) write(data []byte) (uint64, error) {
 		return 0, fmt.Errorf("short write: wrote %d of %d bytes", n, len(data))
 	}
 
-	return uint64(pos), nil
+	return uint64(tx.startPos), nil
 }
 
 // addIndex adds an index entry to the transaction
@@ -291,35 +269,12 @@ func (tx *Transaction) commit() error {
 	// Update header
 	s.header.Modified = time.Now()
 
-	// Get current position for index offsets
-	endPos, err := s.file.Seek(0, os.SEEK_CUR)
-	if err != nil {
-		return fmt.Errorf("getting end position: %w", err)
-	}
-
 	// Update header with new index offsets
-	s.header.NodeIndex = uint64(endPos)
-	s.header.EdgeIndex = uint64(endPos + int64(len(s.nodes)*indexEntrySize))
+	s.header.NodeIndex = uint64(tx.startPos + int64(len(tx.writes)))
+	s.header.EdgeIndex = s.header.NodeIndex + uint64(len(s.nodes)*indexEntrySize)
 
-	// Write indexes using a buffer
-	var buf bytes.Buffer
-
-	// Write node index
-	for _, entry := range s.nodes {
-		buf.Write(entry.ID[:])
-		binary.Write(&buf, binary.LittleEndian, entry.Offset)
-		binary.Write(&buf, binary.LittleEndian, entry.Length)
-	}
-
-	// Write edge index
-	for _, entry := range s.edges {
-		buf.Write(entry.ID[:])
-		binary.Write(&buf, binary.LittleEndian, entry.Offset)
-		binary.Write(&buf, binary.LittleEndian, entry.Length)
-	}
-
-	// Write buffer to file
-	if _, err := s.file.Write(buf.Bytes()); err != nil {
+	// Write indexes
+	if err := s.writeIndexes(); err != nil {
 		return fmt.Errorf("writing indexes: %w", err)
 	}
 
@@ -351,4 +306,62 @@ func (tx *Transaction) rollback() error {
 // seek moves the file pointer
 func (s *MXStore) seek(offset int64, whence int) (int64, error) {
 	return s.file.Seek(offset, whence)
+}
+
+// getChunksPath returns the path to the chunks directory
+func getChunksPath(repoPath string) string {
+	// Get absolute path to repository
+	absPath, err := filepath.Abs(repoPath)
+	if err != nil {
+		return filepath.Join(filepath.Dir(repoPath), filepath.Base(repoPath)+".chunks")
+	}
+
+	// Get the repository directory and base name
+	dir := filepath.Dir(absPath)
+	base := filepath.Base(absPath)
+
+	// Create chunks directory name by appending .chunks to the repository name
+	chunksDir := base + ".chunks"
+
+	// Return full path to chunks directory
+	return filepath.Join(dir, chunksDir)
+}
+
+// writeIndexes writes the node and edge indexes to the file
+func (s *MXStore) writeIndexes() error {
+	// Write node index
+	if _, err := s.file.Seek(int64(s.header.NodeIndex), os.SEEK_SET); err != nil {
+		return fmt.Errorf("seeking to node index: %w", err)
+	}
+
+	for _, entry := range s.nodes {
+		if err := binary.Write(s.file, binary.LittleEndian, entry.ID); err != nil {
+			return fmt.Errorf("writing node ID: %w", err)
+		}
+		if err := binary.Write(s.file, binary.LittleEndian, entry.Offset); err != nil {
+			return fmt.Errorf("writing node offset: %w", err)
+		}
+		if err := binary.Write(s.file, binary.LittleEndian, entry.Length); err != nil {
+			return fmt.Errorf("writing node length: %w", err)
+		}
+	}
+
+	// Write edge index
+	if _, err := s.file.Seek(int64(s.header.EdgeIndex), os.SEEK_SET); err != nil {
+		return fmt.Errorf("seeking to edge index: %w", err)
+	}
+
+	for _, entry := range s.edges {
+		if err := binary.Write(s.file, binary.LittleEndian, entry.ID); err != nil {
+			return fmt.Errorf("writing edge ID: %w", err)
+		}
+		if err := binary.Write(s.file, binary.LittleEndian, entry.Offset); err != nil {
+			return fmt.Errorf("writing edge offset: %w", err)
+		}
+		if err := binary.Write(s.file, binary.LittleEndian, entry.Length); err != nil {
+			return fmt.Errorf("writing edge length: %w", err)
+		}
+	}
+
+	return nil
 }
