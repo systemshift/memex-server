@@ -9,11 +9,12 @@ import (
 	"io"
 
 	"memex/internal/memex/core"
+	"memex/internal/memex/logger"
 )
 
 // AddLink adds a link between nodes
 func (s *MXStore) AddLink(sourceID, targetID, linkType string, meta map[string]any) error {
-	s.logger.Log("Adding link %s -> %s [%s]", sourceID[:8], targetID[:8], linkType)
+	logger.Log("Adding link %s -> %s [%s]", sourceID[:8], targetID[:8], linkType)
 
 	// Convert IDs to bytes
 	sourceBytes, err := hex.DecodeString(sourceID)
@@ -102,15 +103,15 @@ func (s *MXStore) AddLink(sourceID, targetID, linkType string, meta map[string]a
 		return fmt.Errorf("committing transaction: %w", err)
 	}
 
-	s.logger.Log("Added link successfully at offset %d with length %d (header=%d + meta=%d)",
+	logger.Log("Added link successfully at offset %d with length %d (header=%d + meta=%d)",
 		offset, totalLen, edgeHeaderSize, len(metaJSON))
 	return nil
 }
 
 // GetLinks returns all links connected to a node
 func (s *MXStore) GetLinks(nodeID string) ([]core.Link, error) {
-	s.logger.Log("Getting links for node %s", nodeID[:8])
-	s.logger.Log("Found %d edges in index", len(s.edges))
+	logger.Log("Getting links for node %s", nodeID[:8])
+	logger.Log("Found %d edges in index", len(s.edges))
 
 	// Convert ID to bytes
 	idBytes, err := hex.DecodeString(nodeID)
@@ -120,7 +121,7 @@ func (s *MXStore) GetLinks(nodeID string) ([]core.Link, error) {
 
 	var links []core.Link
 	for i, entry := range s.edges {
-		s.logger.Log("Reading edge %d at offset %d with length %d", i, entry.Offset, entry.Length)
+		logger.Log("Reading edge %d at offset %d with length %d", i, entry.Offset, entry.Length)
 
 		// Read edge data
 		if _, err := s.seek(int64(entry.Offset), io.SeekStart); err != nil {
@@ -155,7 +156,7 @@ func (s *MXStore) GetLinks(nodeID string) ([]core.Link, error) {
 			return nil, fmt.Errorf("reading edge metadata length: %w", err)
 		}
 
-		s.logger.Log("Edge %d metadata length: %d", i, edgeData.MetaLen)
+		logger.Log("Edge %d metadata length: %d", i, edgeData.MetaLen)
 
 		// Validate metadata length
 		if edgeData.MetaLen == 0 || edgeData.MetaLen > maxMetaLen {
@@ -168,7 +169,7 @@ func (s *MXStore) GetLinks(nodeID string) ([]core.Link, error) {
 			return nil, fmt.Errorf("reading edge metadata: %w", err)
 		}
 
-		s.logger.Log("Edge %d metadata: %s", i, string(edgeData.Meta))
+		logger.Log("Edge %d metadata: %s", i, string(edgeData.Meta))
 
 		// Check if edge is connected to the node
 		if bytes.Equal(edgeData.Source[:], idBytes) || bytes.Equal(edgeData.Target[:], idBytes) {
@@ -224,7 +225,7 @@ func (s *MXStore) GetLinks(nodeID string) ([]core.Link, error) {
 		}
 	}
 
-	s.logger.Log("Returning %d links", len(links))
+	logger.Log("Returning %d links", len(links))
 	return links, nil
 }
 

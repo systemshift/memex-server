@@ -58,15 +58,3 @@ type Header struct {
 	EdgeIndex  uint64    // Offset to edge index
 	ChunkCount uint32    // Number of chunks
 }
-
-// Logger defines the interface for internal logging
-type Logger interface {
-	Log(format string, args ...interface{})
-}
-
-// NoopLogger implements a no-op logger
-type NoopLogger struct{}
-
-func (l *NoopLogger) Log(format string, args ...interface{}) {
-	// Do nothing
-}

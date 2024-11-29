@@ -24,7 +24,6 @@ type MXStore struct {
 	edges  []IndexEntry // Edge index
 	chunks *ChunkStore  // Chunk storage
 	mu     sync.RWMutex // Mutex for thread safety
-	logger Logger       // Logger interface
 }
 
 // CreateMX creates a new repository
@@ -44,7 +43,6 @@ func CreateMX(path string) (*MXStore, error) {
 			Created:  time.Now(),
 			Modified: time.Now(),
 		},
-		logger: &NoopLogger{},
 	}
 
 	// Create chunk store
@@ -80,9 +78,8 @@ func OpenMX(path string) (*MXStore, error) {
 
 	// Create store
 	store := &MXStore{
-		path:   absPath,
-		file:   file,
-		logger: &NoopLogger{},
+		path: absPath,
+		file: file,
 	}
 
 	// Read header

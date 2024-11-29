@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"memex/internal/memex/core"
+	"memex/internal/memex/logger"
 )
 
 // AddNode adds a node to the store
@@ -114,10 +115,10 @@ func (s *MXStore) AddNode(content []byte, nodeType string, meta map[string]any) 
 	}
 
 	// Calculate similarities synchronously
-	s.logger.Log("Starting similarity calculation for node %s", nodeIDStr)
+	logger.Log("Starting similarity calculation for node %s", nodeIDStr)
 	nodes := make([]IndexEntry, len(s.nodes))
 	copy(nodes, s.nodes)
-	s.logger.Log("Found %d existing nodes to compare", len(nodes))
+	logger.Log("Found %d existing nodes to compare", len(nodes))
 
 	for _, entry := range nodes {
 		otherID := hex.EncodeToString(entry.ID[:])
@@ -127,7 +128,7 @@ func (s *MXStore) AddNode(content []byte, nodeType string, meta map[string]any) 
 
 		node, err := s.GetNode(otherID)
 		if err != nil {
-			s.logger.Log("Error getting node %s: %v", otherID, err)
+			logger.Log("Error getting node %s: %v", otherID, err)
 			continue
 		}
 
@@ -139,11 +140,11 @@ func (s *MXStore) AddNode(content []byte, nodeType string, meta map[string]any) 
 		}
 
 		if len(otherChunks) == 0 {
-			s.logger.Log("No chunks found for node %s", otherID)
+			logger.Log("No chunks found for node %s", otherID)
 			continue
 		}
 
-		s.logger.Log("Comparing chunks: current=%d other=%d", len(chunkHashes), len(otherChunks))
+		logger.Log("Comparing chunks: current=%d other=%d", len(chunkHashes), len(otherChunks))
 
 		// Calculate Jaccard similarity
 		union := make(map[string]struct{})
@@ -161,7 +162,7 @@ func (s *MXStore) AddNode(content []byte, nodeType string, meta map[string]any) 
 		}
 
 		similarity := float64(intersection) / float64(len(union))
-		s.logger.Log("Found similarity between %s and %s: %.2f (%d shared chunks)",
+		logger.Log("Found similarity between %s and %s: %.2f (%d shared chunks)",
 			nodeIDStr[:8], otherID[:8], similarity, intersection)
 
 		if similarity >= 0.3 {
@@ -170,14 +171,14 @@ func (s *MXStore) AddNode(content []byte, nodeType string, meta map[string]any) 
 				"shared":     intersection,
 			}
 			if err := s.AddLink(nodeIDStr, otherID, "similar", meta); err != nil {
-				s.logger.Log("Error creating forward link: %v", err)
+				logger.Log("Error creating forward link: %v", err)
 			}
 			if err := s.AddLink(otherID, nodeIDStr, "similar", meta); err != nil {
-				s.logger.Log("Error creating reverse link: %v", err)
+				logger.Log("Error creating reverse link: %v", err)
 			}
 		}
 	}
-	s.logger.Log("Finished similarity calculation for node %s", nodeIDStr)
+	logger.Log("Finished similarity calculation for node %s", nodeIDStr)
 
 	return nodeIDStr, nil
 }

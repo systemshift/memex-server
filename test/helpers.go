@@ -61,6 +61,9 @@ func CreateTestRepo(t *testing.T) (string, *storage.MXStore) {
 		t.Fatalf("Failed to create repository: %v", err)
 	}
 
+	// Set test logger
+	store.SetLogger(NewTestLogger(t))
+
 	t.Cleanup(func() {
 		store.Close()
 	})
@@ -76,6 +79,9 @@ func OpenTestRepo(t *testing.T, path string) *storage.MXStore {
 	if err != nil {
 		t.Fatalf("Failed to open repository: %v", err)
 	}
+
+	// Set test logger
+	store.SetLogger(NewTestLogger(t))
 
 	t.Cleanup(func() {
 		store.Close()
