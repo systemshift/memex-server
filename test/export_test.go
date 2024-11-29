@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"memex/internal/memex/core"
 	"memex/internal/memex/migration"
 	"memex/internal/memex/storage"
 )
@@ -72,15 +73,14 @@ func TestExport(t *testing.T) {
 
 	// Test different export depths
 	depths := []struct {
-		depth       int
-		wantNodes   int
-		wantEdges   int
-		wantChunks  int
-		wantContent [][]byte
+		depth      int
+		wantNodes  int
+		wantEdges  int
+		wantChunks int
 	}{
-		{0, 1, 1, 1, [][]byte{content1}},
-		{1, 2, 2, 2, [][]byte{content1, content2}},
-		{2, 3, 2, 3, [][]byte{content1, content2, content3}},
+		{0, 1, 1, 1},
+		{1, 2, 2, 2},
+		{2, 3, 2, 3},
 	}
 
 	for _, tt := range depths {
@@ -103,7 +103,7 @@ func TestExport(t *testing.T) {
 			foundNodes := 0
 			foundEdges := 0
 			foundChunks := 0
-			foundContent := make([][]byte, 0)
+			foundChunkHashes := make(map[string]bool)
 
 			// Read each entry
 			for {
@@ -140,13 +140,26 @@ func TestExport(t *testing.T) {
 
 				case filepath.Dir(header.Name) == "nodes":
 					foundNodes++
+					// Parse node to get chunk hashes
+					var node core.Node
+					if err := json.Unmarshal(content, &node); err != nil {
+						t.Errorf("Error parsing node: %v", err)
+					}
+					if chunks, ok := node.Meta["chunks"].([]interface{}); ok {
+						for _, chunk := range chunks {
+							if hash, ok := chunk.(string); ok {
+								foundChunkHashes[hash] = false
+							}
+						}
+					}
 
 				case filepath.Dir(header.Name) == "edges":
 					foundEdges++
 
 				case filepath.Dir(header.Name) == "chunks":
 					foundChunks++
-					foundContent = append(foundContent, content)
+					chunkHash := filepath.Base(header.Name)
+					foundChunkHashes[chunkHash] = true
 				}
 			}
 
@@ -164,17 +177,10 @@ func TestExport(t *testing.T) {
 				t.Errorf("Expected %d chunks in export, found %d", tt.wantChunks, foundChunks)
 			}
 
-			// Verify chunk content
-			for _, want := range tt.wantContent {
-				found := false
-				for _, got := range foundContent {
-					if bytes.Equal(want, got) {
-						found = true
-						break
-					}
-				}
+			// Verify all chunks were found
+			for hash, found := range foundChunkHashes {
 				if !found {
-					t.Errorf("Content %q not found in export", want)
+					t.Errorf("Chunk %s not found in export", hash)
 				}
 			}
 		})

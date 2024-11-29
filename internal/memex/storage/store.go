@@ -165,6 +165,16 @@ func (s *MXStore) Nodes() []IndexEntry {
 	return s.nodes
 }
 
+// GetChunk returns the content of a chunk by its hash
+func (s *MXStore) GetChunk(hash string) ([]byte, error) {
+	return s.chunks.Get(hash)
+}
+
+// StoreChunk stores a chunk and returns its hash
+func (s *MXStore) StoreChunk(content []byte) (string, error) {
+	return s.chunks.Store(content)
+}
+
 // ReconstructContent reconstructs the full content from its chunks
 func (s *MXStore) ReconstructContent(contentHash string) ([]byte, error) {
 	// Find node with this content hash

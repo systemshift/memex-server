@@ -70,8 +70,8 @@ func TestImportConflicts(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Create destination repository
-			dstPath := filepath.Join(tmpDir, "dest.mx")
+			// Create destination repository with unique path
+			dstPath := filepath.Join(tmpDir, tt.name+".mx")
 			dstRepo, err := storage.CreateMX(dstPath)
 			if err != nil {
 				t.Fatalf("Error creating destination repository: %v", err)

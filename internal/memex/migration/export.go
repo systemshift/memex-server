@@ -256,8 +256,13 @@ func (e *Exporter) exportEdges(entries []storage.IndexEntry, manifest *ExportMan
 		}
 
 		for _, link := range links {
+			// Skip self-referential edges
+			if link.Source == link.Target {
+				continue
+			}
+
 			// Create unique edge ID
-			edgeID := fmt.Sprintf("%s-%s-%s", nodeID, link.Target, link.Type)
+			edgeID := fmt.Sprintf("%s-%s-%s", link.Source, link.Target, link.Type)
 			if exported[edgeID] {
 				continue
 			}
@@ -272,7 +277,7 @@ func (e *Exporter) exportEdges(entries []storage.IndexEntry, manifest *ExportMan
 
 			// Create exported link format
 			exportedLink := ExportedLink{
-				Source:   nodeID,
+				Source:   link.Source,
 				Target:   link.Target,
 				Type:     link.Type,
 				Meta:     link.Meta,
@@ -324,8 +329,20 @@ func (e *Exporter) exportChunks(entries []storage.IndexEntry, manifest *ExportMa
 		}
 
 		// Get chunks from metadata
-		if chunks, ok := node.Meta["chunks"].([]string); ok {
-			for _, chunkHash := range chunks {
+		if chunksRaw, ok := node.Meta["chunks"]; ok {
+			var chunkHashes []string
+			switch chunks := chunksRaw.(type) {
+			case []interface{}:
+				for _, chunk := range chunks {
+					if hash, ok := chunk.(string); ok {
+						chunkHashes = append(chunkHashes, hash)
+					}
+				}
+			case []string:
+				chunkHashes = chunks
+			}
+
+			for _, chunkHash := range chunkHashes {
 				// Skip if already exported
 				if exported[chunkHash] {
 					continue
@@ -333,10 +350,10 @@ func (e *Exporter) exportChunks(entries []storage.IndexEntry, manifest *ExportMa
 
 				fmt.Printf("Exporting chunk %s\n", chunkHash)
 
-				// Get chunk content
-				content, err := e.store.ReconstructContent(chunkHash)
+				// Get chunk content directly from chunk store
+				content, err := e.store.GetChunk(chunkHash)
 				if err != nil {
-					return fmt.Errorf("reconstructing chunk content: %w", err)
+					return fmt.Errorf("getting chunk content: %w", err)
 				}
 
 				// Write chunk data
