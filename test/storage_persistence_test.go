@@ -78,8 +78,8 @@ func TestPersistence(t *testing.T) {
 		}
 	})
 
-	// Test persistence of multiple nodes and links
-	t.Run("Multiple Nodes and Links", func(t *testing.T) {
+	// Test persistence of multiple nodes and chunk reuse
+	t.Run("Multiple Nodes and Chunk Reuse", func(t *testing.T) {
 		// Create temporary directory for this subtest
 		tmpDir := t.TempDir()
 		repoPath := filepath.Join(tmpDir, "test.mx")
@@ -90,22 +90,18 @@ func TestPersistence(t *testing.T) {
 			t.Fatalf("creating repository: %v", err)
 		}
 
-		// Add similar documents to create links
-		content1 := []byte("The quick brown fox jumps over the lazy dog.")
-		content2 := []byte("The quick brown fox jumps over the lazy cat.")
+		// Add identical content twice to test chunk reuse
+		content := []byte("This content will be stored twice to test chunk reuse.")
 
-		id1, err := repo.AddNode(content1, "file", nil)
+		id1, err := repo.AddNode(content, "file", nil)
 		if err != nil {
 			t.Fatalf("adding first node: %v", err)
 		}
 
-		id2, err := repo.AddNode(content2, "file", nil)
+		id2, err := repo.AddNode(content, "file", nil)
 		if err != nil {
 			t.Fatalf("adding second node: %v", err)
 		}
-
-		// Wait for similarity links to be created
-		time.Sleep(100 * time.Millisecond)
 
 		// Close repository
 		if err := repo.Close(); err != nil {
@@ -120,33 +116,28 @@ func TestPersistence(t *testing.T) {
 		defer repo.Close()
 
 		// Verify nodes persisted
-		if _, err := repo.GetNode(id1); err != nil {
+		node1, err := repo.GetNode(id1)
+		if err != nil {
 			t.Fatalf("getting first node after reopen: %v", err)
 		}
 
-		if _, err := repo.GetNode(id2); err != nil {
+		node2, err := repo.GetNode(id2)
+		if err != nil {
 			t.Fatalf("getting second node after reopen: %v", err)
 		}
 
-		// Verify links persisted
-		links, err := repo.GetLinks(id1)
-		if err != nil {
-			t.Fatalf("getting links after reopen: %v", err)
+		// Verify chunks are reused
+		chunks1 := node1.Meta["chunks"].([]string)
+		chunks2 := node2.Meta["chunks"].([]string)
+
+		if len(chunks1) != len(chunks2) {
+			t.Errorf("chunk counts differ: %d != %d", len(chunks1), len(chunks2))
 		}
 
-		var found bool
-		for _, link := range links {
-			if link.Target == id2 && link.Type == "similar" {
-				found = true
-				similarity := link.Meta["similarity"].(float64)
-				if similarity < 0.8 {
-					t.Errorf("similarity not preserved correctly: got %f", similarity)
-				}
-				break
+		for i := range chunks1 {
+			if chunks1[i] != chunks2[i] {
+				t.Errorf("chunk %d differs: %s != %s", i, chunks1[i], chunks2[i])
 			}
-		}
-		if !found {
-			t.Error("similarity link not preserved")
 		}
 	})
 

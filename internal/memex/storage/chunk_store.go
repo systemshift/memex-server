@@ -1,307 +1,158 @@
 package storage
 
 import (
+	"bytes"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
-	"sync"
+	"io"
 )
 
-// ChunkStore manages content chunks with reference counting
+// ChunkStore manages content chunks
 type ChunkStore struct {
-	path  string
-	mutex sync.RWMutex
-	refs  map[string]int
+	store *MXStore // Parent store for file access
+}
+
+// ChunkEntry represents a chunk in the store
+type ChunkEntry struct {
+	Hash   [32]byte // SHA-256 hash of content
+	Offset uint64   // File offset to chunk data
+	Length uint32   // Length of chunk data
 }
 
 // NewChunkStore creates a new chunk store
-func NewChunkStore(path string) *ChunkStore {
-	store := &ChunkStore{
-		path: path,
-		refs: make(map[string]int),
+func NewChunkStore(store *MXStore) *ChunkStore {
+	return &ChunkStore{
+		store: store,
 	}
-
-	// Create directory if it doesn't exist
-	if err := os.MkdirAll(path, 0755); err != nil {
-		return store // Return store anyway, error will be caught on first write
-	}
-
-	// Load reference counts if they exist
-	refsPath := filepath.Join(path, "refs.json")
-	if data, err := os.ReadFile(refsPath); err == nil {
-		if err := json.Unmarshal(data, &store.refs); err != nil {
-			// If refs.json exists but is invalid, scan directory to rebuild refs
-			store.scanAndSaveRefs()
-		}
-	} else if os.IsNotExist(err) {
-		// If refs.json doesn't exist, scan directory to build initial refs
-		store.scanAndSaveRefs()
-	}
-
-	return store
 }
 
-// scanAndSaveRefs scans the directory and saves the refs atomically
-func (s *ChunkStore) scanAndSaveRefs() {
-	// Scan directory without holding lock
-	refs := make(map[string]int)
-
-	filepath.Walk(s.path, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return nil // Skip errors
-		}
-		if info.IsDir() {
-			return nil // Skip directories
-		}
-		if info.Name() == "refs.json" {
-			return nil // Skip refs.json file
-		}
-
-		// Get parent directory name (first 2 chars of hash)
-		dir := filepath.Base(filepath.Dir(path))
-		if len(dir) != 2 {
-			return nil // Skip invalid paths
-		}
-
-		// Get file name (rest of hash)
-		name := filepath.Base(path)
-		if len(name) != 62 {
-			return nil // Skip invalid files
-		}
-
-		// Combine to get full hash
-		hash := dir + name
-
-		// Verify it's a valid hex string
-		if _, err := hex.DecodeString(hash); err != nil {
-			return nil // Skip invalid hashes
-		}
-
-		// Add to reference counts
-		refs[hash] = 1
-		return nil
-	})
-
-	// Update refs under lock
-	s.mutex.Lock()
-	s.refs = refs
-	s.mutex.Unlock()
-
-	// Save to disk
-	s.saveRefs()
-}
-
-// saveRefs saves reference counts to disk
-func (s *ChunkStore) saveRefs() error {
-	// Copy refs under read lock
-	s.mutex.RLock()
-	refs := make(map[string]int, len(s.refs))
-	for k, v := range s.refs {
-		refs[k] = v
-	}
-	s.mutex.RUnlock()
-
-	// Marshal reference counts
-	data, err := json.Marshal(refs)
-	if err != nil {
-		return fmt.Errorf("marshaling refs: %w", err)
-	}
-
-	// Write to file atomically
-	refsPath := filepath.Join(s.path, "refs.json")
-	tempPath := refsPath + ".tmp"
-
-	// Write to temp file first
-	if err := os.WriteFile(tempPath, data, 0644); err != nil {
-		return fmt.Errorf("writing temp refs file: %w", err)
-	}
-
-	// Rename temp file to final location
-	if err := os.Rename(tempPath, refsPath); err != nil {
-		os.Remove(tempPath) // Clean up temp file
-		return fmt.Errorf("renaming refs file: %w", err)
-	}
-
-	return nil
-}
-
-// Store stores a chunk and returns its hash
+// Store adds a chunk to the store
 func (s *ChunkStore) Store(content []byte) (string, error) {
 	// Calculate hash
 	hash := sha256.Sum256(content)
 	hashStr := hex.EncodeToString(hash[:])
 
 	// Check if chunk already exists
-	s.mutex.RLock()
-	count := s.refs[hashStr]
-	s.mutex.RUnlock()
-
-	if count > 0 {
-		// Increment reference count
-		s.mutex.Lock()
-		s.refs[hashStr]++
-		s.mutex.Unlock()
-
-		// Save updated reference counts
-		if err := s.saveRefs(); err != nil {
-			return "", fmt.Errorf("saving refs: %w", err)
-		}
-
+	if _, err := s.Get(hashStr); err == nil {
+		// Chunk already exists
 		return hashStr, nil
 	}
 
-	// Create directory path
-	dirPath := filepath.Join(s.path, hashStr[:2])
-	if err := os.MkdirAll(dirPath, 0755); err != nil {
-		return "", fmt.Errorf("creating directory: %w", err)
+	// Begin transaction
+	tx, err := s.store.beginTransaction()
+	if err != nil {
+		return "", fmt.Errorf("beginning transaction: %w", err)
 	}
 
-	// Create file path
-	filePath := filepath.Join(dirPath, hashStr[2:])
-
-	// Write chunk atomically
-	tempPath := filePath + ".tmp"
-
-	// Write to temp file first
-	if err := os.WriteFile(tempPath, content, 0644); err != nil {
-		return "", fmt.Errorf("writing temp chunk file: %w", err)
+	// Write chunk data
+	offset, err := tx.write(content)
+	if err != nil {
+		tx.rollback()
+		return "", fmt.Errorf("writing chunk: %w", err)
 	}
 
-	// Rename temp file to final location
-	if err := os.Rename(tempPath, filePath); err != nil {
-		os.Remove(tempPath) // Clean up temp file
-		return "", fmt.Errorf("renaming chunk file: %w", err)
+	// Create chunk entry
+	entry := ChunkEntry{
+		Hash:   hash,
+		Offset: offset,
+		Length: uint32(len(content)),
 	}
 
-	// Add reference count
-	s.mutex.Lock()
-	s.refs[hashStr] = 1
-	s.mutex.Unlock()
+	// Add to index
+	tx.addIndex(IndexEntry{
+		ID:     entry.Hash,
+		Offset: entry.Offset,
+		Length: entry.Length,
+	})
 
-	// Save updated reference counts
-	if err := s.saveRefs(); err != nil {
-		return "", fmt.Errorf("saving refs: %w", err)
+	// Commit transaction
+	if err := tx.commit(); err != nil {
+		return "", fmt.Errorf("committing transaction: %w", err)
 	}
 
 	return hashStr, nil
 }
 
-// Get retrieves a chunk by hash
+// Get retrieves a chunk by its hash
 func (s *ChunkStore) Get(hash string) ([]byte, error) {
-	// Check reference count
-	s.mutex.RLock()
-	count := s.refs[hash]
-	s.mutex.RUnlock()
-
-	if count == 0 {
-		// If no reference count, try scanning directory
-		s.scanAndSaveRefs()
-
-		s.mutex.RLock()
-		count = s.refs[hash]
-		s.mutex.RUnlock()
-
-		if count == 0 {
-			return nil, fmt.Errorf("chunk not found or deleted: %s", hash)
-		}
-	}
-
-	// Create file path
-	filePath := filepath.Join(s.path, hash[:2], hash[2:])
-
-	// Read chunk
-	content, err := os.ReadFile(filePath)
+	// Decode hash
+	hashBytes, err := hex.DecodeString(hash)
 	if err != nil {
-		if os.IsNotExist(err) {
-			// If file doesn't exist but we have a reference count,
-			// something is wrong - clear the reference count
-			s.mutex.Lock()
-			delete(s.refs, hash)
-			s.mutex.Unlock()
-			s.saveRefs()
-			return nil, fmt.Errorf("chunk not found: %w", err)
-		}
-		return nil, fmt.Errorf("reading chunk: %w", err)
+		return nil, fmt.Errorf("invalid hash: %w", err)
 	}
 
-	return content, nil
+	// Find chunk in index
+	var entry ChunkEntry
+	copy(entry.Hash[:], hashBytes)
+
+	// Find chunk entry
+	for _, idx := range s.store.nodes {
+		if bytes.Equal(idx.ID[:], entry.Hash[:]) {
+			entry.Offset = idx.Offset
+			entry.Length = idx.Length
+			break
+		}
+	}
+
+	if entry.Length == 0 {
+		return nil, fmt.Errorf("chunk not found: %s", hash)
+	}
+
+	// Seek to chunk data
+	if _, err := s.store.seek(int64(entry.Offset), io.SeekStart); err != nil {
+		return nil, fmt.Errorf("seeking to chunk: %w", err)
+	}
+
+	// Read length prefix
+	var length uint32
+	if err := binary.Read(s.store.file, binary.LittleEndian, &length); err != nil {
+		return nil, fmt.Errorf("reading length prefix: %w", err)
+	}
+
+	// Read chunk data
+	data := make([]byte, length)
+	if _, err := io.ReadFull(s.store.file, data); err != nil {
+		return nil, fmt.Errorf("reading chunk data: %w", err)
+	}
+
+	return data, nil
 }
 
-// Delete removes a chunk
+// Delete removes a chunk from the store
 func (s *ChunkStore) Delete(hash string) error {
-	// Decrement reference count
-	s.mutex.Lock()
-	s.refs[hash]--
-	count := s.refs[hash]
-	if count > 0 {
-		s.mutex.Unlock()
-		// Save updated reference counts
-		if err := s.saveRefs(); err != nil {
-			return fmt.Errorf("saving refs: %w", err)
-		}
-		return nil
-	}
-
-	// Remove from reference count map
-	delete(s.refs, hash)
-	s.mutex.Unlock()
-
-	// Save updated reference counts
-	if err := s.saveRefs(); err != nil {
-		return fmt.Errorf("saving refs: %w", err)
-	}
-
-	// Create file path
-	filePath := filepath.Join(s.path, hash[:2], hash[2:])
-
-	// Delete chunk
-	if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("deleting chunk: %w", err)
-	}
-
+	// Chunks are never actually deleted, they remain in the file
+	// This is fine because:
+	// 1. They might be referenced by other nodes
+	// 2. Content addressing means same content = same hash
+	// 3. Space can be reclaimed during compaction
 	return nil
 }
 
-// ChunkContent splits content into chunks using word boundaries
+// ChunkContent splits content into chunks
 func ChunkContent(content []byte) ([]Chunk, error) {
-	fmt.Printf("Chunking content of size %d bytes\n", len(content))
-
-	// For small content, use word boundaries
-	if len(content) <= 1024 {
-		var chunks []Chunk
-		start := 0
-		for i := 0; i < len(content); i++ {
-			if content[i] == ' ' || content[i] == '\n' || content[i] == '.' || i == len(content)-1 {
-				end := i + 1 // Include the delimiter in the chunk
-				if i == len(content)-1 && content[i] != ' ' && content[i] != '\n' && content[i] != '.' {
-					end = i + 1
-				}
-				chunk := Chunk{Content: content[start:end]}
-				hash := sha256.Sum256(chunk.Content)
-				chunk.Hash = hex.EncodeToString(hash[:])
-				chunks = append(chunks, chunk)
-				start = i + 1
-			}
-		}
-		fmt.Printf("Created %d word-based chunks\n", len(chunks))
-		return chunks, nil
+	// Use fixed-size chunking
+	chunkSize := 4096 // 4KB chunks
+	if len(content) < chunkSize {
+		chunkSize = 1024 // Use 1KB chunks for small files
 	}
 
-	// For large content, use fixed-size chunks
+	fmt.Printf("Chunking content of size %d bytes\n", len(content))
+
 	var chunks []Chunk
-	chunkSize := 512
 	for i := 0; i < len(content); i += chunkSize {
 		end := i + chunkSize
 		if end > len(content) {
 			end = len(content)
 		}
-		chunk := Chunk{Content: content[i:end]}
-		hash := sha256.Sum256(chunk.Content)
-		chunk.Hash = hex.EncodeToString(hash[:])
-		chunks = append(chunks, chunk)
+
+		chunk := content[i:end]
+		hash := sha256.Sum256(chunk)
+		chunks = append(chunks, Chunk{
+			Content: chunk,
+			Hash:    hex.EncodeToString(hash[:]),
+		})
 	}
 
 	fmt.Printf("Created %d fixed-size chunks\n", len(chunks))

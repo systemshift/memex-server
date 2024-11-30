@@ -46,13 +46,8 @@ func CreateMX(path string) (*MXStore, error) {
 		},
 	}
 
-	// Create chunk store
-	chunksPath := getChunksPath(path)
-	if err := os.MkdirAll(chunksPath, 0755); err != nil {
-		file.Close()
-		return nil, fmt.Errorf("creating chunks directory: %w", err)
-	}
-	store.chunks = NewChunkStore(chunksPath)
+	// Create chunk store within the same file
+	store.chunks = NewChunkStore(store)
 
 	// Write initial header
 	if err := store.writeHeader(); err != nil {
@@ -89,9 +84,8 @@ func OpenMX(path string) (*MXStore, error) {
 		return nil, fmt.Errorf("reading header: %w", err)
 	}
 
-	// Open chunk store
-	chunksPath := getChunksPath(absPath)
-	store.chunks = NewChunkStore(chunksPath)
+	// Create chunk store within the same file
+	store.chunks = NewChunkStore(store)
 
 	// Read indexes
 	if err := store.readIndexes(); err != nil {
@@ -348,25 +342,6 @@ func (tx *Transaction) rollback() error {
 // seek moves the file pointer
 func (s *MXStore) seek(offset int64, whence int) (int64, error) {
 	return s.file.Seek(offset, whence)
-}
-
-// getChunksPath returns the path to the chunks directory
-func getChunksPath(repoPath string) string {
-	// Get absolute path to repository
-	absPath, err := filepath.Abs(repoPath)
-	if err != nil {
-		return filepath.Join(filepath.Dir(repoPath), filepath.Base(repoPath)+".chunks")
-	}
-
-	// Get the repository directory and base name
-	dir := filepath.Dir(absPath)
-	base := filepath.Base(absPath)
-
-	// Create chunks directory name by appending .chunks to the repository name
-	chunksDir := base + ".chunks"
-
-	// Return full path to chunks directory
-	return filepath.Join(dir, chunksDir)
 }
 
 // writeIndexes writes the node and edge indexes to the file

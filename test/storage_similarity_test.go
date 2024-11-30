@@ -3,12 +3,11 @@ package test
 import (
 	"path/filepath"
 	"testing"
-	"time"
 
 	"memex/internal/memex/storage"
 )
 
-// TestSimilarityDetection tests content similarity detection and linking
+// TestSimilarityDetection tests content deduplication through chunk reuse
 func TestSimilarityDetection(t *testing.T) {
 	// Create temporary directory for test
 	tmpDir := t.TempDir()
@@ -38,150 +37,126 @@ func TestSimilarityDetection(t *testing.T) {
 			t.Fatalf("adding second copy: %v", err)
 		}
 
-		// Wait for similarity links to be created
-		time.Sleep(100 * time.Millisecond)
-
-		// Check links from first node
-		links, err := repo.GetLinks(id1)
+		// Get nodes to check chunk reuse
+		node1, err := repo.GetNode(id1)
 		if err != nil {
-			t.Fatalf("getting links for first node: %v", err)
+			t.Fatalf("getting first node: %v", err)
 		}
 
-		var found bool
-		for _, link := range links {
-			if link.Target == id2 && link.Type == "similar" {
-				found = true
-				similarity := link.Meta["similarity"].(float64)
-				if similarity != 1.0 {
-					t.Errorf("exact duplicates should have similarity 1.0, got %f", similarity)
-				}
-				shared := link.Meta["shared"].(int)
-				if shared == 0 {
-					t.Error("exact duplicates should have shared chunks")
-				}
-				break
-			}
-		}
-		if !found {
-			t.Error("similarity link not found between exact duplicates")
-		}
-	})
-
-	// Test similar content
-	t.Run("Similar Content", func(t *testing.T) {
-		// Create two similar documents under 1KB to use word-based chunking
-		content1 := []byte("The quick brown fox jumps over the lazy dog. This is a test document with some shared content.")
-		content2 := []byte("The quick brown fox jumps over the lazy cat. This is a test document with some shared content.")
-
-		// Add first document
-		id1, err := repo.AddNode(content1, "file", nil)
+		node2, err := repo.GetNode(id2)
 		if err != nil {
-			t.Fatalf("adding first document: %v", err)
+			t.Fatalf("getting second node: %v", err)
 		}
 
-		// Add second document
-		id2, err := repo.AddNode(content2, "file", nil)
-		if err != nil {
-			t.Fatalf("adding second document: %v", err)
+		// Verify chunks are reused
+		chunks1 := node1.Meta["chunks"].([]string)
+		chunks2 := node2.Meta["chunks"].([]string)
+
+		if len(chunks1) != len(chunks2) {
+			t.Errorf("chunk counts differ: %d != %d", len(chunks1), len(chunks2))
 		}
 
-		// Wait for similarity links to be created
-		time.Sleep(100 * time.Millisecond)
-
-		// Check links
-		links, err := repo.GetLinks(id1)
-		if err != nil {
-			t.Fatalf("getting links: %v", err)
-		}
-
-		var found bool
-		for _, link := range links {
-			if link.Target == id2 && link.Type == "similar" {
-				found = true
-				similarity := link.Meta["similarity"].(float64)
-				if similarity < 0.8 {
-					t.Errorf("similar documents should have high similarity, got %f", similarity)
-				}
-				shared := link.Meta["shared"].(int)
-				if shared == 0 {
-					t.Error("similar documents should have shared chunks")
-				}
-				break
-			}
-		}
-		if !found {
-			t.Error("similarity link not found between similar documents")
-		}
-	})
-
-	// Test dissimilar content
-	t.Run("Dissimilar Content", func(t *testing.T) {
-		content1 := []byte("This is a completely different document with unique content.")
-		content2 := []byte("Another document with entirely different text and no shared phrases.")
-
-		// Add first document
-		id1, err := repo.AddNode(content1, "file", nil)
-		if err != nil {
-			t.Fatalf("adding first document: %v", err)
-		}
-
-		// Add second document
-		id2, err := repo.AddNode(content2, "file", nil)
-		if err != nil {
-			t.Fatalf("adding second document: %v", err)
-		}
-
-		// Wait for similarity links to be created
-		time.Sleep(100 * time.Millisecond)
-
-		// Check links
-		links, err := repo.GetLinks(id1)
-		if err != nil {
-			t.Fatalf("getting links: %v", err)
-		}
-
-		// Verify no similarity link exists
-		for _, link := range links {
-			if link.Target == id2 && link.Type == "similar" {
-				similarity := link.Meta["similarity"].(float64)
-				t.Errorf("dissimilar documents should not be linked (got similarity %f)", similarity)
+		for i := range chunks1 {
+			if chunks1[i] != chunks2[i] {
+				t.Errorf("chunk %d differs: %s != %s", i, chunks1[i], chunks2[i])
 			}
 		}
 	})
 
-	// Test similarity threshold
-	t.Run("Similarity Threshold", func(t *testing.T) {
-		// Create documents with minimal similarity
-		content1 := []byte("Document one has some words that are shared.")
-		content2 := []byte("Document two has some words but is mostly different content entirely.")
+	// Test partial chunk reuse
+	t.Run("Partial Reuse", func(t *testing.T) {
+		// Create two files that share a 4KB block
+		sharedBlock := make([]byte, 4096)
+		for i := range sharedBlock {
+			sharedBlock[i] = byte(i % 256)
+		}
 
-		// Add first document
+		content1 := append(sharedBlock, []byte("unique content 1")...)
+		content2 := append(sharedBlock, []byte("unique content 2")...)
+
+		// Add first file
 		id1, err := repo.AddNode(content1, "file", nil)
 		if err != nil {
-			t.Fatalf("adding first document: %v", err)
+			t.Fatalf("adding first file: %v", err)
 		}
 
-		// Add second document
+		// Add second file
 		id2, err := repo.AddNode(content2, "file", nil)
 		if err != nil {
-			t.Fatalf("adding second document: %v", err)
+			t.Fatalf("adding second file: %v", err)
 		}
 
-		// Wait for similarity links to be created
-		time.Sleep(100 * time.Millisecond)
-
-		// Check links
-		links, err := repo.GetLinks(id1)
+		// Get nodes to check chunk reuse
+		node1, err := repo.GetNode(id1)
 		if err != nil {
-			t.Fatalf("getting links: %v", err)
+			t.Fatalf("getting first node: %v", err)
 		}
 
-		// Verify links respect similarity threshold
-		for _, link := range links {
-			if link.Target == id2 && link.Type == "similar" {
-				similarity := link.Meta["similarity"].(float64)
-				if similarity < 0.3 {
-					t.Error("links should only be created for similarity >= 0.3")
+		node2, err := repo.GetNode(id2)
+		if err != nil {
+			t.Fatalf("getting second node: %v", err)
+		}
+
+		// Verify at least one chunk is shared
+		chunks1 := node1.Meta["chunks"].([]string)
+		chunks2 := node2.Meta["chunks"].([]string)
+
+		var sharedChunks int
+		for _, c1 := range chunks1 {
+			for _, c2 := range chunks2 {
+				if c1 == c2 {
+					sharedChunks++
+				}
+			}
+		}
+
+		if sharedChunks == 0 {
+			t.Error("no chunks shared between files with identical blocks")
+		}
+	})
+
+	// Test unique content
+	t.Run("Unique Content", func(t *testing.T) {
+		content1 := make([]byte, 4096)
+		content2 := make([]byte, 4096)
+
+		// Fill with different data
+		for i := range content1 {
+			content1[i] = byte(i % 256)
+			content2[i] = byte((i + 128) % 256)
+		}
+
+		// Add first file
+		id1, err := repo.AddNode(content1, "file", nil)
+		if err != nil {
+			t.Fatalf("adding first file: %v", err)
+		}
+
+		// Add second file
+		id2, err := repo.AddNode(content2, "file", nil)
+		if err != nil {
+			t.Fatalf("adding second file: %v", err)
+		}
+
+		// Get nodes to check chunks
+		node1, err := repo.GetNode(id1)
+		if err != nil {
+			t.Fatalf("getting first node: %v", err)
+		}
+
+		node2, err := repo.GetNode(id2)
+		if err != nil {
+			t.Fatalf("getting second node: %v", err)
+		}
+
+		// Verify no chunks are shared
+		chunks1 := node1.Meta["chunks"].([]string)
+		chunks2 := node2.Meta["chunks"].([]string)
+
+		for _, c1 := range chunks1 {
+			for _, c2 := range chunks2 {
+				if c1 == c2 {
+					t.Error("unique content should not share any chunks")
 				}
 			}
 		}

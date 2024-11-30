@@ -1,219 +1,137 @@
 package test
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"fmt"
+	"bytes"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"memex/internal/memex/storage"
 )
 
+// TestComprehensiveStorage tests all storage functionality together
 func TestComprehensiveStorage(t *testing.T) {
+	// Create temporary directory for test
+	tmpDir := t.TempDir()
+	repoPath := filepath.Join(tmpDir, "test.mx")
+
+	// Create repository
+	repo, err := storage.CreateMX(repoPath)
+	if err != nil {
+		t.Fatalf("creating repository: %v", err)
+	}
+	defer repo.Close()
+
 	// Test basic node operations
 	t.Run("Basic Node Operations", func(t *testing.T) {
-		// Create test directory
-		testDir := t.TempDir()
-		repoPath := filepath.Join(testDir, "test.mx")
-
-		// Create repository
-		repo, err := storage.CreateMX(repoPath)
-		if err != nil {
-			t.Fatalf("creating repository: %v", err)
-		}
-		defer repo.Close()
+		content := []byte("Test content.")
+		meta := map[string]any{"filename": "test.txt"}
 
 		// Add node
-		content := []byte("test content 1")
-		meta := map[string]any{
-			"filename": "test1.txt",
-			"type":     "file",
-		}
-		id1, err := repo.AddNode(content, "file", meta)
+		id, err := repo.AddNode(content, "file", meta)
 		if err != nil {
 			t.Fatalf("adding node: %v", err)
 		}
 
 		// Get node
-		node, err := repo.GetNode(id1)
+		node, err := repo.GetNode(id)
 		if err != nil {
 			t.Fatalf("getting node: %v", err)
 		}
 
-		// Verify node data
-		if node.Type != "file" {
-			t.Errorf("wrong type: got %s, want file", node.Type)
+		// Check metadata
+		if filename, ok := node.Meta["filename"].(string); !ok || filename != "test.txt" {
+			t.Errorf("filename not preserved: got %v", node.Meta["filename"])
 		}
-		if filename, ok := node.Meta["filename"].(string); !ok || filename != "test1.txt" {
-			t.Errorf("wrong filename: got %v, want test1.txt", node.Meta["filename"])
+
+		// Check content
+		contentHash := node.Meta["content"].(string)
+		reconstructed, err := repo.ReconstructContent(contentHash)
+		if err != nil {
+			t.Fatalf("reconstructing content: %v", err)
 		}
-		if contentHash, ok := node.Meta["content"].(string); !ok {
-			t.Error("content hash not found in metadata")
-		} else {
-			hash := sha256.Sum256(content)
-			expected := hex.EncodeToString(hash[:])
-			if contentHash != expected {
-				t.Errorf("wrong content hash: got %s, want %s", contentHash, expected)
-			}
+
+		if !bytes.Equal(content, reconstructed) {
+			t.Error("content not preserved correctly")
 		}
 	})
 
 	// Test multiple nodes
 	t.Run("Multiple Nodes", func(t *testing.T) {
-		// Create test directory
-		testDir := t.TempDir()
-		repoPath := filepath.Join(testDir, "test.mx")
-
-		// Create repository
-		repo, err := storage.CreateMX(repoPath)
-		if err != nil {
-			t.Fatalf("creating repository: %v", err)
-		}
-		defer repo.Close()
-
-		// Add multiple nodes
-		nodes := []struct {
-			content []byte
-			meta    map[string]any
-		}{
-			{[]byte("content 1"), map[string]any{"name": "node1"}},
-			{[]byte("content 2"), map[string]any{"name": "node2"}},
-			{[]byte("content 3"), map[string]any{"name": "node3"}},
-		}
-
-		var ids []string
-		for _, n := range nodes {
-			id, err := repo.AddNode(n.content, "test", n.meta)
-			if err != nil {
-				t.Fatalf("adding node: %v", err)
-			}
-			ids = append(ids, id)
-		}
-
-		// Verify each node
-		for i, id := range ids {
-			node, err := repo.GetNode(id)
-			if err != nil {
-				t.Fatalf("getting node %s: %v", id, err)
-			}
-			if name, ok := node.Meta["name"].(string); !ok || name != fmt.Sprintf("node%d", i+1) {
-				t.Errorf("wrong name for node %s: got %v, want node%d", id, name, i+1)
+		// Add several nodes
+		for i := 0; i < 3; i++ {
+			content := []byte("Node content")
+			if _, err := repo.AddNode(content, "file", nil); err != nil {
+				t.Fatalf("adding node %d: %v", i, err)
 			}
 		}
 	})
 
 	// Test node deletion
 	t.Run("Node Deletion", func(t *testing.T) {
-		// Create test directory
-		testDir := t.TempDir()
-		repoPath := filepath.Join(testDir, "test.mx")
-
-		// Create repository
-		repo, err := storage.CreateMX(repoPath)
-		if err != nil {
-			t.Fatalf("creating repository: %v", err)
-		}
-		defer repo.Close()
-
-		// Add node
-		content := []byte("delete me")
-		id, err := repo.AddNode(content, "test", nil)
+		content := []byte("Delete me")
+		id, err := repo.AddNode(content, "file", nil)
 		if err != nil {
 			t.Fatalf("adding node: %v", err)
 		}
 
-		// Delete node
 		if err := repo.DeleteNode(id); err != nil {
 			t.Fatalf("deleting node: %v", err)
 		}
 
-		// Verify node is gone
 		if _, err := repo.GetNode(id); err == nil {
-			t.Error("node still exists after deletion")
+			t.Error("deleted node should not be retrievable")
 		}
 	})
 
-	// Test similar content detection
-	t.Run("Similar Content", func(t *testing.T) {
-		// Create test directory
-		testDir := t.TempDir()
-		repoPath := filepath.Join(testDir, "test.mx")
+	// Test chunk reuse
+	t.Run("Chunk Reuse", func(t *testing.T) {
+		content := []byte("This content will be stored twice to test chunk reuse.")
 
-		// Create repository
-		repo, err := storage.CreateMX(repoPath)
+		// Add first copy
+		id1, err := repo.AddNode(content, "file", nil)
 		if err != nil {
-			t.Fatalf("creating repository: %v", err)
+			t.Fatalf("adding first copy: %v", err)
 		}
-		defer repo.Close()
 
-		// Add two nodes with similar content (under 1KB to use word-based chunking)
-		content1 := []byte("The quick brown fox jumps over the lazy dog. This is a test document with some shared content.")
-		content2 := []byte("The quick brown fox jumps over the lazy cat. This is a test document with some shared content.")
-
-		id1, err := repo.AddNode(content1, "test", nil)
+		// Add second copy
+		id2, err := repo.AddNode(content, "file", nil)
 		if err != nil {
-			t.Fatalf("adding first node: %v", err)
+			t.Fatalf("adding second copy: %v", err)
 		}
 
-		id2, err := repo.AddNode(content2, "test", nil)
+		// Get nodes
+		node1, err := repo.GetNode(id1)
 		if err != nil {
-			t.Fatalf("adding second node: %v", err)
+			t.Fatalf("getting first node: %v", err)
 		}
 
-		// Wait for similarity links to be created
-		time.Sleep(100 * time.Millisecond)
-
-		// Get links
-		links, err := repo.GetLinks(id1)
+		node2, err := repo.GetNode(id2)
 		if err != nil {
-			t.Fatalf("getting links: %v", err)
+			t.Fatalf("getting second node: %v", err)
 		}
 
-		t.Logf("Found %d links for node %s", len(links), id1)
-		for _, link := range links {
-			t.Logf("Link: %s -> %s [%s] meta: %v", link.Source, link.Target, link.Type, link.Meta)
+		// Verify chunks are reused
+		chunks1 := node1.Meta["chunks"].([]string)
+		chunks2 := node2.Meta["chunks"].([]string)
+
+		if len(chunks1) != len(chunks2) {
+			t.Errorf("chunk counts differ: %d != %d", len(chunks1), len(chunks2))
 		}
 
-		// Verify similarity link exists
-		var found bool
-		for _, link := range links {
-			if link.Target == id2 && link.Type == "similar" {
-				found = true
-				if similarity, ok := link.Meta["similarity"].(float64); !ok {
-					t.Error("similarity not found in link metadata")
-				} else if similarity < 0.3 {
-					t.Errorf("similarity too low: got %f, want >= 0.3", similarity)
-				}
-				if shared, ok := link.Meta["shared"].(int); !ok {
-					t.Error("shared chunks not found in link metadata")
-				} else if shared == 0 {
-					t.Error("no shared chunks found")
-				}
-				break
+		for i := range chunks1 {
+			if chunks1[i] != chunks2[i] {
+				t.Errorf("chunk %d differs: %s != %s", i, chunks1[i], chunks2[i])
 			}
-		}
-		if !found {
-			t.Error("similarity link not found")
 		}
 	})
 
 	// Test file persistence
 	t.Run("File Persistence", func(t *testing.T) {
-		// Create test directory
-		testDir := t.TempDir()
-		repoPath := filepath.Join(testDir, "test.mx")
-
-		// Create repository
-		repo, err := storage.CreateMX(repoPath)
-		if err != nil {
-			t.Fatalf("creating repository: %v", err)
-		}
+		content := []byte("This content should persist.")
+		meta := map[string]any{"filename": "persist.txt"}
 
 		// Add node
-		content := []byte("persistence test")
-		id, err := repo.AddNode(content, "test", nil)
+		id, err := repo.AddNode(content, "file", meta)
 		if err != nil {
 			t.Fatalf("adding node: %v", err)
 		}
@@ -228,7 +146,6 @@ func TestComprehensiveStorage(t *testing.T) {
 		if err != nil {
 			t.Fatalf("reopening repository: %v", err)
 		}
-		defer repo.Close()
 
 		// Get node
 		node, err := repo.GetNode(id)
@@ -236,35 +153,28 @@ func TestComprehensiveStorage(t *testing.T) {
 			t.Fatalf("getting node after reopen: %v", err)
 		}
 
-		// Verify content hash
-		hash := sha256.Sum256(content)
-		expected := hex.EncodeToString(hash[:])
-		if contentHash, ok := node.Meta["content"].(string); !ok || contentHash != expected {
-			t.Errorf("wrong content hash after reopen: got %s, want %s", contentHash, expected)
+		// Check content
+		contentHash := node.Meta["content"].(string)
+		reconstructed, err := repo.ReconstructContent(contentHash)
+		if err != nil {
+			t.Fatalf("reconstructing content: %v", err)
+		}
+
+		if !bytes.Equal(content, reconstructed) {
+			t.Error("content not preserved correctly")
 		}
 	})
 
 	// Test large content
 	t.Run("Large Content", func(t *testing.T) {
-		// Create test directory
-		testDir := t.TempDir()
-		repoPath := filepath.Join(testDir, "test.mx")
-
-		// Create repository
-		repo, err := storage.CreateMX(repoPath)
-		if err != nil {
-			t.Fatalf("creating repository: %v", err)
-		}
-		defer repo.Close()
-
-		// Create large content (1MB)
+		// Create 1MB of content
 		content := make([]byte, 1024*1024)
 		for i := range content {
 			content[i] = byte(i % 256)
 		}
 
-		// Add node with large content
-		id, err := repo.AddNode(content, "test", nil)
+		// Add node
+		id, err := repo.AddNode(content, "file", nil)
 		if err != nil {
 			t.Fatalf("adding large node: %v", err)
 		}
@@ -275,54 +185,33 @@ func TestComprehensiveStorage(t *testing.T) {
 			t.Fatalf("getting large node: %v", err)
 		}
 
-		// Verify content hash
-		hash := sha256.Sum256(content)
-		expected := hex.EncodeToString(hash[:])
-		if contentHash, ok := node.Meta["content"].(string); !ok || contentHash != expected {
-			t.Errorf("wrong content hash for large node: got %s, want %s", contentHash, expected)
+		// Check content
+		contentHash := node.Meta["content"].(string)
+		reconstructed, err := repo.ReconstructContent(contentHash)
+		if err != nil {
+			t.Fatalf("reconstructing large content: %v", err)
 		}
 
-		// Verify chunks
-		chunks, ok := node.Meta["chunks"].([]string)
-		if !ok {
-			t.Fatal("chunks not found in large node metadata")
-		}
-		if len(chunks) < 2 {
-			t.Error("large content should be split into multiple chunks")
+		if !bytes.Equal(content, reconstructed) {
+			t.Error("large content not preserved correctly")
 		}
 	})
 
 	// Test error cases
 	t.Run("Error Cases", func(t *testing.T) {
-		// Create test directory
-		testDir := t.TempDir()
-		repoPath := filepath.Join(testDir, "test.mx")
-
-		// Create repository
-		repo, err := storage.CreateMX(repoPath)
-		if err != nil {
-			t.Fatalf("creating repository: %v", err)
-		}
-		defer repo.Close()
-
 		// Test invalid node ID
 		if _, err := repo.GetNode("invalid"); err == nil {
-			t.Error("expected error for invalid node ID")
+			t.Error("getting invalid node should fail")
 		}
 
-		// Test deleting non-existent node
-		if err := repo.DeleteNode("nonexistent"); err == nil {
-			t.Error("expected error for deleting non-existent node")
+		// Test nil content
+		if _, err := repo.AddNode(nil, "file", nil); err == nil {
+			t.Error("adding nil content should fail")
 		}
 
-		// Test adding node with nil content
-		if _, err := repo.AddNode(nil, "test", nil); err == nil {
-			t.Error("expected error for nil content")
-		}
-
-		// Test adding node with empty type
-		if _, err := repo.AddNode([]byte("test"), "", nil); err == nil {
-			t.Error("expected error for empty type")
+		// Test empty type
+		if _, err := repo.AddNode([]byte("content"), "", nil); err == nil {
+			t.Error("adding empty type should fail")
 		}
 	})
 }

@@ -21,9 +21,9 @@ func TestChunking(t *testing.T) {
 	}
 	defer repo.Close()
 
-	// Test word-based chunking
-	t.Run("Word Based Chunking", func(t *testing.T) {
-		// Create content under 1KB to trigger word-based chunking
+	// Test small file chunking
+	t.Run("Small File Chunking", func(t *testing.T) {
+		// Create content under 4KB to use 1KB chunks
 		content := []byte("The quick brown fox jumps over the lazy dog. This is a test document.")
 		meta := map[string]any{"filename": "small.txt"}
 
@@ -32,7 +32,7 @@ func TestChunking(t *testing.T) {
 			t.Fatalf("adding node: %v", err)
 		}
 
-		// Verify content is split into word-based chunks
+		// Verify content is stored as a single chunk since it's small
 		node, err := repo.GetNode(id)
 		if err != nil {
 			t.Fatalf("getting node: %v", err)
@@ -43,15 +43,26 @@ func TestChunking(t *testing.T) {
 			t.Fatal("node should have chunks in metadata")
 		}
 
-		// Should have multiple chunks based on word boundaries
-		if len(chunks) <= 1 {
-			t.Error("content should be split into multiple chunks")
+		// Small content should be one chunk
+		if len(chunks) != 1 {
+			t.Errorf("small content should be one chunk, got %d chunks", len(chunks))
+		}
+
+		// Verify content can be reconstructed
+		contentHash := node.Meta["content"].(string)
+		reconstructed, err := repo.ReconstructContent(contentHash)
+		if err != nil {
+			t.Fatalf("reconstructing content: %v", err)
+		}
+
+		if !bytes.Equal(content, reconstructed) {
+			t.Error("content not preserved correctly")
 		}
 	})
 
 	// Test fixed-size chunking
 	t.Run("Fixed Size Chunking", func(t *testing.T) {
-		// Create content larger than 1KB to trigger fixed-size chunking
+		// Create content larger than 4KB to use 4KB chunks
 		content := bytes.Repeat([]byte("This is test content that will be split into fixed-size chunks. "), 20)
 		meta := map[string]any{"filename": "large.txt"}
 
@@ -73,6 +84,17 @@ func TestChunking(t *testing.T) {
 
 		if len(chunks) <= 1 {
 			t.Error("large content should be split into multiple chunks")
+		}
+
+		// Verify content can be reconstructed
+		contentHash := node.Meta["content"].(string)
+		reconstructed, err := repo.ReconstructContent(contentHash)
+		if err != nil {
+			t.Fatalf("reconstructing content: %v", err)
+		}
+
+		if !bytes.Equal(content, reconstructed) {
+			t.Error("content not preserved correctly")
 		}
 	})
 
@@ -124,6 +146,23 @@ func TestChunking(t *testing.T) {
 				t.Errorf("chunk %d differs: %s != %s", i, chunks1[i], chunks2[i])
 			}
 		}
+
+		// Verify content can be reconstructed for both
+		contentHash1 := node1.Meta["content"].(string)
+		reconstructed1, err := repo.ReconstructContent(contentHash1)
+		if err != nil {
+			t.Fatalf("reconstructing first copy: %v", err)
+		}
+
+		contentHash2 := node2.Meta["content"].(string)
+		reconstructed2, err := repo.ReconstructContent(contentHash2)
+		if err != nil {
+			t.Fatalf("reconstructing second copy: %v", err)
+		}
+
+		if !bytes.Equal(content, reconstructed1) || !bytes.Equal(content, reconstructed2) {
+			t.Error("content not preserved correctly")
+		}
 	})
 
 	// Test very large content
@@ -151,8 +190,9 @@ func TestChunking(t *testing.T) {
 			t.Fatal("large node should have chunks in metadata")
 		}
 
-		if len(chunks) < 100 {
-			t.Error("very large content should be split into many chunks")
+		expectedChunks := (len(content) + 4095) / 4096 // Round up division
+		if len(chunks) != expectedChunks {
+			t.Errorf("expected %d chunks for 1MB file, got %d", expectedChunks, len(chunks))
 		}
 
 		// Verify content can be reconstructed
