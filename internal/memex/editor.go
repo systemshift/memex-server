@@ -11,12 +11,13 @@ import (
 
 // Editor represents a simple terminal-based text editor
 type Editor struct {
-	content    [][]rune
-	cursorX    int
-	cursorY    int
-	screenRows int
-	screenCols int
-	repoName   string
+	tempFile   string   // Path to temporary file
+	cursorX    int      // Cursor X position
+	cursorY    int      // Cursor Y position
+	screenRows int      // Terminal height
+	screenCols int      // Terminal width
+	repoName   string   // Repository name
+	content    [][]rune // Current screen content (for display only)
 }
 
 // NewEditor creates a new editor instance
@@ -26,12 +27,43 @@ func NewEditor(repoPath string) *Editor {
 		rows = 24
 		cols = 80
 	}
+
+	// Create temporary file without extension
+	tmpFile, err := os.CreateTemp("", "memex-*")
+	if err != nil {
+		return nil
+	}
+	tmpFile.Close()
+
 	return &Editor{
+		tempFile:   tmpFile.Name(),
 		content:    [][]rune{{}}, // Start with one empty line
 		screenRows: rows - 3,     // Leave room for title and status line
 		screenCols: cols,
 		repoName:   filepath.Base(repoPath),
 	}
+}
+
+// GetTempFile returns the path to the temporary file
+func (e *Editor) GetTempFile() string {
+	return e.tempFile
+}
+
+// Close cleans up resources
+func (e *Editor) Close() {
+	if e.tempFile != "" {
+		os.Remove(e.tempFile)
+	}
+}
+
+// WriteContent writes content to the temporary file
+func (e *Editor) WriteContent(content []byte) error {
+	return os.WriteFile(e.tempFile, content, 0644)
+}
+
+// ReadContent reads content from the temporary file
+func (e *Editor) ReadContent() ([]byte, error) {
+	return os.ReadFile(e.tempFile)
 }
 
 // Run starts the editor and returns the edited content
@@ -42,6 +74,13 @@ func (e *Editor) Run() (string, error) {
 		return "", err
 	}
 	defer term.Restore(int(os.Stdin.Fd()), oldState)
+
+	// Load initial content
+	content, err := e.ReadContent()
+	if err != nil && !os.IsNotExist(err) {
+		return "", err
+	}
+	e.loadContent(content)
 
 	for {
 		e.refreshScreen()
@@ -58,6 +97,9 @@ func (e *Editor) Run() (string, error) {
 			return "", nil
 		case Ctrl('s'): // Ctrl-S to save
 			content := e.getContent()
+			if err := e.WriteContent([]byte(content)); err != nil {
+				return "", err
+			}
 			fmt.Print("\x1b[2J") // Clear screen
 			fmt.Print("\x1b[H")  // Move cursor to top
 			fmt.Print("\n")      // Add newline for clean exit
@@ -71,6 +113,20 @@ func (e *Editor) Run() (string, error) {
 				e.insertChar(rune(buf[0]))
 			}
 		}
+	}
+}
+
+// loadContent loads content into the editor buffer
+func (e *Editor) loadContent(content []byte) {
+	if len(content) == 0 {
+		e.content = [][]rune{{}}
+		return
+	}
+
+	lines := strings.Split(string(content), "\n")
+	e.content = make([][]rune, len(lines))
+	for i, line := range lines {
+		e.content[i] = []rune(line)
 	}
 }
 

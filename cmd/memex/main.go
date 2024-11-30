@@ -17,6 +17,7 @@ Commands:
   connect <path>            Connect to existing repository
   add <file>               Add a file to repository
   delete <id>              Delete a node
+  edit                     Open editor for a new note
   link <src> <dst> <type>  Create a link between nodes
   links <id>               Show links for a node
   status                   Show repository status
@@ -42,6 +43,12 @@ func main() {
 
 	if flag.NArg() < 1 {
 		// No command provided, open editor for new note
+		if err := memex.OpenRepository(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		defer memex.CloseRepository()
+
 		if err := memex.EditCommand(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
@@ -79,6 +86,16 @@ func main() {
 		defer memex.CloseRepository()
 
 		err = memex.DeleteCommand(args...)
+
+	case "edit":
+		// Try to open repository in current directory
+		if err := memex.OpenRepository(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		defer memex.CloseRepository()
+
+		err = memex.EditCommand(args...)
 
 	case "link":
 		// Try to open repository in current directory

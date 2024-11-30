@@ -1,26 +1,73 @@
 package test
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"memex/internal/memex"
 )
 
-// TestEditor tests the non-interactive parts of the editor
+// TestEditor tests the editor functionality
 func TestEditor(t *testing.T) {
 	t.Run("New Editor", func(t *testing.T) {
-		editor := memex.NewEditor("test_repo.mx")
+		// Create temp dir for test
+		tmpDir := t.TempDir()
+		repoPath := filepath.Join(tmpDir, "test_repo.mx")
+
+		editor := memex.NewEditor(repoPath)
 		if editor == nil {
 			t.Fatal("NewEditor returned nil")
 		}
+
+		// Verify temp file is created
+		tmpFile := editor.GetTempFile()
+		if tmpFile == "" {
+			t.Fatal("No temp file created")
+		}
+
+		// Verify temp file exists
+		if _, err := os.Stat(tmpFile); os.IsNotExist(err) {
+			t.Fatal("Temp file does not exist")
+		}
+
+		// Clean up
+		editor.Close()
+
+		// Verify temp file is cleaned up
+		if _, err := os.Stat(tmpFile); !os.IsNotExist(err) {
+			t.Fatal("Temp file not cleaned up")
+		}
 	})
 
-	// Note: Most editor functionality is interactive and requires terminal input/output
-	// For comprehensive testing, we would need:
-	// 1. Mock terminal input/output
-	// 2. Simulate keystrokes
-	// 3. Capture screen output
-	// These would be integration tests rather than unit tests
+	t.Run("Write and Read Content", func(t *testing.T) {
+		// Create temp dir for test
+		tmpDir := t.TempDir()
+		repoPath := filepath.Join(tmpDir, "test_repo.mx")
+
+		editor := memex.NewEditor(repoPath)
+		if editor == nil {
+			t.Fatal("NewEditor returned nil")
+		}
+		defer editor.Close()
+
+		// Write some content
+		content := []byte("Test content\nLine 2")
+		if err := editor.WriteContent(content); err != nil {
+			t.Fatalf("Writing content: %v", err)
+		}
+
+		// Read it back
+		readContent, err := editor.ReadContent()
+		if err != nil {
+			t.Fatalf("Reading content: %v", err)
+		}
+
+		// Verify content matches
+		if string(readContent) != string(content) {
+			t.Errorf("Content mismatch:\ngot:  %q\nwant: %q", readContent, content)
+		}
+	})
 }
 
 // TestEditorHelpers tests the helper functions
