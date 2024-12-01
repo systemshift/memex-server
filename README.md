@@ -7,6 +7,7 @@ A personal knowledge management system that helps you organize, connect, and exp
 - **DAG-Based Storage**: Content organized as nodes in a directed acyclic graph
 - **Content-Addressable**: All content stored and referenced by hash for integrity and deduplication
 - **Flexible Linking**: Create typed, directional relationships between content
+- **Transaction System**: Cryptographic verification of all graph modifications with hash chain
 - **Dual Interface**: Use either CLI tool or web interface
 - **Single File Storage**: All data contained in one .mx file for easy backup and portability
 
@@ -48,6 +49,9 @@ memex links <id>
 
 # Delete a node
 memex delete <id>
+
+# Verify transaction history
+memex verify
 ```
 
 ### Web Interface
@@ -63,6 +67,7 @@ Then visit `http://localhost:3000` to access the web interface, which provides:
 - Link management
 - Content search
 - Node metadata viewing
+- Transaction history viewing
 
 ## Project Structure
 
@@ -75,6 +80,7 @@ Then visit `http://localhost:3000` to access the web interface, which provides:
 │   └── memex/
 │       ├── core/          # Core types
 │       ├── storage/       # Storage implementation
+│       ├── transaction/   # Transaction system
 │       ├── commands.go    # CLI commands
 │       ├── config.go      # Configuration
 │       └── editor.go      # Text editor
@@ -93,6 +99,7 @@ Then visit `http://localhost:3000` to access the web interface, which provides:
 - Node data (DAG nodes)
 - Edge data (DAG edges)
 - Index for efficient lookup
+- Transaction log for action history
 
 ### Node Types
 
@@ -120,6 +127,14 @@ Then visit `http://localhost:3000` to access the web interface, which provides:
 - Reference counting for chunk management
 - Automatic content deduplication
 - Similar content detection through shared chunks
+
+### Transaction System
+
+- Cryptographic verification of all graph modifications
+- Hash chain of actions (like Git commits)
+- State consistency validation
+- Support for future branching/merging
+- Audit trail of all changes
 
 ## Development
 
@@ -155,6 +170,7 @@ go test ./internal/memex/storage/...
 - [Design Document](docs/DESIGN.md): Architecture and design decisions
 - [Development Guide](docs/DEVELOPMENT.md): Setup and contribution guidelines
 - [Storage Implementation](docs/STORAGE.md): Detailed explanation of the storage system
+- [Transaction System](docs/TRANSACTION.md): Graph modification tracking and verification
 - [Migration Guide](docs/MIGRATION.md): Graph import/export and content migration
 
 ## Contributing
@@ -178,6 +194,9 @@ go test ./internal/memex/storage/...
 - Remote graph synchronization
 - Smarter chunking algorithms
 - Similarity detection tuning
+- Transaction branching and merging
+- Distributed verification
+- Time travel through graph history
 
 ## License
 
