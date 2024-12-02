@@ -42,6 +42,13 @@ func (f *File) Name() string {
 	return f.file.Name()
 }
 
+// Stat returns the FileInfo structure describing file
+func (f *File) Stat() (os.FileInfo, error) {
+	f.mutex.RLock()
+	defer f.mutex.RUnlock()
+	return f.file.Stat()
+}
+
 // Read implements io.Reader
 func (f *File) Read(p []byte) (n int, err error) {
 	f.mutex.RLock()

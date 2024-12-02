@@ -1,9 +1,35 @@
-package storage
+package types
 
-import "time"
+import (
+	"time"
+)
 
-// Version is the current file format version
-const Version uint32 = 1
+// Common types shared between storage packages
+
+// Node represents a node in the graph
+type Node struct {
+	ID       string         `json:"id"`
+	Type     string         `json:"type"`
+	Created  time.Time      `json:"created"`
+	Modified time.Time      `json:"modified"`
+	Meta     map[string]any `json:"meta,omitempty"`
+}
+
+// Link represents a link between nodes
+type Link struct {
+	Source string         `json:"source"`
+	Target string         `json:"target"`
+	Type   string         `json:"type"`
+	Meta   map[string]any `json:"meta,omitempty"`
+}
+
+// IndexEntry represents an index entry in the store
+type IndexEntry struct {
+	ID     [32]byte // SHA-256 hash identifier
+	Offset uint64   // File offset to data
+	Length uint32   // Length of data
+	Flags  uint32   // Entry flags
+}
 
 // Header represents the file header with metadata
 type Header struct {
@@ -31,13 +57,13 @@ type HeaderData struct {
 	ChunkIndex uint64 // Offset to chunk index
 }
 
-// IndexEntry represents an index entry in the store
-type IndexEntry struct {
-	ID     [32]byte // SHA-256 hash identifier
-	Offset uint64   // File offset to data
-	Length uint32   // Length of data
-	Flags  uint32   // Entry flags
-}
+// Constants for storage
+const (
+	Version        uint32 = 1    // Current file format version
+	IndexEntrySize        = 48   // Size of IndexEntry in bytes (hash + offset + length + flags)
+	MaxMetaSize           = 4096 // Maximum metadata size in bytes
+	MaxChunkSize          = 4096 // Maximum chunk size in bytes
+)
 
 // ToData converts a Header to HeaderData
 func (h *Header) ToData() HeaderData {

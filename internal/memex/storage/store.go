@@ -10,8 +10,10 @@ import (
 	"time"
 
 	"memex/internal/memex/core"
+	coretx "memex/internal/memex/core/transaction"
 	"memex/internal/memex/storage/chunk"
 	"memex/internal/memex/storage/common"
+	tx "memex/internal/memex/transaction"
 )
 
 // MXStore represents a Memex repository
@@ -23,6 +25,7 @@ type MXStore struct {
 	nodes      []IndexEntry
 	edges      []IndexEntry
 	chunkIndex []IndexEntry
+	txStore    *tx.ActionStore
 	mutex      sync.RWMutex
 }
 
@@ -60,6 +63,14 @@ func CreateMX(path string) (*MXStore, error) {
 		return nil, fmt.Errorf("writing header: %w", err)
 	}
 
+	// Create transaction store
+	txStore, err := tx.NewActionStore(store)
+	if err != nil {
+		file.Close()
+		return nil, fmt.Errorf("creating transaction store: %w", err)
+	}
+	store.txStore = txStore
+
 	return store, nil
 }
 
@@ -84,22 +95,35 @@ func OpenMX(path string) (*MXStore, error) {
 		return nil, fmt.Errorf("reading header: %w", err)
 	}
 
+	// Create transaction store
+	txStore, err := tx.NewActionStore(store)
+	if err != nil {
+		file.Close()
+		return nil, fmt.Errorf("creating transaction store: %w", err)
+	}
+	store.txStore = txStore
+
 	return store, nil
 }
 
 // GetFile returns the store's file handle
-func (s *MXStore) GetFile() *common.File {
+func (s *MXStore) GetFile() interface{} {
 	return s.file
 }
 
 // GetLockManager returns the store's lock manager
-func (s *MXStore) GetLockManager() *common.LockManager {
+func (s *MXStore) GetLockManager() interface{} {
 	return s.locks
 }
 
 // Path returns the repository path
 func (s *MXStore) Path() string {
 	return s.path
+}
+
+// Storage returns this store as a transaction.Storage interface
+func (s *MXStore) Storage() coretx.Storage {
+	return s
 }
 
 // GetNode retrieves a node by ID
@@ -192,6 +216,16 @@ func (s *MXStore) AddNode(content []byte, nodeType string, meta map[string]any) 
 		return "", fmt.Errorf("marshaling node: %w", err)
 	}
 
+	// Record action
+	if err := s.txStore.RecordAction(coretx.ActionAddNode, map[string]any{
+		"type":    nodeType,
+		"content": contentHashStr,
+		"chunks":  chunkHashes,
+		"meta":    meta,
+	}); err != nil {
+		return "", fmt.Errorf("recording action: %w", err)
+	}
+
 	// Write node data
 	offset, err := s.writeData(data)
 	if err != nil {
@@ -223,6 +257,14 @@ func (s *MXStore) DeleteNode(id string) error {
 	for _, entry := range s.nodes {
 		if fmt.Sprintf("%x", entry.ID[:]) == id {
 			found = true
+
+			// Record action
+			if err := s.txStore.RecordAction(coretx.ActionDeleteNode, map[string]any{
+				"id": id,
+			}); err != nil {
+				return fmt.Errorf("recording action: %w", err)
+			}
+
 			continue
 		}
 		newNodes = append(newNodes, entry)
@@ -288,6 +330,16 @@ func (s *MXStore) AddLink(sourceID, targetID, linkType string, meta map[string]a
 		return fmt.Errorf("marshaling link: %w", err)
 	}
 
+	// Record action
+	if err := s.txStore.RecordAction(coretx.ActionAddLink, map[string]any{
+		"source": sourceID,
+		"target": targetID,
+		"type":   linkType,
+		"meta":   meta,
+	}); err != nil {
+		return fmt.Errorf("recording action: %w", err)
+	}
+
 	// Write link data
 	offset, err := s.writeData(data)
 	if err != nil {
@@ -332,6 +384,16 @@ func (s *MXStore) DeleteLink(sourceID, targetID, linkType string) error {
 		// Check if this is the edge we want to delete
 		if link.Source == sourceID && link.Target == targetID && link.Type == linkType {
 			found = true
+
+			// Record action
+			if err := s.txStore.RecordAction(coretx.ActionDeleteLink, map[string]any{
+				"source": sourceID,
+				"target": targetID,
+				"type":   linkType,
+			}); err != nil {
+				return fmt.Errorf("recording action: %w", err)
+			}
+
 			continue
 		}
 
@@ -395,6 +457,14 @@ func (s *MXStore) StoreChunk(content []byte) (string, error) {
 		if fmt.Sprintf("%x", entry.ID[:]) == hashStr {
 			return hashStr, nil
 		}
+	}
+
+	// Record action
+	if err := s.txStore.RecordAction(coretx.ActionAddChunk, map[string]any{
+		"hash": hashStr,
+		"size": len(content),
+	}); err != nil {
+		return "", fmt.Errorf("recording action: %w", err)
 	}
 
 	// Write chunk data
@@ -478,6 +548,11 @@ func (s *MXStore) Close() error {
 	// Sync file to ensure changes are written
 	if err := s.file.Sync(); err != nil {
 		return fmt.Errorf("syncing file: %w", err)
+	}
+
+	// Close transaction store
+	if err := s.txStore.Close(); err != nil {
+		return fmt.Errorf("closing transaction store: %w", err)
 	}
 
 	// Close file

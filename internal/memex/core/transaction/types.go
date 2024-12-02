@@ -5,23 +5,28 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
-
-	coretx "memex/internal/memex/core/transaction"
 )
 
-// Constants for size limits
+// ActionType represents different types of graph modifications
+type ActionType string
+
 const (
-	MaxMetaSize = 4096    // Maximum metadata size in bytes (4KB)
-	MaxDataSize = 1 << 20 // Maximum data size in bytes (1MB)
+	ActionAddNode    ActionType = "AddNode"
+	ActionDeleteNode ActionType = "DeleteNode"
+	ActionAddLink    ActionType = "AddLink"
+	ActionDeleteLink ActionType = "DeleteLink"
+	ActionAddChunk   ActionType = "AddChunk"
+	ActionModifyNode ActionType = "ModifyNode"
+	ActionModifyLink ActionType = "ModifyLink"
 )
 
 // Action represents a single graph modification
 type Action struct {
-	Type      coretx.ActionType `json:"type"`       // Type of action
-	Payload   map[string]any    `json:"payload"`    // Action-specific data
-	Timestamp time.Time         `json:"timestamp"`  // When action occurred
-	PrevHash  [32]byte          `json:"prev_hash"`  // Hash of previous action
-	StateHash [32]byte          `json:"state_hash"` // Hash of affected nodes/edges after action
+	Type      ActionType     `json:"type"`       // Type of action
+	Payload   map[string]any `json:"payload"`    // Action-specific data
+	Timestamp time.Time      `json:"timestamp"`  // When action occurred
+	PrevHash  [32]byte       `json:"prev_hash"`  // Hash of previous action
+	StateHash [32]byte       `json:"state_hash"` // Hash of affected nodes/edges after action
 }
 
 // Operation represents a specific operation within an action
@@ -34,15 +39,31 @@ type Operation struct {
 	Checksum uint32         `json:"checksum"` // Data checksum
 }
 
+// Constants for operation types
+const (
+	OpTypeNone   uint32 = 0
+	OpTypeCreate uint32 = 1
+	OpTypeUpdate uint32 = 2
+	OpTypeDelete uint32 = 3
+	OpTypeWrite  uint32 = 4
+	OpTypeModify uint32 = 5
+)
+
+// Constants for size limits
+const (
+	MaxMetaSize = 4096    // Maximum metadata size in bytes (4KB)
+	MaxDataSize = 1 << 20 // Maximum data size in bytes (1MB)
+)
+
 // Hash computes the cryptographic hash of the action
 func (a *Action) Hash() ([32]byte, error) {
 	// Marshal action to JSON for consistent hashing
 	data, err := json.Marshal(struct {
-		Type      coretx.ActionType `json:"type"`
-		Payload   map[string]any    `json:"payload"`
-		Timestamp time.Time         `json:"timestamp"`
-		PrevHash  [32]byte          `json:"prev_hash"`
-		StateHash [32]byte          `json:"state_hash"`
+		Type      ActionType     `json:"type"`
+		Payload   map[string]any `json:"payload"`
+		Timestamp time.Time      `json:"timestamp"`
+		PrevHash  [32]byte       `json:"prev_hash"`
+		StateHash [32]byte       `json:"state_hash"`
 	}{
 		Type:      a.Type,
 		Payload:   a.Payload,
@@ -81,7 +102,7 @@ func (a *Action) Verify(prevAction *Action) (bool, error) {
 // ValidateOperation validates an operation
 func (o *Operation) ValidateOperation() error {
 	// Check operation type
-	if o.Type == coretx.OpTypeNone {
+	if o.Type == OpTypeNone {
 		return fmt.Errorf("invalid operation type")
 	}
 
@@ -130,14 +151,3 @@ func NewOperation(opType uint32, target string, action string, data []byte, meta
 
 	return op, nil
 }
-
-// Action type constants
-const (
-	ActionAddNode    = coretx.ActionAddNode
-	ActionDeleteNode = coretx.ActionDeleteNode
-	ActionAddLink    = coretx.ActionAddLink
-	ActionDeleteLink = coretx.ActionDeleteLink
-	ActionAddChunk   = coretx.ActionAddChunk
-	ActionModifyNode = coretx.ActionModifyNode
-	ActionModifyLink = coretx.ActionModifyLink
-)

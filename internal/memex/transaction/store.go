@@ -1,6 +1,7 @@
 package transaction
 
 import (
+	"crypto/sha256"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -10,19 +11,20 @@ import (
 	"sync"
 	"time"
 
-	"memex/internal/memex/storage"
+	"memex/internal/memex/core/transaction"
+	"memex/internal/memex/storage/common"
 )
 
 // ActionStore manages the history of actions in the graph
 type ActionStore struct {
-	store    *storage.MXStore // Reference to main storage
-	file     *os.File         // Action log file
-	mu       sync.RWMutex     // Mutex for thread safety
-	lastHash [32]byte         // Hash of last action
+	store    transaction.Storage // Reference to storage interface
+	file     *common.File        // Action log file
+	mu       sync.RWMutex        // Mutex for thread safety
+	lastHash [32]byte            // Hash of last action
 }
 
 // NewActionStore creates a new action store
-func NewActionStore(store *storage.MXStore) (*ActionStore, error) {
+func NewActionStore(store transaction.Storage) (*ActionStore, error) {
 	// Create actions directory next to .mx file
 	mxPath := store.Path()
 	actionsPath := filepath.Join(filepath.Dir(mxPath), ".actions")
@@ -32,7 +34,7 @@ func NewActionStore(store *storage.MXStore) (*ActionStore, error) {
 
 	// Open actions log file
 	logPath := filepath.Join(actionsPath, "log")
-	file, err := os.OpenFile(logPath, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0644)
+	file, err := common.OpenFile(logPath, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0644)
 	if err != nil {
 		return nil, fmt.Errorf("opening action log: %w", err)
 	}
@@ -69,12 +71,12 @@ func (as *ActionStore) Close() error {
 }
 
 // RecordAction records a new action in the store
-func (as *ActionStore) RecordAction(actionType ActionType, payload map[string]any) error {
+func (as *ActionStore) RecordAction(actionType transaction.ActionType, payload map[string]any) error {
 	as.mu.Lock()
 	defer as.mu.Unlock()
 
 	// Create new action
-	action := &Action{
+	action := &transaction.Action{
 		Type:      actionType,
 		Payload:   payload,
 		Timestamp: time.Now(),
@@ -103,11 +105,11 @@ func (as *ActionStore) RecordAction(actionType ActionType, payload map[string]an
 }
 
 // GetHistory returns all actions in chronological order
-func (as *ActionStore) GetHistory() ([]*Action, error) {
+func (as *ActionStore) GetHistory() ([]*transaction.Action, error) {
 	as.mu.RLock()
 	defer as.mu.RUnlock()
 
-	var actions []*Action
+	var actions []*transaction.Action
 
 	// Seek to start of file
 	if _, err := as.file.Seek(0, io.SeekStart); err != nil {
@@ -136,7 +138,7 @@ func (as *ActionStore) VerifyHistory() (bool, error) {
 		return false, fmt.Errorf("getting history: %w", err)
 	}
 
-	var prevAction *Action
+	var prevAction *transaction.Action
 	for _, action := range actions {
 		valid, err := action.Verify(prevAction)
 		if err != nil {
@@ -153,7 +155,7 @@ func (as *ActionStore) VerifyHistory() (bool, error) {
 
 // Internal methods
 
-func (as *ActionStore) writeAction(action *Action) error {
+func (as *ActionStore) writeAction(action *transaction.Action) error {
 	// Marshal action to JSON
 	data, err := json.Marshal(action)
 	if err != nil {
@@ -173,7 +175,7 @@ func (as *ActionStore) writeAction(action *Action) error {
 	return nil
 }
 
-func (as *ActionStore) readAction() (*Action, error) {
+func (as *ActionStore) readAction() (*transaction.Action, error) {
 	// Read length prefix
 	var length uint32
 	if err := binary.Read(as.file, binary.LittleEndian, &length); err != nil {
@@ -187,7 +189,7 @@ func (as *ActionStore) readAction() (*Action, error) {
 	}
 
 	// Unmarshal action
-	var action Action
+	var action transaction.Action
 	if err := json.Unmarshal(data, &action); err != nil {
 		return nil, fmt.Errorf("unmarshaling action: %w", err)
 	}
@@ -195,7 +197,7 @@ func (as *ActionStore) readAction() (*Action, error) {
 	return &action, nil
 }
 
-func (as *ActionStore) readLastAction() (*Action, error) {
+func (as *ActionStore) readLastAction() (*transaction.Action, error) {
 	// Get file size
 	info, err := as.file.Stat()
 	if err != nil {
@@ -236,10 +238,41 @@ func (as *ActionStore) readLastAction() (*Action, error) {
 	return nil, fmt.Errorf("no valid actions found")
 }
 
-func (as *ActionStore) calculateStateHash(action *Action) ([32]byte, error) {
-	// This is a placeholder - actual implementation would:
-	// 1. Identify affected nodes/edges based on action type and payload
-	// 2. Get their current state from storage
-	// 3. Calculate combined hash of their state
-	return [32]byte{}, nil
+func (as *ActionStore) calculateStateHash(action *transaction.Action) ([32]byte, error) {
+	// Get affected nodes/edges from payload
+	affectedIDs := make([]string, 0)
+	if nodes, ok := action.Payload["nodes"].([]string); ok {
+		affectedIDs = append(affectedIDs, nodes...)
+	}
+	if edges, ok := action.Payload["edges"].([]string); ok {
+		affectedIDs = append(affectedIDs, edges...)
+	}
+
+	// Get current state of affected items
+	var state []byte
+	for _, id := range affectedIDs {
+		// Try as node first
+		if node, err := as.store.GetNode(id); err == nil {
+			data, err := json.Marshal(node)
+			if err != nil {
+				continue
+			}
+			state = append(state, data...)
+			continue
+		}
+
+		// Try as edge
+		if links, err := as.store.GetLinks(id); err == nil {
+			for _, link := range links {
+				data, err := json.Marshal(link)
+				if err != nil {
+					continue
+				}
+				state = append(state, data...)
+			}
+		}
+	}
+
+	// Calculate combined hash
+	return sha256.Sum256(state), nil
 }
