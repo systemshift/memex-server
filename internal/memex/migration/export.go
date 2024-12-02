@@ -1,11 +1,10 @@
 package migration
 
 import (
-	"crypto/sha256"
+	"archive/tar"
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"time"
 
@@ -16,16 +15,14 @@ import (
 // Exporter handles repository exports
 type Exporter struct {
 	store  *storage.MXStore
-	writer *json.Encoder
+	writer io.Writer
 }
 
 // NewExporter creates a new exporter
 func NewExporter(store *storage.MXStore, w io.Writer) *Exporter {
-	encoder := json.NewEncoder(w)
-	encoder.SetIndent("", "  ")
 	return &Exporter{
 		store:  store,
-		writer: encoder,
+		writer: w,
 	}
 }
 
@@ -33,152 +30,159 @@ func NewExporter(store *storage.MXStore, w io.Writer) *Exporter {
 func (e *Exporter) Export() error {
 	fmt.Printf("Starting full export from %s\n", e.store.Path())
 
-	// Create export
-	export := &Export{
+	// Create tar writer
+	tw := tar.NewWriter(e.writer)
+	defer tw.Close()
+
+	// Create manifest
+	manifest := ExportManifest{
 		Version:  Version,
 		Created:  time.Now(),
 		Modified: time.Now(),
-		Nodes:    make([]*core.Node, 0),
-		Links:    make([]*core.Link, 0),
-		Chunks:   make(map[string]bool),
 	}
 
-	// Export all nodes
+	// Export nodes
 	fmt.Println("Exporting nodes...")
-	for _, entry := range e.store.Nodes() {
-		id := fmt.Sprintf("%x", entry.ID)
-		if err := exportNode(e.store, id, export, make(map[string]bool)); err != nil {
+	nodes := make(map[string]*core.Node)
+	chunks := make(map[string]bool)
+
+	for _, node := range e.store.Nodes() {
+		id := fmt.Sprintf("%x", node.ID)
+		if err := exportNode(e.store, id, tw, nodes, chunks); err != nil {
 			return fmt.Errorf("exporting nodes: %w", err)
 		}
+		manifest.Nodes++
 	}
-	fmt.Printf("Exported %d nodes\n", len(export.Nodes))
-
-	// Export all links
-	fmt.Println("Exporting edges...")
-	for _, entry := range e.store.Nodes() {
-		id := fmt.Sprintf("%x", entry.ID)
-		if err := exportLinks(e.store, id, export); err != nil {
-			return fmt.Errorf("exporting edges: %w", err)
-		}
-	}
-	fmt.Printf("Exported %d edges\n", len(export.Links))
-
-	// Export chunks
-	fmt.Println("Exporting chunks...")
-	if err := exportChunks(e.store, export); err != nil {
-		return fmt.Errorf("exporting chunks: %w", err)
-	}
-
-	// Write export
-	return e.writer.Encode(export)
-}
-
-// ExportSubgraph exports a subgraph starting from the given nodes
-func (e *Exporter) ExportSubgraph(nodes []string, depth int) error {
-	opts := ExportOptions{Depth: depth}
-	fmt.Printf("Starting subgraph export from %s\n", e.store.Path())
-	if opts.Depth == 0 {
-		fmt.Println("Depth 0: exporting only seed nodes")
-	} else {
-		fmt.Printf("Moving to depth %d\n", opts.Depth)
-	}
-
-	// Create export
-	export := &Export{
-		Version:  Version,
-		Created:  time.Now(),
-		Modified: time.Now(),
-		Nodes:    make([]*core.Node, 0),
-		Links:    make([]*core.Link, 0),
-		Chunks:   make(map[string]bool),
-	}
-
-	// Track visited nodes to avoid cycles
-	visited := make(map[string]bool)
-
-	// Export seed nodes
-	fmt.Println("Exporting nodes...")
-	for _, id := range nodes {
-		if err := exportNode(e.store, id, export, visited); err != nil {
-			return fmt.Errorf("exporting nodes: %w", err)
-		}
-	}
-	fmt.Printf("Exported %d nodes\n", len(export.Nodes))
+	fmt.Printf("Exported %d nodes\n", manifest.Nodes)
 
 	// Export links
 	fmt.Println("Exporting edges...")
-	for _, id := range nodes {
-		if err := exportLinks(e.store, id, export); err != nil {
+	for id := range nodes {
+		if err := exportLinks(e.store, id, tw, &manifest); err != nil {
 			return fmt.Errorf("exporting edges: %w", err)
 		}
 	}
-	fmt.Printf("Exported %d edges\n", len(export.Links))
+	fmt.Printf("Exported %d edges\n", manifest.Edges)
 
 	// Export chunks
 	fmt.Println("Exporting chunks...")
-	if err := exportChunks(e.store, export); err != nil {
-		return fmt.Errorf("exporting chunks: %w", err)
+	for chunk := range chunks {
+		if err := exportChunk(e.store, chunk, tw); err != nil {
+			return fmt.Errorf("exporting chunks: %w", err)
+		}
+		manifest.Chunks++
 	}
+	fmt.Printf("Exported %d chunks\n", manifest.Chunks)
 
-	// Write export
-	return e.writer.Encode(export)
-}
-
-// SaveExport saves an export to a file
-func SaveExport(export *Export, path string) error {
-	// Create output directory if needed
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return fmt.Errorf("creating output directory: %w", err)
-	}
-
-	// Create file
-	file, err := os.Create(path)
+	// Write manifest
+	manifestData, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
-		return fmt.Errorf("creating file: %w", err)
+		return fmt.Errorf("marshaling manifest: %w", err)
 	}
-	defer file.Close()
 
-	// Create encoder
-	encoder := json.NewEncoder(file)
-	encoder.SetIndent("", "  ")
+	header := &tar.Header{
+		Name:     "manifest.json",
+		Size:     int64(len(manifestData)),
+		Mode:     0644,
+		ModTime:  time.Now(),
+		Typeflag: tar.TypeReg,
+	}
 
-	// Write export
-	if err := encoder.Encode(export); err != nil {
-		return fmt.Errorf("encoding export: %w", err)
+	if err := tw.WriteHeader(header); err != nil {
+		return fmt.Errorf("writing manifest header: %w", err)
+	}
+
+	if _, err := tw.Write(manifestData); err != nil {
+		return fmt.Errorf("writing manifest: %w", err)
 	}
 
 	return nil
 }
 
-// LoadExport loads an export from a file
-func LoadExport(path string) (*Export, error) {
-	// Open file
-	file, err := os.Open(path)
+// ExportSubgraph exports a subgraph starting from the given nodes
+func (e *Exporter) ExportSubgraph(nodes []string, depth int) error {
+	fmt.Printf("Starting subgraph export from %s\n", e.store.Path())
+	if depth == 0 {
+		fmt.Println("Depth 0: exporting only seed nodes")
+	} else {
+		fmt.Printf("Moving to depth %d\n", depth)
+	}
+
+	// Create tar writer
+	tw := tar.NewWriter(e.writer)
+	defer tw.Close()
+
+	// Create manifest
+	manifest := ExportManifest{
+		Version:  Version,
+		Created:  time.Now(),
+		Modified: time.Now(),
+	}
+
+	// Export seed nodes
+	fmt.Println("Exporting nodes...")
+	exportedNodes := make(map[string]*core.Node)
+	chunks := make(map[string]bool)
+
+	for _, id := range nodes {
+		if err := exportNode(e.store, id, tw, exportedNodes, chunks); err != nil {
+			return fmt.Errorf("exporting nodes: %w", err)
+		}
+		manifest.Nodes++
+	}
+	fmt.Printf("Exported %d nodes\n", manifest.Nodes)
+
+	// Export links
+	fmt.Println("Exporting edges...")
+	for id := range exportedNodes {
+		if err := exportLinks(e.store, id, tw, &manifest); err != nil {
+			return fmt.Errorf("exporting edges: %w", err)
+		}
+	}
+	fmt.Printf("Exported %d edges\n", manifest.Edges)
+
+	// Export chunks
+	fmt.Println("Exporting chunks...")
+	for chunk := range chunks {
+		if err := exportChunk(e.store, chunk, tw); err != nil {
+			return fmt.Errorf("exporting chunks: %w", err)
+		}
+		manifest.Chunks++
+	}
+	fmt.Printf("Exported %d chunks\n", manifest.Chunks)
+
+	// Write manifest
+	manifestData, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
-		return nil, fmt.Errorf("opening file: %w", err)
-	}
-	defer file.Close()
-
-	// Create decoder
-	decoder := json.NewDecoder(file)
-
-	// Read export
-	var export Export
-	if err := decoder.Decode(&export); err != nil {
-		return nil, fmt.Errorf("decoding export: %w", err)
+		return fmt.Errorf("marshaling manifest: %w", err)
 	}
 
-	return &export, nil
+	header := &tar.Header{
+		Name:     "manifest.json",
+		Size:     int64(len(manifestData)),
+		Mode:     0644,
+		ModTime:  time.Now(),
+		Typeflag: tar.TypeReg,
+	}
+
+	if err := tw.WriteHeader(header); err != nil {
+		return fmt.Errorf("writing manifest header: %w", err)
+	}
+
+	if _, err := tw.Write(manifestData); err != nil {
+		return fmt.Errorf("writing manifest: %w", err)
+	}
+
+	return nil
 }
 
 // Internal functions
 
-func exportNode(store *storage.MXStore, id string, export *Export, visited map[string]bool) error {
-	// Skip if already visited
-	if visited[id] {
+func exportNode(store *storage.MXStore, id string, tw *tar.Writer, nodes map[string]*core.Node, chunks map[string]bool) error {
+	// Skip if already exported
+	if _, exists := nodes[id]; exists {
 		return nil
 	}
-	visited[id] = true
 
 	// Get node
 	fmt.Printf("Exporting node %s\n", id)
@@ -187,20 +191,56 @@ func exportNode(store *storage.MXStore, id string, export *Export, visited map[s
 		return fmt.Errorf("getting node: %w", err)
 	}
 
-	// Add node to export
-	export.Nodes = append(export.Nodes, node)
+	// Add node to map
+	nodes[id] = node
 
-	// Add chunks to export
-	if chunks, ok := node.Meta["chunks"].([]string); ok {
-		for _, chunk := range chunks {
-			export.Chunks[chunk] = true
+	// Add chunks to map
+	if nodeChunks, ok := node.Meta["chunks"]; ok {
+		switch v := nodeChunks.(type) {
+		case []string:
+			for _, chunk := range v {
+				chunks[chunk] = true
+			}
+		case []interface{}:
+			for _, chunk := range v {
+				if str, ok := chunk.(string); ok {
+					chunks[str] = true
+				}
+			}
 		}
+	}
+
+	// Get content hash
+	if contentHash, ok := node.Meta["content"].(string); ok {
+		chunks[contentHash] = true
+	}
+
+	// Write node to tar
+	data, err := json.MarshalIndent(node, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshaling node: %w", err)
+	}
+
+	header := &tar.Header{
+		Name:     filepath.Join("nodes", id),
+		Size:     int64(len(data)),
+		Mode:     0644,
+		ModTime:  time.Now(),
+		Typeflag: tar.TypeReg,
+	}
+
+	if err := tw.WriteHeader(header); err != nil {
+		return fmt.Errorf("writing node header: %w", err)
+	}
+
+	if _, err := tw.Write(data); err != nil {
+		return fmt.Errorf("writing node data: %w", err)
 	}
 
 	return nil
 }
 
-func exportLinks(store *storage.MXStore, id string, export *Export) error {
+func exportLinks(store *storage.MXStore, id string, tw *tar.Writer, manifest *ExportManifest) error {
 	// Get links
 	fmt.Printf("Getting links for node %s\n", id)
 	links, err := store.GetLinks(id)
@@ -208,26 +248,58 @@ func exportLinks(store *storage.MXStore, id string, export *Export) error {
 		return fmt.Errorf("getting links: %w", err)
 	}
 
-	// Add links to export
-	export.Links = append(export.Links, links...)
+	// Write each link
+	for _, link := range links {
+		data, err := json.MarshalIndent(link, "", "  ")
+		if err != nil {
+			return fmt.Errorf("marshaling link: %w", err)
+		}
+
+		header := &tar.Header{
+			Name:     filepath.Join("edges", fmt.Sprintf("%s-%s-%s", link.Source, link.Type, link.Target)),
+			Size:     int64(len(data)),
+			Mode:     0644,
+			ModTime:  time.Now(),
+			Typeflag: tar.TypeReg,
+		}
+
+		if err := tw.WriteHeader(header); err != nil {
+			return fmt.Errorf("writing link header: %w", err)
+		}
+
+		if _, err := tw.Write(data); err != nil {
+			return fmt.Errorf("writing link data: %w", err)
+		}
+
+		manifest.Edges++
+	}
 
 	return nil
 }
 
-func exportChunks(store *storage.MXStore, export *Export) error {
-	// Export each chunk
-	for chunk := range export.Chunks {
-		fmt.Printf("Exporting chunk %s\n", chunk)
-		content, err := store.GetChunk(chunk)
-		if err != nil {
-			return fmt.Errorf("getting chunk content: %w", err)
-		}
+func exportChunk(store *storage.MXStore, hash string, tw *tar.Writer) error {
+	// Get chunk content
+	fmt.Printf("Exporting chunk %s\n", hash)
+	content, err := store.GetChunk(hash)
+	if err != nil {
+		return fmt.Errorf("getting chunk content: %w", err)
+	}
 
-		// Verify chunk hash
-		hash := sha256.Sum256(content)
-		if fmt.Sprintf("%x", hash) != chunk {
-			return fmt.Errorf("chunk hash mismatch: got %x want %s", hash, chunk)
-		}
+	// Write chunk to tar
+	header := &tar.Header{
+		Name:     filepath.Join("chunks", hash),
+		Size:     int64(len(content)),
+		Mode:     0644,
+		ModTime:  time.Now(),
+		Typeflag: tar.TypeReg,
+	}
+
+	if err := tw.WriteHeader(header); err != nil {
+		return fmt.Errorf("writing chunk header: %w", err)
+	}
+
+	if _, err := tw.Write(content); err != nil {
+		return fmt.Errorf("writing chunk data: %w", err)
 	}
 
 	return nil

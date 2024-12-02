@@ -12,6 +12,7 @@ type LockManager struct {
 	indexLock  sync.RWMutex // Lock for index operations
 	chunkLock  sync.RWMutex // Lock for chunk operations
 	headerLock sync.RWMutex // Lock for header operations
+	txLock     sync.RWMutex // Lock for transaction operations
 }
 
 // NewLockManager creates a new lock manager
@@ -100,5 +101,26 @@ func (lm *LockManager) WithHeaderLock(fn func() error) error {
 func (lm *LockManager) WithHeaderRLock(fn func() error) error {
 	lm.headerLock.RLock()
 	defer lm.headerLock.RUnlock()
+	return fn()
+}
+
+// WithTxLock executes a function while holding the transaction lock
+func (lm *LockManager) WithTxLock(fn func() error) error {
+	lm.txLock.Lock()
+	defer lm.txLock.Unlock()
+	return fn()
+}
+
+// WithTxRLock executes a function while holding the transaction read lock
+func (lm *LockManager) WithTxRLock(fn func() error) error {
+	lm.txLock.RLock()
+	defer lm.txLock.RUnlock()
+	return fn()
+}
+
+// WithTxLockString executes a function while holding the transaction lock
+func (lm *LockManager) WithTxLockString(fn func() (string, error)) (string, error) {
+	lm.txLock.Lock()
+	defer lm.txLock.Unlock()
 	return fn()
 }

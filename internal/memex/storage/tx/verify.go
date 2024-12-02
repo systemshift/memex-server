@@ -113,12 +113,6 @@ func (v *Verifier) VerifyLogConsistency() error {
 // Internal verification methods
 
 func (v *Verifier) verifyTxIntegrity(tx *TxData) error {
-	// Verify ID matches content
-	expectedID := sha256.Sum256(append([]byte{byte(tx.Type)}, tx.Data...))
-	if tx.ID != expectedID {
-		return fmt.Errorf("transaction ID mismatch")
-	}
-
 	// Verify metadata size
 	if tx.MetaLen > MaxMetaSize {
 		return fmt.Errorf("metadata too large: %d bytes (max %d)", tx.MetaLen, MaxMetaSize)
@@ -137,6 +131,18 @@ func (v *Verifier) verifyTxIntegrity(tx *TxData) error {
 	// Verify data length matches content
 	if tx.DataLen != uint32(len(tx.Data)) {
 		return fmt.Errorf("data length mismatch: header %d, actual %d", tx.DataLen, len(tx.Data))
+	}
+
+	// Calculate expected ID using all fields that were used to create it
+	var idData []byte
+	idData = append(idData, byte(tx.Type))
+	idData = append(idData, byte(tx.Status))
+	idData = append(idData, tx.Meta...)
+	idData = append(idData, tx.Data...)
+	expectedID := sha256.Sum256(idData)
+
+	if tx.ID != expectedID {
+		return fmt.Errorf("transaction ID mismatch")
 	}
 
 	return nil

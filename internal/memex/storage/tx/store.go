@@ -17,9 +17,21 @@ type Store struct {
 }
 
 // NewStore creates a new transaction store
-func NewStore(file *common.File, locks *common.LockManager) *Store {
+func NewStore(mainFile *common.File, locks *common.LockManager) *Store {
+	// Create transaction file next to main file
+	txPath := mainFile.Name() + ".tx"
+	txFile, err := common.OpenFile(txPath, os.O_RDWR|os.O_CREATE, 0644)
+	if err != nil {
+		// If we can't create the transaction file, fall back to using the main file
+		return &Store{
+			file:  mainFile,
+			index: NewIndex(),
+			locks: locks,
+		}
+	}
+
 	return &Store{
-		file:  file,
+		file:  txFile,
 		index: NewIndex(),
 		locks: locks,
 	}
@@ -27,7 +39,7 @@ func NewStore(file *common.File, locks *common.LockManager) *Store {
 
 // Begin starts a new transaction
 func (s *Store) Begin(txType uint32, meta map[string]any) (string, error) {
-	return s.locks.WithChunkLockString(func() (string, error) {
+	return s.locks.WithTxLockString(func() (string, error) {
 		// Create transaction data
 		tx := TxData{
 			Type:    txType,
@@ -50,7 +62,7 @@ func (s *Store) Begin(txType uint32, meta map[string]any) (string, error) {
 			tx.Meta = metaBytes
 		}
 
-		// Create ID
+		// Create ID after setting all fields
 		if err := tx.CreateID(); err != nil {
 			return "", fmt.Errorf("creating transaction ID: %w", err)
 		}
@@ -72,13 +84,18 @@ func (s *Store) Begin(txType uint32, meta map[string]any) (string, error) {
 		// Add to index
 		s.index.Add(entry)
 
+		// Sync file to ensure changes are written
+		if err := s.file.Sync(); err != nil {
+			return "", fmt.Errorf("syncing file: %w", err)
+		}
+
 		return fmt.Sprintf("%x", tx.ID), nil
 	})
 }
 
 // AddOperation adds an operation to a transaction
 func (s *Store) AddOperation(txID string, op *Operation) error {
-	return s.locks.WithChunkLock(func() error {
+	return s.locks.WithTxLock(func() error {
 		// Find transaction
 		entry, found := s.index.FindByString(txID)
 		if !found {
@@ -123,13 +140,18 @@ func (s *Store) AddOperation(txID string, op *Operation) error {
 		s.index.Remove(tx.ID)
 		s.index.Add(entry)
 
+		// Sync file to ensure changes are written
+		if err := s.file.Sync(); err != nil {
+			return fmt.Errorf("syncing file: %w", err)
+		}
+
 		return nil
 	})
 }
 
 // Commit commits a transaction
 func (s *Store) Commit(txID string) error {
-	return s.locks.WithChunkLock(func() error {
+	return s.locks.WithTxLock(func() error {
 		// Find transaction
 		entry, found := s.index.FindByString(txID)
 		if !found {
@@ -141,9 +163,31 @@ func (s *Store) Commit(txID string) error {
 			return fmt.Errorf("transaction is not pending")
 		}
 
+		// Read transaction data
+		tx, err := s.readTx(entry)
+		if err != nil {
+			return fmt.Errorf("reading transaction: %w", err)
+		}
+
 		// Update status
-		if !s.index.UpdateStatus(entry.ID, TxStatusCommitted) {
-			return fmt.Errorf("failed to update transaction status")
+		tx.Status = TxStatusCommitted
+		entry.Flags = TxStatusCommitted
+
+		// Write updated transaction
+		offset, err := s.writeTx(*tx)
+		if err != nil {
+			return fmt.Errorf("writing transaction: %w", err)
+		}
+
+		// Update index entry
+		entry.Offset = offset
+		entry.Length = uint32(tx.Size())
+		s.index.Remove(tx.ID)
+		s.index.Add(entry)
+
+		// Sync file to ensure changes are written
+		if err := s.file.Sync(); err != nil {
+			return fmt.Errorf("syncing file: %w", err)
 		}
 
 		return nil
@@ -152,7 +196,7 @@ func (s *Store) Commit(txID string) error {
 
 // Rollback rolls back a transaction
 func (s *Store) Rollback(txID string) error {
-	return s.locks.WithChunkLock(func() error {
+	return s.locks.WithTxLock(func() error {
 		// Find transaction
 		entry, found := s.index.FindByString(txID)
 		if !found {
@@ -164,9 +208,31 @@ func (s *Store) Rollback(txID string) error {
 			return fmt.Errorf("transaction is not pending")
 		}
 
+		// Read transaction data
+		tx, err := s.readTx(entry)
+		if err != nil {
+			return fmt.Errorf("reading transaction: %w", err)
+		}
+
 		// Update status
-		if !s.index.UpdateStatus(entry.ID, TxStatusRollback) {
-			return fmt.Errorf("failed to update transaction status")
+		tx.Status = TxStatusRollback
+		entry.Flags = TxStatusRollback
+
+		// Write updated transaction
+		offset, err := s.writeTx(*tx)
+		if err != nil {
+			return fmt.Errorf("writing transaction: %w", err)
+		}
+
+		// Update index entry
+		entry.Offset = offset
+		entry.Length = uint32(tx.Size())
+		s.index.Remove(tx.ID)
+		s.index.Add(entry)
+
+		// Sync file to ensure changes are written
+		if err := s.file.Sync(); err != nil {
+			return fmt.Errorf("syncing file: %w", err)
 		}
 
 		return nil
@@ -176,7 +242,7 @@ func (s *Store) Rollback(txID string) error {
 // Get retrieves a transaction by ID
 func (s *Store) Get(txID string) (*TxData, error) {
 	var result *TxData
-	err := s.locks.WithChunkLock(func() error {
+	err := s.locks.WithTxLock(func() error {
 		// Find transaction
 		entry, found := s.index.FindByString(txID)
 		if !found {
@@ -197,16 +263,21 @@ func (s *Store) Get(txID string) (*TxData, error) {
 
 // LoadIndex loads the transaction index from the file
 func (s *Store) LoadIndex(offset uint64, count uint32) error {
-	return s.locks.WithChunkLock(func() error {
+	return s.locks.WithTxLock(func() error {
 		return s.index.Load(s.file, offset, count)
 	})
 }
 
 // SaveIndex saves the transaction index to the file
 func (s *Store) SaveIndex(offset uint64) error {
-	return s.locks.WithChunkLock(func() error {
+	return s.locks.WithTxLock(func() error {
 		return s.index.Save(s.file, offset)
 	})
+}
+
+// Close closes the transaction store
+func (s *Store) Close() error {
+	return s.file.Close()
 }
 
 // Internal methods
@@ -218,40 +289,66 @@ func (s *Store) writeTx(tx TxData) (uint64, error) {
 		return 0, fmt.Errorf("seeking to end: %w", err)
 	}
 
+	// Ensure 8-byte alignment for transaction start
+	if pos%8 != 0 {
+		padding := make([]byte, 8-(pos%8))
+		if _, err := s.file.WriteAt(padding, pos); err != nil {
+			return 0, fmt.Errorf("writing padding: %w", err)
+		}
+		pos += int64(len(padding))
+	}
+
+	startPos := pos
+
 	// Write transaction magic
 	if err := s.file.WriteUint32(common.TxMagic); err != nil {
 		return 0, fmt.Errorf("writing magic: %w", err)
 	}
+	pos += 4
 
 	// Write transaction ID
 	if err := s.file.WriteBytes(tx.ID[:]); err != nil {
 		return 0, fmt.Errorf("writing ID: %w", err)
 	}
+	pos += 32
 
 	// Write transaction type
 	if err := s.file.WriteUint32(tx.Type); err != nil {
 		return 0, fmt.Errorf("writing type: %w", err)
 	}
+	pos += 4
 
 	// Write timestamp
 	if err := s.file.WriteUint64(uint64(tx.Created)); err != nil {
 		return 0, fmt.Errorf("writing created: %w", err)
 	}
+	pos += 8
 
 	// Write status
 	if err := s.file.WriteUint32(tx.Status); err != nil {
 		return 0, fmt.Errorf("writing status: %w", err)
 	}
+	pos += 4
 
 	// Write metadata length
 	if err := s.file.WriteUint32(tx.MetaLen); err != nil {
 		return 0, fmt.Errorf("writing meta length: %w", err)
 	}
+	pos += 4
 
-	// Write metadata
+	// Write metadata with alignment
 	if tx.MetaLen > 0 {
 		if err := s.file.WriteBytes(tx.Meta); err != nil {
 			return 0, fmt.Errorf("writing metadata: %w", err)
+		}
+		pos += int64(tx.MetaLen)
+		// Ensure 8-byte alignment after metadata
+		if pos%8 != 0 {
+			padding := make([]byte, 8-(pos%8))
+			if _, err := s.file.WriteAt(padding, pos); err != nil {
+				return 0, fmt.Errorf("writing metadata padding: %w", err)
+			}
+			pos += int64(len(padding))
 		}
 	}
 
@@ -259,15 +356,30 @@ func (s *Store) writeTx(tx TxData) (uint64, error) {
 	if err := s.file.WriteUint32(tx.DataLen); err != nil {
 		return 0, fmt.Errorf("writing data length: %w", err)
 	}
+	pos += 4
 
-	// Write data
+	// Write data with alignment
 	if tx.DataLen > 0 {
 		if err := s.file.WriteBytes(tx.Data); err != nil {
 			return 0, fmt.Errorf("writing data: %w", err)
 		}
+		pos += int64(tx.DataLen)
+		// Ensure 8-byte alignment after data
+		if pos%8 != 0 {
+			padding := make([]byte, 8-(pos%8))
+			if _, err := s.file.WriteAt(padding, pos); err != nil {
+				return 0, fmt.Errorf("writing data padding: %w", err)
+			}
+			pos += int64(len(padding))
+		}
 	}
 
-	return uint64(pos), nil
+	// Sync file to ensure changes are written
+	if err := s.file.Sync(); err != nil {
+		return 0, fmt.Errorf("syncing file: %w", err)
+	}
+
+	return uint64(startPos), nil
 }
 
 func (s *Store) readTx(entry IndexEntry) (*TxData, error) {
@@ -326,6 +438,12 @@ func (s *Store) readTx(entry IndexEntry) (*TxData, error) {
 		if err != nil {
 			return nil, fmt.Errorf("reading metadata: %w", err)
 		}
+		// Skip alignment padding
+		pos, _ := s.file.Seek(0, os.SEEK_CUR)
+		if pos%8 != 0 {
+			padding := 8 - (pos % 8)
+			s.file.Seek(padding, os.SEEK_CUR)
+		}
 	}
 
 	// Read data length
@@ -339,6 +457,12 @@ func (s *Store) readTx(entry IndexEntry) (*TxData, error) {
 		tx.Data, err = s.file.ReadBytes(int(tx.DataLen))
 		if err != nil {
 			return nil, fmt.Errorf("reading data: %w", err)
+		}
+		// Skip alignment padding
+		pos, _ := s.file.Seek(0, os.SEEK_CUR)
+		if pos%8 != 0 {
+			padding := 8 - (pos % 8)
+			s.file.Seek(padding, os.SEEK_CUR)
 		}
 	}
 

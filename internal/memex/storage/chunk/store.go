@@ -15,14 +15,6 @@ type Store struct {
 	locks *common.LockManager
 }
 
-// ChunkData represents a chunk in memory
-type ChunkData struct {
-	Content  []byte
-	Hash     [32]byte
-	Length   uint32
-	Checksum uint32
-}
-
 // NewStore creates a new chunk store
 func NewStore(file *common.File, locks *common.LockManager) *Store {
 	return &Store{

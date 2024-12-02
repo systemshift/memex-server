@@ -2,6 +2,7 @@ package tx
 
 import (
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 )
@@ -96,14 +97,29 @@ func (t *TxData) Size() int {
 
 // CreateID generates a transaction ID from its data
 func (t *TxData) CreateID() error {
-	// Create ID from type, timestamp, and data
-	data := make([]byte, 0, 16+len(t.Data))
-	data = append(data, byte(t.Type))
-	data = append(data, byte(t.Created))
-	data = append(data, t.Data...)
+	// Create buffer for all fields that contribute to ID
+	buf := make([]byte, 0, 16+len(t.Meta)+len(t.Data))
+
+	// Add type and status
+	typeBytes := make([]byte, 4)
+	binary.LittleEndian.PutUint32(typeBytes, t.Type)
+	buf = append(buf, typeBytes...)
+
+	statusBytes := make([]byte, 4)
+	binary.LittleEndian.PutUint32(statusBytes, t.Status)
+	buf = append(buf, statusBytes...)
+
+	// Add timestamp
+	timeBytes := make([]byte, 8)
+	binary.LittleEndian.PutUint64(timeBytes, uint64(t.Created))
+	buf = append(buf, timeBytes...)
+
+	// Add metadata and data
+	buf = append(buf, t.Meta...)
+	buf = append(buf, t.Data...)
 
 	// Calculate hash
-	t.ID = sha256.Sum256(data)
+	t.ID = sha256.Sum256(buf)
 	return nil
 }
 
@@ -168,30 +184,4 @@ func NewOperation(opType uint32, target string, action string, data []byte, meta
 	}
 
 	return op, nil
-}
-
-// Size returns the size of LogEntry in bytes
-func (l *LogEntry) Size() int {
-	return 32 + // ID
-		4 + // Type
-		4 + // Status
-		8 + // Timestamp
-		4 + // DataLen
-		len(l.Data) + // Data
-		4 + // Checksum
-		8 + // Offset
-		4 // Length
-}
-
-// CreateID generates a log entry ID from its data
-func (l *LogEntry) CreateID() error {
-	// Create ID from type, timestamp, and data
-	data := make([]byte, 0, 16+len(l.Data))
-	data = append(data, byte(l.Type))
-	data = append(data, byte(l.Timestamp))
-	data = append(data, l.Data...)
-
-	// Calculate hash
-	l.ID = sha256.Sum256(data)
-	return nil
 }

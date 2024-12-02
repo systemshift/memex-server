@@ -84,12 +84,6 @@ func OpenMX(path string) (*MXStore, error) {
 		return nil, fmt.Errorf("reading header: %w", err)
 	}
 
-	// Read indexes
-	if err := store.readIndexes(); err != nil {
-		file.Close()
-		return nil, fmt.Errorf("reading indexes: %w", err)
-	}
-
 	return store, nil
 }
 
@@ -139,8 +133,22 @@ func (s *MXStore) GetNode(id string) (*core.Node, error) {
 
 // AddNode adds a node to the store
 func (s *MXStore) AddNode(content []byte, nodeType string, meta map[string]any) (string, error) {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
+	// Validate input
+	if content == nil {
+		return "", fmt.Errorf("content cannot be nil")
+	}
+	if nodeType == "" {
+		return "", fmt.Errorf("node type cannot be empty")
+	}
+
+	// Calculate content hash first
+	contentHash := sha256.Sum256(content)
+	contentHashStr := fmt.Sprintf("%x", contentHash)
+
+	// Store content as a chunk first
+	if _, err := s.StoreChunk(content); err != nil {
+		return "", fmt.Errorf("storing content chunk: %w", err)
+	}
 
 	// Create chunks
 	chunks, err := chunk.Split(content)
@@ -151,12 +159,17 @@ func (s *MXStore) AddNode(content []byte, nodeType string, meta map[string]any) 
 	// Store chunks
 	var chunkHashes []string
 	for _, c := range chunks {
-		hash, err := s.StoreChunk(c.Content)
-		if err != nil {
+		hash := fmt.Sprintf("%x", c.Hash)
+		// Store chunk
+		if _, err := s.StoreChunk(c.Content); err != nil {
 			return "", fmt.Errorf("storing chunk: %w", err)
 		}
 		chunkHashes = append(chunkHashes, hash)
 	}
+
+	// Now acquire the lock for node operations
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
 
 	// Create node
 	node := &core.Node{
@@ -167,11 +180,10 @@ func (s *MXStore) AddNode(content []byte, nodeType string, meta map[string]any) 
 	}
 
 	// Add content hash and chunks to metadata
-	contentHash := chunks[0].Hash // Use first chunk hash as content identifier
 	if node.Meta == nil {
 		node.Meta = make(map[string]any)
 	}
-	node.Meta["content"] = contentHash
+	node.Meta["content"] = contentHashStr
 	node.Meta["chunks"] = chunkHashes
 
 	// Marshal node
@@ -360,14 +372,25 @@ func (s *MXStore) GetChunk(hash string) ([]byte, error) {
 
 // StoreChunk stores a chunk and returns its hash
 func (s *MXStore) StoreChunk(content []byte) (string, error) {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-
-	// Calculate hash
+	// Calculate hash first
 	hash := sha256.Sum256(content)
 	hashStr := fmt.Sprintf("%x", hash)
 
-	// Check if chunk already exists
+	// Check if chunk exists under read lock
+	s.mutex.RLock()
+	for _, entry := range s.chunkIndex {
+		if fmt.Sprintf("%x", entry.ID[:]) == hashStr {
+			s.mutex.RUnlock()
+			return hashStr, nil
+		}
+	}
+	s.mutex.RUnlock()
+
+	// Chunk doesn't exist, acquire write lock
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	// Check again in case another goroutine added it
 	for _, entry := range s.chunkIndex {
 		if fmt.Sprintf("%x", entry.ID[:]) == hashStr {
 			return hashStr, nil
@@ -452,8 +475,9 @@ func (s *MXStore) Close() error {
 		return fmt.Errorf("writing header: %w", err)
 	}
 
-	if err := s.writeIndexes(); err != nil {
-		return fmt.Errorf("writing indexes: %w", err)
+	// Sync file to ensure changes are written
+	if err := s.file.Sync(); err != nil {
+		return fmt.Errorf("syncing file: %w", err)
 	}
 
 	// Close file
@@ -463,8 +487,25 @@ func (s *MXStore) Close() error {
 // Internal methods
 
 func (s *MXStore) readData(entry IndexEntry) ([]byte, error) {
+	// Seek to length prefix (4 bytes before data)
+	if _, err := s.file.Seek(int64(entry.Offset)-4, 0); err != nil {
+		return nil, fmt.Errorf("seeking to length prefix: %w", err)
+	}
+
+	// Read length prefix
+	lengthBytes := make([]byte, 4)
+	if _, err := s.file.ReadAt(lengthBytes, int64(entry.Offset)-4); err != nil {
+		return nil, fmt.Errorf("reading length prefix: %w", err)
+	}
+	length := binary.LittleEndian.Uint32(lengthBytes)
+
+	// Verify length matches index
+	if length != entry.Length {
+		return nil, fmt.Errorf("length mismatch: got %d want %d", length, entry.Length)
+	}
+
 	// Read data
-	data := make([]byte, entry.Length)
+	data := make([]byte, length)
 	if _, err := s.file.ReadAt(data, int64(entry.Offset)); err != nil {
 		return nil, fmt.Errorf("reading data: %w", err)
 	}
@@ -479,24 +520,53 @@ func (s *MXStore) writeData(data []byte) (uint64, error) {
 		return 0, fmt.Errorf("seeking to end: %w", err)
 	}
 
+	// Ensure 8-byte alignment for all data
+	if pos%8 != 0 {
+		padding := make([]byte, 8-(pos%8))
+		if _, err := s.file.WriteAt(padding, pos); err != nil {
+			return 0, fmt.Errorf("writing padding: %w", err)
+		}
+		pos += int64(len(padding))
+	}
+
+	// Write data length
+	length := uint32(len(data))
+	lengthBytes := make([]byte, 4)
+	binary.LittleEndian.PutUint32(lengthBytes, length)
+	if _, err := s.file.WriteAt(lengthBytes, pos); err != nil {
+		return 0, fmt.Errorf("writing length: %w", err)
+	}
+	pos += 4
+
 	// Write data
 	if _, err := s.file.WriteAt(data, pos); err != nil {
 		return 0, fmt.Errorf("writing data: %w", err)
 	}
 
+	// Sync file to ensure changes are written
+	if err := s.file.Sync(); err != nil {
+		return 0, fmt.Errorf("syncing file: %w", err)
+	}
+
+	// Return position of data (after length prefix)
 	return uint64(pos), nil
 }
 
 // readHeader reads the file header
 func (s *MXStore) readHeader() error {
 	return s.locks.WithHeaderRLock(func() error {
+		// Seek to start
+		if _, err := s.file.Seek(0, 0); err != nil {
+			return fmt.Errorf("seeking to start: %w", err)
+		}
+
 		// Read magic number
 		magic, err := s.file.ReadUint64()
 		if err != nil {
 			return fmt.Errorf("reading magic number: %w", err)
 		}
 		if magic != common.FileMagic {
-			return fmt.Errorf("invalid magic number")
+			return fmt.Errorf("invalid magic number: got %x, want %x", magic, common.FileMagic)
 		}
 
 		// Read header data
@@ -507,6 +577,12 @@ func (s *MXStore) readHeader() error {
 
 		// Convert to header
 		s.header.FromData(data)
+
+		// Read indexes
+		if err := s.readIndexes(); err != nil {
+			return fmt.Errorf("reading indexes: %w", err)
+		}
+
 		return nil
 	})
 }
@@ -514,6 +590,21 @@ func (s *MXStore) readHeader() error {
 // writeHeader writes the file header
 func (s *MXStore) writeHeader() error {
 	return s.locks.WithHeaderLock(func() error {
+		// Calculate index offsets first
+		headerSize := uint64(8 + binary.Size(HeaderData{})) // Magic number + header data
+		if headerSize%8 != 0 {
+			headerSize += 8 - (headerSize % 8) // Ensure 8-byte alignment
+		}
+		s.header.NodeIndex = headerSize
+		s.header.EdgeIndex = s.header.NodeIndex + uint64(binary.Size(s.nodes))
+		if s.header.EdgeIndex%8 != 0 {
+			s.header.EdgeIndex += 8 - (s.header.EdgeIndex % 8)
+		}
+		s.header.ChunkIndex = s.header.EdgeIndex + uint64(binary.Size(s.edges))
+		if s.header.ChunkIndex%8 != 0 {
+			s.header.ChunkIndex += 8 - (s.header.ChunkIndex % 8)
+		}
+
 		// Seek to start
 		if _, err := s.file.Seek(0, 0); err != nil {
 			return fmt.Errorf("seeking to start: %w", err)
@@ -528,6 +619,16 @@ func (s *MXStore) writeHeader() error {
 		data := s.header.ToData()
 		if err := binary.Write(s.file, binary.LittleEndian, data); err != nil {
 			return fmt.Errorf("writing header data: %w", err)
+		}
+
+		// Write indexes
+		if err := s.writeIndexes(); err != nil {
+			return fmt.Errorf("writing indexes: %w", err)
+		}
+
+		// Sync file to ensure changes are written
+		if err := s.file.Sync(); err != nil {
+			return fmt.Errorf("syncing file: %w", err)
 		}
 
 		return nil
@@ -593,6 +694,11 @@ func (s *MXStore) writeIndexes() error {
 		}
 		if err := binary.Write(s.file, binary.LittleEndian, s.chunkIndex); err != nil {
 			return fmt.Errorf("writing chunk index: %w", err)
+		}
+
+		// Sync file to ensure changes are written
+		if err := s.file.Sync(); err != nil {
+			return fmt.Errorf("syncing file: %w", err)
 		}
 
 		return nil
