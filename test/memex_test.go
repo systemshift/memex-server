@@ -2,12 +2,11 @@ package test
 
 import (
 	"bytes"
-	"encoding/hex"
 	"os"
 	"path/filepath"
 	"testing"
 
-	"memex/pkg/memex"
+	"memex/internal/memex/storage"
 )
 
 func TestMemex(t *testing.T) {
@@ -21,11 +20,12 @@ func TestMemex(t *testing.T) {
 	// Create test repository path
 	repoPath := filepath.Join(tmpDir, "test.mx")
 
-	// Create memex
-	mx, err := memex.Open(repoPath)
+	// Create repository
+	repo, err := storage.CreateMX(repoPath)
 	if err != nil {
-		t.Fatalf("Error creating memex: %v", err)
+		t.Fatalf("Error creating repository: %v", err)
 	}
+	defer repo.Close()
 
 	// Test adding content
 	content := []byte("Test content")
@@ -34,66 +34,69 @@ func TestMemex(t *testing.T) {
 		"tags":  []string{"test", "example"},
 	}
 
-	id, err := mx.Add(content, "note", meta)
+	id, err := repo.AddNode(content, "note", meta)
 	if err != nil {
 		t.Fatalf("Error adding content: %v", err)
 	}
 
 	// Test retrieving content
-	obj, err := mx.Get(id)
+	node, err := repo.GetNode(id)
 	if err != nil {
-		t.Fatalf("Error getting object: %v", err)
+		t.Fatalf("Error getting node: %v", err)
 	}
 
-	if !bytes.Equal(obj.Content, content) {
-		t.Errorf("Content not preserved correctly\nExpected: %q\nGot: %q", content, obj.Content)
+	contentHash, ok := node.Meta["content"].(string)
+	if !ok {
+		t.Fatal("Node missing content hash")
 	}
 
-	if title, ok := obj.Meta["title"].(string); !ok || title != "Test Node" {
+	reconstructedContent, err := repo.ReconstructContent(contentHash)
+	if err != nil {
+		t.Fatalf("Error reconstructing content: %v", err)
+	}
+
+	if !bytes.Equal(reconstructedContent, content) {
+		t.Errorf("Content not preserved correctly\nExpected: %q\nGot: %q", content, reconstructedContent)
+	}
+
+	if title, ok := node.Meta["title"].(string); !ok || title != "Test Node" {
 		t.Error("Metadata not preserved correctly")
 	}
 
 	// Test updating content
 	newContent := []byte("Updated content")
-	if err := mx.Update(id, newContent); err != nil {
-		t.Fatalf("Error updating object: %v", err)
+	newMeta := map[string]any{
+		"title": "Test Node",
+		"tags":  []string{"test", "example", "updated"},
 	}
-
-	// Old ID should be gone
-	if _, err := mx.Get(id); err == nil {
-		t.Error("Old node should be deleted after update")
-	}
-
-	// Get all nodes to find updated one
-	repo, err := mx.GetRepository()
+	newID, err := repo.AddNode(newContent, "note", newMeta)
 	if err != nil {
-		t.Fatalf("Error getting repository: %v", err)
+		t.Fatalf("Error updating content: %v", err)
 	}
 
-	var updatedID string
-	for _, entry := range repo.Nodes() {
-		node, err := repo.GetNode(hex.EncodeToString(entry.ID[:]))
-		if err != nil {
-			continue
-		}
-		if node.Type == "note" {
-			updatedID = node.ID
-			break
-		}
+	// Delete old node
+	if err := repo.DeleteNode(id); err != nil {
+		t.Fatalf("Error deleting old node: %v", err)
 	}
 
-	if updatedID == "" {
-		t.Fatal("Could not find updated node")
-	}
-
-	// Get updated object
-	updated, err := mx.Get(updatedID)
+	// Get updated node
+	updatedNode, err := repo.GetNode(newID)
 	if err != nil {
-		t.Fatalf("Error getting updated object: %v", err)
+		t.Fatalf("Error getting updated node: %v", err)
 	}
 
-	if !bytes.Equal(updated.Content, newContent) {
-		t.Errorf("Updated content not preserved correctly\nExpected: %q\nGot: %q", newContent, updated.Content)
+	contentHash, ok = updatedNode.Meta["content"].(string)
+	if !ok {
+		t.Fatal("Updated node missing content hash")
+	}
+
+	reconstructedContent, err = repo.ReconstructContent(contentHash)
+	if err != nil {
+		t.Fatalf("Error reconstructing updated content: %v", err)
+	}
+
+	if !bytes.Equal(reconstructedContent, newContent) {
+		t.Errorf("Updated content not preserved correctly\nExpected: %q\nGot: %q", newContent, reconstructedContent)
 	}
 
 	// Test linking objects
@@ -102,21 +105,21 @@ func TestMemex(t *testing.T) {
 		"title": "Another Node",
 	}
 
-	id2, err := mx.Add(content2, "note", meta2)
+	id2, err := repo.AddNode(content2, "note", meta2)
 	if err != nil {
-		t.Fatalf("Error adding second object: %v", err)
+		t.Fatalf("Error adding second node: %v", err)
 	}
 
 	linkMeta := map[string]any{
 		"note": "Test link",
 	}
 
-	if err := mx.Link(updatedID, id2, "references", linkMeta); err != nil {
+	if err := repo.AddLink(newID, id2, "references", linkMeta); err != nil {
 		t.Fatalf("Error creating link: %v", err)
 	}
 
 	// Test getting links
-	links, err := mx.GetLinks(updatedID)
+	links, err := repo.GetLinks(newID)
 	if err != nil {
 		t.Fatalf("Error getting links: %v", err)
 	}
@@ -134,12 +137,12 @@ func TestMemex(t *testing.T) {
 	}
 
 	// Test deleting object
-	if err := mx.Delete(updatedID); err != nil {
-		t.Fatalf("Error deleting object: %v", err)
+	if err := repo.DeleteNode(newID); err != nil {
+		t.Fatalf("Error deleting node: %v", err)
 	}
 
 	// Verify object is deleted
-	if _, err := mx.Get(updatedID); err == nil {
-		t.Error("Object should be deleted")
+	if _, err := repo.GetNode(newID); err == nil {
+		t.Error("Node should be deleted")
 	}
 }

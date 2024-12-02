@@ -6,14 +6,6 @@ import (
 	"fmt"
 )
 
-// IndexEntry represents a transaction index entry
-type IndexEntry struct {
-	ID     [32]byte // SHA-256 hash identifier
-	Offset uint64   // File offset to data
-	Length uint32   // Length of data
-	Flags  uint32   // Entry flags
-}
-
 // TxData represents a transaction's binary format
 type TxData struct {
 	ID      [32]byte // SHA-256 hash identifier
@@ -36,6 +28,14 @@ type Operation struct {
 	Checksum uint32         `json:"checksum"` // Data checksum
 }
 
+// IndexEntry represents a transaction index entry
+type IndexEntry struct {
+	ID     [32]byte // SHA-256 hash identifier
+	Offset uint64   // File offset to data
+	Length uint32   // Length of data
+	Flags  uint32   // Entry flags
+}
+
 // LogEntry represents a transaction log entry
 type LogEntry struct {
 	ID        [32]byte // Entry ID
@@ -49,14 +49,7 @@ type LogEntry struct {
 	Length    uint32   // Length of affected data
 }
 
-// Constants for transaction entries
-const (
-	IndexEntrySize = 48      // Size of IndexEntry in bytes (hash + offset + length + flags)
-	MaxMetaSize    = 4096    // Maximum metadata size in bytes
-	MaxDataSize    = 1 << 20 // Maximum operation data size (1MB)
-)
-
-// Transaction types
+// Constants for transaction types
 const (
 	TxTypeNone    uint32 = 0
 	TxTypeNode    uint32 = 1 // Node operations
@@ -65,7 +58,7 @@ const (
 	TxTypeComplex uint32 = 4 // Multiple operations
 )
 
-// Transaction status
+// Constants for transaction status
 const (
 	TxStatusPending   uint32 = 0 // Transaction is pending
 	TxStatusCommitted uint32 = 1 // Transaction is committed
@@ -73,7 +66,7 @@ const (
 	TxStatusFailed    uint32 = 3 // Transaction failed
 )
 
-// Operation types
+// Constants for operation types
 const (
 	OpTypeNone   uint32 = 0
 	OpTypeCreate uint32 = 1
@@ -83,12 +76,10 @@ const (
 	OpModify     uint32 = 5 // Modify operation
 )
 
-// Flags for index entries
+// Constants for size limits
 const (
-	FlagNone     uint32 = 0
-	FlagDeleted  uint32 = 1 << 0
-	FlagModified uint32 = 1 << 1
-	FlagTemp     uint32 = 1 << 2
+	MaxMetaSize = 4096    // Maximum metadata size in bytes (4KB)
+	MaxDataSize = 1 << 20 // Maximum data size in bytes (1MB)
 )
 
 // Size returns the size of TxData in bytes
@@ -177,4 +168,30 @@ func NewOperation(opType uint32, target string, action string, data []byte, meta
 	}
 
 	return op, nil
+}
+
+// Size returns the size of LogEntry in bytes
+func (l *LogEntry) Size() int {
+	return 32 + // ID
+		4 + // Type
+		4 + // Status
+		8 + // Timestamp
+		4 + // DataLen
+		len(l.Data) + // Data
+		4 + // Checksum
+		8 + // Offset
+		4 // Length
+}
+
+// CreateID generates a log entry ID from its data
+func (l *LogEntry) CreateID() error {
+	// Create ID from type, timestamp, and data
+	data := make([]byte, 0, 16+len(l.Data))
+	data = append(data, byte(l.Type))
+	data = append(data, byte(l.Timestamp))
+	data = append(data, l.Data...)
+
+	// Calculate hash
+	l.ID = sha256.Sum256(data)
+	return nil
 }

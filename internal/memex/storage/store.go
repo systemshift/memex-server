@@ -93,6 +93,16 @@ func OpenMX(path string) (*MXStore, error) {
 	return store, nil
 }
 
+// GetFile returns the store's file handle
+func (s *MXStore) GetFile() *common.File {
+	return s.file
+}
+
+// GetLockManager returns the store's lock manager
+func (s *MXStore) GetLockManager() *common.LockManager {
+	return s.locks
+}
+
 // Path returns the repository path
 func (s *MXStore) Path() string {
 	return s.path
