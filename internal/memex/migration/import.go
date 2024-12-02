@@ -13,22 +13,6 @@ import (
 	"memex/internal/memex/storage"
 )
 
-// ImportOptions configures how content is imported
-type ImportOptions struct {
-	OnConflict ConflictStrategy // How to handle ID conflicts
-	Merge      bool             // Whether to merge with existing content
-	Prefix     string           // Optional prefix for imported node IDs
-}
-
-// ConflictStrategy determines how to handle ID conflicts
-type ConflictStrategy int
-
-const (
-	Skip ConflictStrategy = iota
-	Replace
-	Rename
-)
-
 // Importer handles graph import
 type Importer struct {
 	store     *storage.MXStore
@@ -151,7 +135,7 @@ func (i *Importer) importNode(oldID string, nodeContent []byte) error {
 	var existingID string
 	for _, entry := range i.store.Nodes() {
 		// Check by content hash to identify same file
-		existingNode, err := i.store.GetNode(fmt.Sprintf("%x", entry.ID[:]))
+		existingNode, err := i.store.GetNode(entry.ID)
 		if err != nil {
 			continue
 		}
