@@ -2,7 +2,6 @@ package test
 
 import (
 	"bytes"
-	"encoding/hex"
 	"os"
 	"path/filepath"
 	"testing"
@@ -93,11 +92,7 @@ func TestImport(t *testing.T) {
 
 	// Find corresponding node in destination
 	var dstID1 string
-	for _, entry := range dstNodes {
-		node, err := dstRepo.GetNode(hex.EncodeToString(entry.ID[:]))
-		if err != nil {
-			continue
-		}
+	for _, node := range dstNodes {
 		if filename, ok := node.Meta["filename"].(string); ok && filename == "n1.txt" {
 			dstID1 = node.ID
 			break
@@ -134,13 +129,7 @@ func TestImport(t *testing.T) {
 	}
 
 	// Verify content
-	for _, entry := range dstNodes {
-		node, err := dstRepo.GetNode(hex.EncodeToString(entry.ID[:]))
-		if err != nil {
-			t.Errorf("Error getting node: %v", err)
-			continue
-		}
-
+	for _, node := range dstNodes {
 		contentHash, ok := node.Meta["content"].(string)
 		if !ok {
 			t.Error("Node missing content hash")

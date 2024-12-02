@@ -1,200 +1,200 @@
 package test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
-	"memex/internal/memex/core"
-	"memex/internal/memex/logger"
 	"memex/internal/memex/storage"
 )
 
-// CreateTempDir creates a temporary directory for testing
-func CreateTempDir(t *testing.T) string {
-	t.Helper()
-
-	tmpDir, err := os.MkdirTemp("", "memex-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	t.Cleanup(func() {
-		os.RemoveAll(tmpDir)
-	})
-
-	return tmpDir
-}
-
-// AssertFileExists verifies that a file exists
-func AssertFileExists(t *testing.T, path string) {
-	t.Helper()
-
-	if _, err := os.Stat(path); err != nil {
-		t.Errorf("File does not exist: %s", path)
-	}
-}
-
-// AssertFileNotExists verifies that a file does not exist
-func AssertFileNotExists(t *testing.T, path string) {
-	t.Helper()
-
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Errorf("File exists when it should not: %s", path)
-	}
-}
+var (
+	closeMutex sync.Mutex
+)
 
 // CreateTestRepo creates a temporary repository for testing
-func CreateTestRepo(t *testing.T) (string, *storage.MXStore) {
-	t.Helper()
-
-	// Create temporary test directory
+func CreateTestRepo(t *testing.T) (*storage.MXStore, string) {
+	// Create temporary directory
 	tmpDir, err := os.MkdirTemp("", "memex-test-*")
 	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
+		t.Fatalf("Error creating temp dir: %v", err)
 	}
-	t.Cleanup(func() {
-		os.RemoveAll(tmpDir)
-	})
 
-	// Set test logger
-	logger.SetLogger(NewTestLogger(t))
-
+	// Create repository path
 	repoPath := filepath.Join(tmpDir, "test.mx")
-	store, err := storage.CreateMX(repoPath)
+
+	// Create repository
+	repo, err := storage.CreateMX(repoPath)
 	if err != nil {
-		t.Fatalf("Failed to create repository: %v", err)
+		os.RemoveAll(tmpDir)
+		t.Fatalf("Error creating repository: %v", err)
 	}
 
-	t.Cleanup(func() {
-		store.Close()
-	})
+	return repo, tmpDir
+}
 
-	return repoPath, store
+// CleanupTestRepo cleans up a test repository
+func CleanupTestRepo(t *testing.T, repo *storage.MXStore, tmpDir string) {
+	closeMutex.Lock()
+	defer closeMutex.Unlock()
+
+	// Close repository if not already closed
+	if repo != nil {
+		if err := repo.Close(); err != nil {
+			// Only report error if it's not "file already closed"
+			if !os.IsNotExist(err) && err.Error() != "file already closed" {
+				t.Errorf("Error closing repository: %v", err)
+			}
+		}
+	}
+
+	// Remove temporary directory
+	if err := os.RemoveAll(tmpDir); err != nil {
+		t.Errorf("Error removing temp dir: %v", err)
+	}
 }
 
 // OpenTestRepo opens an existing test repository
 func OpenTestRepo(t *testing.T, path string) *storage.MXStore {
-	t.Helper()
-
-	// Set test logger
-	logger.SetLogger(NewTestLogger(t))
-
-	store, err := storage.OpenMX(path)
+	repo, err := storage.OpenMX(path)
 	if err != nil {
-		t.Fatalf("Failed to open repository: %v", err)
+		t.Fatalf("Error opening repository: %v", err)
 	}
-
-	t.Cleanup(func() {
-		store.Close()
-	})
-
-	return store
+	return repo
 }
 
-// AddTestFile adds a test file to the repository
-func AddTestFile(t *testing.T, store *storage.MXStore, name string, content []byte) string {
-	t.Helper()
-
-	id, err := store.AddNode(content, "file", map[string]any{
-		"filename": name,
-	})
+// CreateTempDir creates a temporary directory for testing
+func CreateTempDir(t *testing.T) string {
+	tmpDir, err := os.MkdirTemp("", "memex-test-*")
 	if err != nil {
-		t.Fatalf("Failed to add test file: %v", err)
+		t.Fatalf("Error creating temp dir: %v", err)
 	}
-
-	return id
+	return tmpDir
 }
 
-// CreateTestLink creates a test link between nodes
-func CreateTestLink(t *testing.T, store *storage.MXStore, source, target, linkType string, meta map[string]any) {
-	t.Helper()
-
-	err := store.AddLink(source, target, linkType, meta)
-	if err != nil {
-		t.Fatalf("Failed to create test link: %v", err)
+// AssertFileExists checks if a file exists
+func AssertFileExists(t *testing.T, path string) {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		t.Errorf("File %s does not exist", path)
 	}
 }
 
-// AssertNodeExists verifies that a node exists and returns it
-func AssertNodeExists(t *testing.T, store *storage.MXStore, id string) core.Node {
-	t.Helper()
-
-	node, err := store.GetNode(id)
+// AssertNodeExists checks if a node exists
+func AssertNodeExists(t *testing.T, repo *storage.MXStore, id string) {
+	node, err := repo.GetNode(id)
 	if err != nil {
-		t.Fatalf("Node %s not found: %v", id, err)
+		t.Errorf("Node %s does not exist: %v", id, err)
 	}
-
-	return node
-}
-
-// AssertNodeNotExists verifies that a node does not exist
-func AssertNodeNotExists(t *testing.T, store *storage.MXStore, id string) {
-	t.Helper()
-
-	_, err := store.GetNode(id)
-	if err == nil {
-		t.Errorf("Node %s still exists when it should be gone", id)
+	if node.ID != id {
+		t.Errorf("Node ID mismatch: got %s want %s", node.ID, id)
 	}
 }
 
-// AssertLinkExists verifies that a link exists between nodes
-func AssertLinkExists(t *testing.T, store *storage.MXStore, source, target, linkType string) {
-	t.Helper()
+// AssertNodeNotExists checks if a node does not exist
+func AssertNodeNotExists(t *testing.T, repo *storage.MXStore, id string) {
+	if _, err := repo.GetNode(id); err == nil {
+		t.Errorf("Node %s exists when it should not", id)
+	}
+}
 
-	links, err := store.GetLinks(source)
+// AssertLinkExists checks if a link exists
+func AssertLinkExists(t *testing.T, repo *storage.MXStore, sourceID, targetID, linkType string) {
+	links, err := repo.GetLinks(sourceID)
 	if err != nil {
-		t.Fatalf("Failed to get links: %v", err)
+		t.Errorf("Error getting links: %v", err)
+		return
 	}
 
 	for _, link := range links {
-		if link.Target == target && link.Type == linkType {
-			return // Found matching link
+		if link.Source == sourceID && link.Target == targetID && link.Type == linkType {
+			return
 		}
 	}
 
-	t.Errorf("Link not found: %s -[%s]-> %s", source, linkType, target)
+	t.Errorf("Link not found: %s -[%s]-> %s", sourceID, linkType, targetID)
 }
 
-// AssertLinkNotExists verifies that a link does not exist between nodes
-func AssertLinkNotExists(t *testing.T, store *storage.MXStore, source, target, linkType string) {
-	t.Helper()
-
-	links, err := store.GetLinks(source)
+// AssertLinkNotExists checks if a link does not exist
+func AssertLinkNotExists(t *testing.T, repo *storage.MXStore, sourceID, targetID, linkType string) {
+	links, err := repo.GetLinks(sourceID)
 	if err != nil {
-		t.Fatalf("Failed to get links: %v", err)
+		t.Errorf("Error getting links: %v", err)
+		return
 	}
 
 	for _, link := range links {
-		if link.Target == target && link.Type == linkType {
-			t.Errorf("Link exists when it should be gone: %s -[%s]-> %s", source, linkType, target)
+		if link.Source == sourceID && link.Target == targetID && link.Type == linkType {
+			t.Errorf("Link exists when it should not: %s -[%s]-> %s", sourceID, linkType, targetID)
 			return
 		}
 	}
 }
 
-// WriteTestFile writes a test file with the given content
-func WriteTestFile(t *testing.T, path string, content []byte) {
-	t.Helper()
-
-	err := os.MkdirAll(filepath.Dir(path), 0755)
-	if err != nil {
-		t.Fatalf("Failed to create directories: %v", err)
+// AddTestFile adds a test file to the repository
+func AddTestFile(t *testing.T, repo *storage.MXStore, filename string, content []byte) string {
+	meta := map[string]any{
+		"filename": filename,
+		"type":     "file",
 	}
-
-	err = os.WriteFile(path, content, 0644)
+	id, err := repo.AddNode(content, "file", meta)
 	if err != nil {
-		t.Fatalf("Failed to write file: %v", err)
+		t.Fatalf("Error adding file: %v", err)
+	}
+	return id
+}
+
+// CreateTestLink creates a test link between nodes
+func CreateTestLink(t *testing.T, repo *storage.MXStore, sourceID, targetID, linkType string) {
+	if err := repo.AddLink(sourceID, targetID, linkType, nil); err != nil {
+		t.Fatalf("Error creating link: %v", err)
 	}
 }
 
-// ReadTestFile reads a test file and returns its content
-func ReadTestFile(t *testing.T, path string) []byte {
-	t.Helper()
-
-	content, err := os.ReadFile(path)
+// CreateTestData creates test data in a repository
+func CreateTestData(t *testing.T, repo *storage.MXStore) {
+	// Create root node
+	content := []byte("Root node")
+	meta := map[string]any{
+		"title": "Root",
+		"tags":  []string{"test", "root"},
+	}
+	rootID, err := repo.AddNode(content, "note", meta)
 	if err != nil {
-		t.Fatalf("Failed to read file: %v", err)
+		t.Fatalf("Error creating root node: %v", err)
 	}
 
-	return content
+	// Create child node
+	childContent := []byte("Child node")
+	childMeta := map[string]any{
+		"title": "Child",
+		"tags":  []string{"test", "child"},
+	}
+	childID, err := repo.AddNode(childContent, "note", childMeta)
+	if err != nil {
+		t.Fatalf("Error creating child node: %v", err)
+	}
+
+	// Create grandchild node
+	grandchildContent := []byte("Grandchild node")
+	grandchildMeta := map[string]any{
+		"title": "Grandchild",
+		"tags":  []string{"test", "grandchild"},
+	}
+	grandchildID, err := repo.AddNode(grandchildContent, "note", grandchildMeta)
+	if err != nil {
+		t.Fatalf("Error creating grandchild node: %v", err)
+	}
+
+	// Create links
+	if err := repo.AddLink(rootID, childID, "contains", nil); err != nil {
+		t.Fatalf("Error creating root->child link: %v", err)
+	}
+	if err := repo.AddLink(childID, grandchildID, "contains", nil); err != nil {
+		t.Fatalf("Error creating child->grandchild link: %v", err)
+	}
+
+	fmt.Printf("Repository: %s\n", repo.Path())
+	fmt.Printf("Nodes: %d\n", len(repo.Nodes()))
 }

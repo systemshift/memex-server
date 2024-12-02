@@ -2,7 +2,6 @@ package test
 
 import (
 	"bytes"
-	"encoding/hex"
 	"os"
 	"path/filepath"
 	"testing"
@@ -99,14 +98,7 @@ func TestImportConflicts(t *testing.T) {
 			}
 
 			// Verify content
-			for _, entry := range dstRepo.Nodes() {
-				nodeID := hex.EncodeToString(entry.ID[:])
-				node, err := dstRepo.GetNode(nodeID)
-				if err != nil {
-					t.Errorf("Error getting node: %v", err)
-					continue
-				}
-
+			for _, node := range dstRepo.Nodes() {
 				contentHash, ok := node.Meta["content"].(string)
 				if !ok {
 					t.Error("Node missing content hash")
@@ -129,11 +121,8 @@ func TestImportConflicts(t *testing.T) {
 			case migration.Skip:
 				// Should keep original ID
 				if len(dstRepo.Nodes()) > 0 {
-					nodeID := hex.EncodeToString(dstRepo.Nodes()[0].ID[:])
-					node, err := dstRepo.GetNode(nodeID)
-					if err != nil {
-						t.Errorf("Error getting node: %v", err)
-					} else if node.ID != dstID {
+					node := dstRepo.Nodes()[0]
+					if node.ID != dstID {
 						t.Errorf("Node ID = %s, want %s", node.ID, dstID)
 					}
 				}
@@ -141,11 +130,8 @@ func TestImportConflicts(t *testing.T) {
 			case migration.Replace:
 				// Should have new ID
 				if len(dstRepo.Nodes()) > 0 {
-					nodeID := hex.EncodeToString(dstRepo.Nodes()[0].ID[:])
-					node, err := dstRepo.GetNode(nodeID)
-					if err != nil {
-						t.Errorf("Error getting node: %v", err)
-					} else if node.ID == dstID {
+					node := dstRepo.Nodes()[0]
+					if node.ID == dstID {
 						t.Error("Node ID should have changed")
 					}
 				}
@@ -154,14 +140,8 @@ func TestImportConflicts(t *testing.T) {
 				// Should have both nodes with correct content
 				foundOriginal := false
 				foundImported := false
-				for _, entry := range dstRepo.Nodes() {
-					nodeID := hex.EncodeToString(entry.ID[:])
-					node, err := dstRepo.GetNode(nodeID)
-					if err != nil {
-						t.Errorf("Error getting node: %v", err)
-						continue
-					}
-					if node.Meta["filename"] == "test.txt" {
+				for _, node := range dstRepo.Nodes() {
+					if filename, ok := node.Meta["filename"].(string); ok && filename == "test.txt" {
 						if node.ID == dstID {
 							foundOriginal = true
 						} else {
