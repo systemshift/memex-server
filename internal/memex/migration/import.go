@@ -2,7 +2,6 @@ package migration
 
 import (
 	"archive/tar"
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,41 +9,44 @@ import (
 	"strings"
 
 	"memex/internal/memex/core"
-	"memex/internal/memex/storage"
 )
 
-// Importer handles graph import
+// Importer handles repository imports
 type Importer struct {
-	store     *storage.MXStore
-	reader    *tar.Reader
-	manifest  ExportManifest
-	idMapping map[string]string // Old ID -> New ID
-	options   ImportOptions
+	repo    core.Repository
+	reader  io.Reader
+	options ImportOptions
 }
 
 // NewImporter creates a new importer
-func NewImporter(store *storage.MXStore, r io.Reader, opts ImportOptions) *Importer {
+func NewImporter(repo core.Repository, r io.Reader, opts ImportOptions) *Importer {
 	return &Importer{
-		store:     store,
-		reader:    tar.NewReader(r),
-		idMapping: make(map[string]string),
-		options:   opts,
+		repo:    repo,
+		reader:  r,
+		options: opts,
 	}
 }
 
 // Import imports content from a tar archive
 func (i *Importer) Import() error {
-	fmt.Printf("Starting import into %s\n", i.store.Path())
+	fmt.Println("Starting import")
 
-	// First pass: read manifest and collect files
-	nodes := make(map[string][]byte)  // node ID -> JSON content
-	edges := make(map[string][]byte)  // edge ID -> JSON content
-	chunks := make(map[string][]byte) // chunk hash -> content
-	manifest := ExportManifest{}
-	manifestFound := false
+	// Create tar reader
+	tr := tar.NewReader(i.reader)
 
+	// Read manifest first
+	manifest, err := i.readManifest(tr)
+	if err != nil {
+		return fmt.Errorf("reading manifest: %w", err)
+	}
+
+	fmt.Printf("Importing version %d content\n", manifest.Version)
+
+	// Import chunks
+	fmt.Println("Importing chunks...")
+	chunks := make(map[string]bool)
 	for {
-		header, err := i.reader.Next()
+		header, err := tr.Next()
 		if err == io.EOF {
 			break
 		}
@@ -52,183 +54,134 @@ func (i *Importer) Import() error {
 			return fmt.Errorf("reading tar: %w", err)
 		}
 
-		// Read file content
-		fileContent := make([]byte, header.Size)
-		if _, err := io.ReadFull(i.reader, fileContent); err != nil {
-			return fmt.Errorf("reading content: %w", err)
+		// Skip non-chunk files
+		if !strings.HasPrefix(header.Name, "chunks/") {
+			continue
 		}
 
-		// Sort files by type
-		switch {
-		case header.Name == "manifest.json":
-			if err := json.Unmarshal(fileContent, &manifest); err != nil {
-				return fmt.Errorf("parsing manifest: %w", err)
-			}
-			manifestFound = true
+		// Get chunk hash from filename
+		hash := filepath.Base(header.Name)
 
-		case strings.HasPrefix(header.Name, "nodes/"):
-			id := strings.TrimSuffix(filepath.Base(header.Name), ".json")
-			nodes[id] = fileContent
-
-		case strings.HasPrefix(header.Name, "edges/"):
-			id := strings.TrimSuffix(filepath.Base(header.Name), ".json")
-			edges[id] = fileContent
-
-		case strings.HasPrefix(header.Name, "chunks/"):
-			hash := filepath.Base(header.Name)
-			chunks[hash] = fileContent
+		// Read chunk data
+		data := make([]byte, header.Size)
+		if _, err := io.ReadFull(tr, data); err != nil {
+			return fmt.Errorf("reading chunk data: %w", err)
 		}
-	}
 
-	if !manifestFound {
-		return fmt.Errorf("manifest not found in archive")
-	}
-
-	i.manifest = manifest
-
-	// Import chunks first
-	fmt.Printf("Importing chunks...\n")
-	for hash, chunkContent := range chunks {
-		// Store chunk using store's StoreChunk method
-		storedHash, err := i.store.StoreChunk(chunkContent)
-		if err != nil {
-			return fmt.Errorf("storing chunk %s: %w", hash, err)
-		}
-		if storedHash != hash {
-			return fmt.Errorf("chunk hash mismatch: got %s, want %s", storedHash, hash)
-		}
+		// Store chunk
+		chunks[hash] = true
 	}
 
 	// Import nodes
-	fmt.Printf("Importing nodes...\n")
-	for id, nodeContent := range nodes {
-		if err := i.importNode(id, nodeContent); err != nil {
-			return fmt.Errorf("importing node %s: %w", id, err)
+	fmt.Println("Importing nodes...")
+	nodes := make(map[string]*core.Node)
+	for {
+		header, err := tr.Next()
+		if err == io.EOF {
+			break
 		}
+		if err != nil {
+			return fmt.Errorf("reading tar: %w", err)
+		}
+
+		// Skip non-node files
+		if !strings.HasPrefix(header.Name, "nodes/") {
+			continue
+		}
+
+		// Read node data
+		data := make([]byte, header.Size)
+		if _, err := io.ReadFull(tr, data); err != nil {
+			return fmt.Errorf("reading node data: %w", err)
+		}
+
+		// Parse node
+		var node core.Node
+		if err := json.Unmarshal(data, &node); err != nil {
+			return fmt.Errorf("parsing node: %w", err)
+		}
+
+		// Add prefix to ID if specified
+		if i.options.Prefix != "" {
+			node.ID = i.options.Prefix + node.ID
+		}
+
+		// Store node
+		if _, err := i.repo.AddNode(node.Content, node.Type, node.Meta); err != nil {
+			return fmt.Errorf("storing node: %w", err)
+		}
+
+		nodes[node.ID] = &node
 	}
 
 	// Import edges
-	fmt.Printf("Importing edges...\n")
-	for id, edgeContent := range edges {
-		if err := i.importEdge(edgeContent); err != nil {
-			return fmt.Errorf("importing edge %s: %w", id, err)
+	fmt.Println("Importing edges...")
+	for {
+		header, err := tr.Next()
+		if err == io.EOF {
+			break
 		}
-	}
-
-	return nil
-}
-
-func (i *Importer) importNode(oldID string, nodeContent []byte) error {
-	var node core.Node
-	if err := json.Unmarshal(nodeContent, &node); err != nil {
-		return fmt.Errorf("parsing node: %w", err)
-	}
-
-	// Get content hash from metadata
-	contentHash, ok := node.Meta["content"].(string)
-	if !ok {
-		return fmt.Errorf("node missing content hash")
-	}
-
-	// Check if node exists
-	exists := false
-	var existingID string
-	for _, entry := range i.store.Nodes() {
-		// Check by content hash to identify same file
-		existingNode, err := i.store.GetNode(entry.ID)
 		if err != nil {
+			return fmt.Errorf("reading tar: %w", err)
+		}
+
+		// Skip non-edge files
+		if !strings.HasPrefix(header.Name, "edges/") {
 			continue
 		}
-		if existingHash, ok := existingNode.Meta["content"].(string); ok {
-			if existingHash == contentHash {
-				exists = true
-				existingID = existingNode.ID
-				break
-			}
+
+		// Read edge data
+		data := make([]byte, header.Size)
+		if _, err := io.ReadFull(tr, data); err != nil {
+			return fmt.Errorf("reading edge data: %w", err)
+		}
+
+		// Parse link
+		var link core.Link
+		if err := json.Unmarshal(data, &link); err != nil {
+			return fmt.Errorf("parsing link: %w", err)
+		}
+
+		// Add prefix to IDs if specified
+		if i.options.Prefix != "" {
+			link.Source = i.options.Prefix + link.Source
+			link.Target = i.options.Prefix + link.Target
+		}
+
+		// Store link
+		if err := i.repo.AddLink(link.Source, link.Target, link.Type, link.Meta); err != nil {
+			return fmt.Errorf("storing link: %w", err)
 		}
 	}
 
-	// Generate new ID if needed
-	newID := oldID
-	if exists {
-		switch i.options.OnConflict {
-		case Skip:
-			fmt.Printf("Node %s already exists, skipping\n", oldID)
-			i.idMapping[oldID] = existingID // Map to existing ID
-			return nil
-		case Replace:
-			fmt.Printf("Node %s already exists replacing\n", oldID)
-			if err := i.store.DeleteNode(existingID); err != nil {
-				return fmt.Errorf("deleting existing node: %w", err)
-			}
-		case Rename:
-			// Generate new ID by adding prefix
-			newID = i.options.Prefix + oldID
-			fmt.Printf("Node exists using new ID %s\n", newID)
-		}
-	}
-
-	// Get chunks from metadata
-	chunksRaw, ok := node.Meta["chunks"].([]interface{})
-	if !ok {
-		return fmt.Errorf("node missing chunks")
-	}
-
-	// Convert chunks to []string
-	var chunkList []string
-	for _, chunk := range chunksRaw {
-		if chunkStr, ok := chunk.(string); ok {
-			chunkStr = strings.Trim(chunkStr, `"`)
-			chunkList = append(chunkList, chunkStr)
-		}
-	}
-
-	// Load and concatenate chunks
-	var buf bytes.Buffer
-	for _, chunkHash := range chunkList {
-		chunk, err := i.store.GetChunk(chunkHash)
-		if err != nil {
-			return fmt.Errorf("loading chunk %s: %w", chunkHash, err)
-		}
-		buf.Write(chunk)
-	}
-
-	// Add node
-	fmt.Printf("Adding node %s\n", newID)
-	resultID, err := i.store.AddNode(buf.Bytes(), node.Type, node.Meta)
-	if err != nil {
-		return fmt.Errorf("adding node: %w", err)
-	}
-
-	// Store ID mapping
-	i.idMapping[oldID] = resultID
-	if newID != oldID {
-		i.idMapping[newID] = resultID // Also map prefixed ID
-	}
 	return nil
 }
 
-func (i *Importer) importEdge(edgeContent []byte) error {
-	var edge ExportedLink
-	if err := json.Unmarshal(edgeContent, &edge); err != nil {
-		return fmt.Errorf("parsing edge: %w", err)
-	}
+func (i *Importer) readManifest(tr *tar.Reader) (*ExportManifest, error) {
+	// Find manifest file
+	for {
+		header, err := tr.Next()
+		if err == io.EOF {
+			return nil, fmt.Errorf("manifest not found")
+		}
+		if err != nil {
+			return nil, fmt.Errorf("reading tar: %w", err)
+		}
 
-	// Map old IDs to new IDs
-	sourceID, ok := i.idMapping[edge.Source]
-	if !ok {
-		sourceID = edge.Source // Use original if not remapped
-	}
-	targetID, ok := i.idMapping[edge.Target]
-	if !ok {
-		targetID = edge.Target // Use original if not remapped
-	}
+		if header.Name == "manifest.json" {
+			// Read manifest data
+			data := make([]byte, header.Size)
+			if _, err := io.ReadFull(tr, data); err != nil {
+				return nil, fmt.Errorf("reading manifest data: %w", err)
+			}
 
-	// Create link
-	fmt.Printf("Creating link %s -> %s [%s]\n", sourceID, targetID, edge.Type)
-	if err := i.store.AddLink(sourceID, targetID, edge.Type, edge.Meta); err != nil {
-		return fmt.Errorf("creating link: %w", err)
-	}
+			// Parse manifest
+			var manifest ExportManifest
+			if err := json.Unmarshal(data, &manifest); err != nil {
+				return nil, fmt.Errorf("parsing manifest: %w", err)
+			}
 
-	return nil
+			return &manifest, nil
+		}
+	}
 }

@@ -6,14 +6,14 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 
+	"memex/internal/memex/core"
 	"memex/internal/memex/migration"
-	"memex/internal/memex/storage"
+	"memex/internal/memex/repository"
 )
 
 var (
-	currentRepo *storage.MXStore
+	currentRepo core.Repository
 	repoPath    string
 )
 
@@ -25,54 +25,14 @@ func StatusCommand(args ...string) error {
 	}
 
 	fmt.Printf("Repository: %s\n", repoPath)
-	fmt.Printf("Nodes: %d\n", len(repo.Nodes()))
 
-	// List all nodes
-	for _, entry := range repo.Nodes() {
-		node, err := repo.GetNode(fmt.Sprintf("%x", entry.ID[:]))
-		if err != nil {
-			continue
-		}
-		fmt.Printf("\nNode ID: %s\n", node.ID)
-		if filename, ok := node.Meta["filename"].(string); ok {
-			fmt.Printf("  File: %s\n", filename)
-		}
-		fmt.Printf("  Type: %s\n", node.Type)
-		fmt.Printf("  Created: %s\n", node.Created.Format(time.RFC3339))
-		if contentHash, ok := node.Meta["content"].(string); ok {
-			fmt.Printf("  Content: %s\n", contentHash[:8])
-		}
-
-		// Print chunks with more detailed type information
-		if chunksRaw, ok := node.Meta["chunks"]; ok {
-			var chunkList []string
-			switch chunks := chunksRaw.(type) {
-			case []interface{}:
-				for _, chunk := range chunks {
-					if chunkStr, ok := chunk.(string); ok {
-						chunkList = append(chunkList, chunkStr)
-					}
-				}
-			case []string:
-				chunkList = chunks
-			case string:
-				chunkList = strings.Fields(chunks)
-			}
-			if len(chunkList) > 0 {
-				fmt.Printf("  Chunks: %d [%v]\n", len(chunkList), chunkList)
-			} else {
-				fmt.Printf("  Chunks: none\n")
-			}
-		} else {
-			fmt.Printf("  Chunks: none (not found)\n")
-		}
-
-		// Print all metadata for debugging
-		fmt.Printf("  Metadata:\n")
-		for k, v := range node.Meta {
-			fmt.Printf("    %s: %v\n", k, v)
-		}
+	// Check repository access
+	_, err = repo.GetNode("0")
+	if err != nil && !strings.Contains(err.Error(), "not found") {
+		return fmt.Errorf("checking repository: %w", err)
 	}
+
+	fmt.Printf("Status: Ready\n")
 	return nil
 }
 
@@ -87,7 +47,7 @@ func InitCommand(args ...string) error {
 		name += ".mx"
 	}
 
-	repo, err := storage.CreateMX(name)
+	repo, err := repository.Create(name)
 	if err != nil {
 		return fmt.Errorf("creating repository: %w", err)
 	}
@@ -108,7 +68,7 @@ func ConnectCommand(args ...string) error {
 		path += ".mx"
 	}
 
-	repo, err := storage.OpenMX(path)
+	repo, err := repository.Open(path)
 	if err != nil {
 		return fmt.Errorf("opening repository: %w", err)
 	}
@@ -119,7 +79,7 @@ func ConnectCommand(args ...string) error {
 }
 
 // GetRepository returns the current repository
-func GetRepository() (*storage.MXStore, error) {
+func GetRepository() (core.Repository, error) {
 	if currentRepo == nil {
 		return nil, fmt.Errorf("no repository connected")
 	}
@@ -137,7 +97,7 @@ func OpenRepository() error {
 	// Find first .mx file
 	for _, entry := range entries {
 		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".mx") {
-			repo, err := storage.OpenMX(entry.Name())
+			repo, err := repository.Open(entry.Name())
 			if err != nil {
 				return fmt.Errorf("opening repository: %w", err)
 			}
@@ -180,7 +140,7 @@ func EditCommand(args ...string) error {
 		return fmt.Errorf("empty note not saved")
 	}
 
-	meta := map[string]any{
+	meta := map[string]interface{}{
 		"type": "note",
 	}
 
@@ -208,7 +168,7 @@ func AddCommand(args ...string) error {
 		return err
 	}
 
-	meta := map[string]any{
+	meta := map[string]interface{}{
 		"filename": filepath.Base(path),
 		"type":     "file",
 	}
@@ -249,7 +209,7 @@ func LinkCommand(args ...string) error {
 	target := args[1]
 	linkType := args[2]
 
-	meta := map[string]any{}
+	meta := map[string]interface{}{}
 	if len(args) > 3 {
 		meta["note"] = args[3]
 	}
@@ -259,8 +219,8 @@ func LinkCommand(args ...string) error {
 
 // LinksCommand shows links for a node
 func LinksCommand(args ...string) error {
-	if len(args) < 2 {
-		return fmt.Errorf("links requires repository path and node ID")
+	if len(args) < 1 {
+		return fmt.Errorf("links requires node ID")
 	}
 
 	repo, err := GetRepository()
@@ -268,7 +228,7 @@ func LinksCommand(args ...string) error {
 		return err
 	}
 
-	nodeID := args[1]
+	nodeID := args[0]
 	links, err := repo.GetLinks(nodeID)
 	if err != nil {
 		return err
@@ -279,14 +239,6 @@ func LinksCommand(args ...string) error {
 		fmt.Printf("%s -> %s [%s]\n", nodeID[:8], link.Target[:8], link.Type)
 		if note, ok := link.Meta["note"].(string); ok {
 			fmt.Printf("  Note: %s\n", note)
-		}
-		if link.Type == "similar" {
-			if similarity, ok := link.Meta["similarity"].(float64); ok {
-				fmt.Printf("  Similarity: %.1f%%\n", similarity*100)
-			}
-			if shared, ok := link.Meta["shared"].(int); ok {
-				fmt.Printf("  Shared chunks: %d\n", shared)
-			}
 		}
 	}
 
