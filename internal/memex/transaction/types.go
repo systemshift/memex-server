@@ -133,11 +133,12 @@ func NewOperation(opType uint32, target string, action string, data []byte, meta
 
 // Action type constants
 const (
-	ActionAddNode    = coretx.ActionAddNode
-	ActionDeleteNode = coretx.ActionDeleteNode
-	ActionAddLink    = coretx.ActionAddLink
-	ActionDeleteLink = coretx.ActionDeleteLink
-	ActionAddChunk   = coretx.ActionAddChunk
-	ActionModifyNode = coretx.ActionModifyNode
-	ActionModifyLink = coretx.ActionModifyLink
+	ActionAddNode       = coretx.ActionAddNode
+	ActionDeleteNode    = coretx.ActionDeleteNode
+	ActionAddLink       = coretx.ActionAddLink
+	ActionDeleteLink    = coretx.ActionDeleteLink
+	ActionModifyNode    = coretx.ActionModifyNode
+	ActionModifyLink    = coretx.ActionModifyLink
+	ActionPutContent    = coretx.ActionPutContent
+	ActionDeleteContent = coretx.ActionDeleteContent
 )

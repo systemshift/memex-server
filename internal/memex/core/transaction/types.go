@@ -11,13 +11,17 @@ import (
 type ActionType string
 
 const (
+	// Original actions
 	ActionAddNode    ActionType = "AddNode"
 	ActionDeleteNode ActionType = "DeleteNode"
 	ActionAddLink    ActionType = "AddLink"
 	ActionDeleteLink ActionType = "DeleteLink"
-	ActionAddChunk   ActionType = "AddChunk"
 	ActionModifyNode ActionType = "ModifyNode"
 	ActionModifyLink ActionType = "ModifyLink"
+
+	// Storage actions
+	ActionPutContent    ActionType = "PutContent"    // Store new content
+	ActionDeleteContent ActionType = "DeleteContent" // Delete content
 )
 
 // Action represents a single graph modification
