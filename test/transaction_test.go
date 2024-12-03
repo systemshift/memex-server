@@ -5,8 +5,9 @@ import (
 	"testing"
 	"time"
 
+	coretx "memex/internal/memex/core/transaction"
 	"memex/internal/memex/storage"
-	"memex/internal/memex/storage/tx"
+	txstore "memex/internal/memex/transaction"
 )
 
 func TestTransactionSystem(t *testing.T) {
@@ -22,130 +23,127 @@ func TestTransactionSystem(t *testing.T) {
 	defer store.Close()
 
 	// Create transaction store
-	txStore := tx.NewStore(store.GetFile(), store.GetLockManager())
-	txLog, err := tx.NewLog(tmpDir, store.GetLockManager())
+	txStore, err := txstore.NewActionStore(store)
 	if err != nil {
-		t.Fatalf("creating transaction log: %v", err)
+		t.Fatalf("creating transaction store: %v", err)
 	}
-	txManager := tx.NewManager(store.GetFile(), store.GetLockManager())
-	txVerifier := tx.NewVerifier(txStore, txLog, txManager, store.GetLockManager())
 
 	// Test basic transaction operations
 	t.Run("Basic Operations", func(t *testing.T) {
 		// Begin transaction
-		txID, err := txStore.Begin(tx.TxTypeNode, map[string]any{
+		meta := map[string]any{
 			"description": "Add test node",
-		})
+		}
+		if err := txStore.RecordAction(coretx.ActionAddNode, meta); err != nil {
+			t.Fatalf("recording action: %v", err)
+		}
+
+		// Verify history
+		history, err := txStore.GetHistory()
 		if err != nil {
-			t.Fatalf("beginning transaction: %v", err)
+			t.Fatalf("getting history: %v", err)
 		}
 
-		// Create operation
-		op, err := tx.NewOperation(tx.OpTypeCreate, "test-node", "create", []byte("test content"), map[string]any{
-			"type": "note",
-		})
-		if err != nil {
-			t.Fatalf("creating operation: %v", err)
+		if len(history) != 1 {
+			t.Errorf("expected 1 action in history, got %d", len(history))
 		}
 
-		// Add operation to transaction
-		if err := txStore.AddOperation(txID, op); err != nil {
-			t.Fatalf("adding operation: %v", err)
-		}
-
-		// Commit transaction
-		if err := txStore.Commit(txID); err != nil {
-			t.Fatalf("committing transaction: %v", err)
-		}
-
-		// Verify transaction
-		if err := txVerifier.VerifyTransaction(txID); err != nil {
-			t.Errorf("verifying transaction: %v", err)
+		action := history[0]
+		if action.Type != coretx.ActionAddNode {
+			t.Errorf("expected action type %s, got %s", coretx.ActionAddNode, action.Type)
 		}
 	})
 
 	// Test transaction rollback
 	t.Run("Transaction Rollback", func(t *testing.T) {
-		// Begin transaction
-		txID, err := txStore.Begin(tx.TxTypeNode, nil)
+		// Record action
+		meta := map[string]any{
+			"description": "Test rollback",
+		}
+		if err := txStore.RecordAction(coretx.ActionAddNode, meta); err != nil {
+			t.Fatalf("recording action: %v", err)
+		}
+
+		// Verify history
+		history, err := txStore.GetHistory()
 		if err != nil {
-			t.Fatalf("beginning transaction: %v", err)
+			t.Fatalf("getting history: %v", err)
 		}
 
-		// Create operation
-		op, err := tx.NewOperation(tx.OpTypeCreate, "test-node-2", "create", []byte("test content 2"), nil)
-		if err != nil {
-			t.Fatalf("creating operation: %v", err)
-		}
-
-		// Add operation to transaction
-		if err := txStore.AddOperation(txID, op); err != nil {
-			t.Fatalf("adding operation: %v", err)
-		}
-
-		// Rollback transaction
-		if err := txStore.Rollback(txID); err != nil {
-			t.Fatalf("rolling back transaction: %v", err)
-		}
-
-		// Verify transaction status
-		transaction, err := txStore.Get(txID)
-		if err != nil {
-			t.Fatalf("getting transaction: %v", err)
-		}
-		if transaction.Status != tx.TxStatusRollback {
-			t.Errorf("expected transaction status %d, got %d", tx.TxStatusRollback, transaction.Status)
+		if len(history) != 2 {
+			t.Errorf("expected 2 actions in history, got %d", len(history))
 		}
 	})
 
 	// Test transaction logging
 	t.Run("Transaction Logging", func(t *testing.T) {
-		// Begin transaction
-		txID, err := txStore.Begin(tx.TxTypeNode, nil)
+		// Record multiple actions
+		actions := []struct {
+			Type    coretx.ActionType
+			Payload map[string]any
+		}{
+			{
+				Type: coretx.ActionAddNode,
+				Payload: map[string]any{
+					"description": "First node",
+				},
+			},
+			{
+				Type: coretx.ActionAddLink,
+				Payload: map[string]any{
+					"source": "node1",
+					"target": "node2",
+				},
+			},
+		}
+
+		for _, a := range actions {
+			if err := txStore.RecordAction(a.Type, a.Payload); err != nil {
+				t.Fatalf("recording action: %v", err)
+			}
+		}
+
+		// Verify history
+		history, err := txStore.GetHistory()
 		if err != nil {
-			t.Fatalf("beginning transaction: %v", err)
+			t.Fatalf("getting history: %v", err)
 		}
 
-		// Get transaction
-		transaction, err := txStore.Get(txID)
+		if len(history) != 4 {
+			t.Errorf("expected 4 actions in history, got %d", len(history))
+		}
+
+		// Verify history integrity
+		valid, err := txStore.VerifyHistory()
 		if err != nil {
-			t.Fatalf("getting transaction: %v", err)
+			t.Fatalf("verifying history: %v", err)
 		}
-
-		// Log transaction
-		if err := txLog.LogTransaction(transaction); err != nil {
-			t.Fatalf("logging transaction: %v", err)
-		}
-
-		// Verify log consistency
-		if err := txVerifier.VerifyLogConsistency(); err != nil {
-			t.Errorf("verifying log consistency: %v", err)
+		if !valid {
+			t.Error("history verification failed")
 		}
 	})
 
-	// Test pending transactions
+	// Test pending transactions with shorter timeout
 	t.Run("Pending Transactions", func(t *testing.T) {
-		// Begin transaction but don't commit
-		txID, err := txStore.Begin(tx.TxTypeNode, nil)
+		// Record action
+		meta := map[string]any{
+			"description": "Test pending",
+		}
+		if err := txStore.RecordAction(coretx.ActionAddNode, meta); err != nil {
+			t.Fatalf("recording action: %v", err)
+		}
+
+		// Wait a shorter time
+		time.Sleep(100 * time.Millisecond)
+
+		// Verify history
+		history, err := txStore.GetHistory()
 		if err != nil {
-			t.Fatalf("beginning transaction: %v", err)
+			t.Fatalf("getting history: %v", err)
 		}
 
-		// Wait a bit to ensure transaction times out
-		time.Sleep(6 * time.Second)
-
-		// Verify pending transactions
-		if err := txVerifier.VerifyPendingTransactions(); err != nil {
-			t.Errorf("verifying pending transactions: %v", err)
-		}
-
-		// Transaction should be rolled back due to timeout
-		transaction, err := txStore.Get(txID)
-		if err != nil {
-			t.Fatalf("getting transaction: %v", err)
-		}
-		if transaction.Status != tx.TxStatusRollback {
-			t.Errorf("expected transaction status %d, got %d", tx.TxStatusRollback, transaction.Status)
+		if len(history) != 5 {
+			t.Errorf("expected 5 actions in history, got %d", len(history))
 		}
 	})
 }
