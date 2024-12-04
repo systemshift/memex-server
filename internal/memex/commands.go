@@ -26,9 +26,9 @@ func StatusCommand(args ...string) error {
 
 	fmt.Printf("Repository: %s\n", repoPath)
 
-	// Check repository access
-	_, err = repo.GetNode("0")
-	if err != nil && !strings.Contains(err.Error(), "not found") {
+	// Check repository access by listing nodes
+	_, err = repo.ListNodes()
+	if err != nil {
 		return fmt.Errorf("checking repository: %w", err)
 	}
 

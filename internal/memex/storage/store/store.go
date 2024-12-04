@@ -88,15 +88,8 @@ func (s *ChunkStore) Path() string {
 
 // GetNode returns a node by ID
 func (s *ChunkStore) GetNode(id string) (*core.Node, error) {
-	// Convert ID to byte array
-	var hash [32]byte
-	_, err := fmt.Sscanf(id, "%x", &hash)
-	if err != nil {
-		return nil, fmt.Errorf("parsing node ID: %w", err)
-	}
-
 	// Get node data
-	data, err := s.Get([][]byte{hash[:]})
+	data, err := s.Get([][]byte{[]byte(id)})
 	if err != nil {
 		return nil, fmt.Errorf("getting node data: %w", err)
 	}
@@ -162,6 +155,43 @@ func (s *ChunkStore) Put(content []byte) ([][]byte, error) {
 	return addresses, nil
 }
 
+// PutWithID stores content with a specific ID
+func (s *ChunkStore) PutWithID(id string, content []byte) error {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	// Delete existing chunk if it exists
+	if offset, exists := s.index[id]; exists {
+		if err := s.decrementRefCount(offset, id); err != nil {
+			return fmt.Errorf("deleting existing chunk: %w", err)
+		}
+	}
+
+	// Write new chunk
+	hash := sha256.Sum256(content)
+	offset, err := s.writeChunk(content, hash)
+	if err != nil {
+		return fmt.Errorf("writing chunk: %w", err)
+	}
+
+	// Store in index using the provided ID
+	s.index[id] = offset
+
+	// Also store using raw bytes if ID is a hex string
+	if len(id) == 64 { // Length of a hex-encoded SHA-256 hash
+		if hashBytes, err := hex.DecodeString(id); err == nil {
+			s.index[string(hashBytes)] = offset
+		}
+	}
+
+	// Also store using hex string if ID is raw bytes
+	if len(id) == 32 { // Length of a raw SHA-256 hash
+		s.index[hex.EncodeToString([]byte(id))] = offset
+	}
+
+	return nil
+}
+
 // Get retrieves content from chunk addresses
 func (s *ChunkStore) Get(addresses [][]byte) ([]byte, error) {
 	s.mutex.RLock()
@@ -169,11 +199,15 @@ func (s *ChunkStore) Get(addresses [][]byte) ([]byte, error) {
 
 	var content bytes.Buffer
 	for _, addr := range addresses {
-		// Get chunk offset
-		hashStr := hex.EncodeToString(addr)
-		offset, exists := s.index[hashStr]
+		// Try using the raw address as the key first
+		offset, exists := s.index[string(addr)]
 		if !exists {
-			return nil, fmt.Errorf("chunk not found: %x", addr)
+			// If not found, try using it as a hex string
+			hashStr := hex.EncodeToString(addr)
+			offset, exists = s.index[hashStr]
+			if !exists {
+				return nil, fmt.Errorf("chunk not found: %x", addr)
+			}
 		}
 
 		// Read chunk
@@ -226,12 +260,22 @@ func (s *ChunkStore) ListChunks() ([][]byte, error) {
 	defer s.mutex.RUnlock()
 
 	chunks := make([][]byte, 0, len(s.index))
+	seen := make(map[string]bool)
+
 	for hashStr := range s.index {
+		// Try to decode as hex first
 		addr, err := hex.DecodeString(hashStr)
 		if err != nil {
-			continue
+			// If not hex, use raw bytes
+			addr = []byte(hashStr)
 		}
-		chunks = append(chunks, addr)
+
+		// Deduplicate entries
+		addrStr := string(addr)
+		if !seen[addrStr] {
+			chunks = append(chunks, addr)
+			seen[addrStr] = true
+		}
 	}
 
 	return chunks, nil
@@ -276,6 +320,7 @@ func (s *ChunkStore) loadIndex() error {
 		if header.RefCount > 0 {
 			hashStr := hex.EncodeToString(header.Hash[:])
 			s.index[hashStr] = offset
+			s.index[string(header.Hash[:])] = offset
 		}
 
 		// Move to next chunk
@@ -437,6 +482,13 @@ func (s *ChunkStore) decrementRefCount(offset int64, hashStr string) error {
 	// Remove from index if ref count is 0
 	if header.RefCount == 0 {
 		delete(s.index, hashStr)
+		if len(hashStr) == 64 { // Length of a hex-encoded SHA-256 hash
+			if hashBytes, err := hex.DecodeString(hashStr); err == nil {
+				delete(s.index, string(hashBytes))
+			}
+		} else if len(hashStr) == 32 { // Length of a raw SHA-256 hash
+			delete(s.index, hex.EncodeToString([]byte(hashStr)))
+		}
 	}
 
 	return nil

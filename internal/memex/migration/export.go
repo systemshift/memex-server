@@ -45,15 +45,20 @@ func (e *Exporter) Export() error {
 	nodes := make(map[string]*core.Node)
 	chunks := make(map[string]bool)
 
-	// TODO: Implement node listing in core.Repository
-	// For now, try to export a test node
-	if node, err := e.repo.GetNode("test"); err == nil {
-		id := node.ID
+	// Get all node IDs
+	nodeIDs, err := e.repo.ListNodes()
+	if err != nil {
+		return fmt.Errorf("listing nodes: %w", err)
+	}
+
+	// Export each node
+	for _, id := range nodeIDs {
 		if err := exportNode(e.repo, id, tw, nodes, chunks); err != nil {
 			return fmt.Errorf("exporting nodes: %w", err)
 		}
 		manifest.Nodes++
 	}
+
 	fmt.Printf("Exported %d nodes\n", manifest.Nodes)
 
 	// Export links
@@ -120,6 +125,13 @@ func (e *Exporter) ExportSubgraph(nodes []string, depth int) error {
 			return fmt.Errorf("exporting nodes: %w", err)
 		}
 		manifest.Nodes++
+
+		// Export connected nodes up to specified depth
+		if depth > 0 {
+			if err := e.exportConnectedNodes(id, depth, tw, exportedNodes, chunks, &manifest); err != nil {
+				return fmt.Errorf("exporting connected nodes: %w", err)
+			}
+		}
 	}
 	fmt.Printf("Exported %d nodes\n", manifest.Nodes)
 
@@ -158,6 +170,33 @@ func (e *Exporter) ExportSubgraph(nodes []string, depth int) error {
 }
 
 // Internal functions
+
+func (e *Exporter) exportConnectedNodes(id string, depth int, tw *tar.Writer, nodes map[string]*core.Node, chunks map[string]bool, manifest *ExportManifest) error {
+	if depth <= 0 {
+		return nil
+	}
+
+	links, err := e.repo.GetLinks(id)
+	if err != nil {
+		return fmt.Errorf("getting links: %w", err)
+	}
+
+	for _, link := range links {
+		if _, exists := nodes[link.Target]; !exists {
+			if err := exportNode(e.repo, link.Target, tw, nodes, chunks); err != nil {
+				return fmt.Errorf("exporting connected node: %w", err)
+			}
+			manifest.Nodes++
+
+			// Recursively export connected nodes
+			if err := e.exportConnectedNodes(link.Target, depth-1, tw, nodes, chunks, manifest); err != nil {
+				return fmt.Errorf("exporting connected nodes: %w", err)
+			}
+		}
+	}
+
+	return nil
+}
 
 func exportNode(repo core.Repository, id string, tw *tar.Writer, nodes map[string]*core.Node, chunks map[string]bool) error {
 	// Skip if already exported

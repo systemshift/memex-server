@@ -44,7 +44,7 @@ func (i *Importer) Import() error {
 
 	// Import chunks
 	fmt.Println("Importing chunks...")
-	chunks := make(map[string]bool)
+	chunks := make(map[string][]byte)
 	for {
 		header, err := tr.Next()
 		if err == io.EOF {
@@ -69,12 +69,12 @@ func (i *Importer) Import() error {
 		}
 
 		// Store chunk
-		chunks[hash] = true
+		chunks[hash] = data
 	}
 
 	// Import nodes
 	fmt.Println("Importing nodes...")
-	nodes := make(map[string]*core.Node)
+	nodes := make(map[string]string) // Map original ID to new ID
 	for {
 		header, err := tr.Next()
 		if err == io.EOF {
@@ -89,6 +89,9 @@ func (i *Importer) Import() error {
 			continue
 		}
 
+		// Get original ID from filename
+		originalID := filepath.Base(header.Name)
+
 		// Read node data
 		data := make([]byte, header.Size)
 		if _, err := io.ReadFull(tr, data); err != nil {
@@ -102,16 +105,18 @@ func (i *Importer) Import() error {
 		}
 
 		// Add prefix to ID if specified
+		nodeID := originalID
 		if i.options.Prefix != "" {
-			node.ID = i.options.Prefix + node.ID
+			nodeID = i.options.Prefix + originalID
 		}
 
-		// Store node
-		if _, err := i.repo.AddNode(node.Content, node.Type, node.Meta); err != nil {
+		// Store node with ID
+		if err := i.repo.AddNodeWithID(nodeID, node.Content, node.Type, node.Meta); err != nil {
 			return fmt.Errorf("storing node: %w", err)
 		}
 
-		nodes[node.ID] = &node
+		// Map original ID to new ID
+		nodes[originalID] = nodeID
 	}
 
 	// Import edges
@@ -142,14 +147,12 @@ func (i *Importer) Import() error {
 			return fmt.Errorf("parsing link: %w", err)
 		}
 
-		// Add prefix to IDs if specified
-		if i.options.Prefix != "" {
-			link.Source = i.options.Prefix + link.Source
-			link.Target = i.options.Prefix + link.Target
-		}
+		// Map to new IDs
+		sourceID := nodes[link.Source]
+		targetID := nodes[link.Target]
 
 		// Store link
-		if err := i.repo.AddLink(link.Source, link.Target, link.Type, link.Meta); err != nil {
+		if err := i.repo.AddLink(sourceID, targetID, link.Type, link.Meta); err != nil {
 			return fmt.Errorf("storing link: %w", err)
 		}
 	}

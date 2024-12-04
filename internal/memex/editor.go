@@ -1,12 +1,17 @@
 package memex
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"golang.org/x/term"
+)
+
+var (
+	ErrEditorClosed = errors.New("editor is closed")
 )
 
 // Editor represents a simple terminal-based text editor
@@ -18,6 +23,7 @@ type Editor struct {
 	screenCols int      // Terminal width
 	repoName   string   // Repository name
 	content    [][]rune // Current screen content (for display only)
+	closed     bool     // Whether the editor is closed
 }
 
 // NewEditor creates a new editor instance
@@ -41,6 +47,7 @@ func NewEditor(repoPath string) *Editor {
 		screenRows: rows - 3,     // Leave room for title and status line
 		screenCols: cols,
 		repoName:   filepath.Base(repoPath),
+		closed:     false,
 	}
 }
 
@@ -51,23 +58,35 @@ func (e *Editor) GetTempFile() string {
 
 // Close cleans up resources
 func (e *Editor) Close() {
-	if e.tempFile != "" {
+	if !e.closed && e.tempFile != "" {
 		os.Remove(e.tempFile)
+		e.closed = true
+		e.tempFile = ""
 	}
 }
 
 // WriteContent writes content to the temporary file
 func (e *Editor) WriteContent(content []byte) error {
-	return os.WriteFile(e.tempFile, content, 0644)
+	if e.closed {
+		return ErrEditorClosed
+	}
+	return os.WriteFile(e.tempFile, content, 0600) // More secure permissions for temp files
 }
 
 // ReadContent reads content from the temporary file
 func (e *Editor) ReadContent() ([]byte, error) {
+	if e.closed {
+		return nil, ErrEditorClosed
+	}
 	return os.ReadFile(e.tempFile)
 }
 
 // Run starts the editor and returns the edited content
 func (e *Editor) Run() (string, error) {
+	if e.closed {
+		return "", ErrEditorClosed
+	}
+
 	// Switch to raw mode
 	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
 	if err != nil {

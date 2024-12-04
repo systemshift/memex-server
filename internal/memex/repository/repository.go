@@ -1,293 +1,283 @@
 package repository
 
 import (
-	"bytes"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
-	"sort"
-	"strconv"
 	"time"
 
 	"memex/internal/memex/core"
 	"memex/internal/memex/storage/rabin"
 	"memex/internal/memex/storage/store"
-	"memex/internal/memex/transaction"
 )
 
-// Repository implements core.Repository using Rabin DAG storage
+// Repository represents a content repository
 type Repository struct {
-	store   *store.ChunkStore
-	txStore *transaction.ActionStore
-	path    string
+	path      string
+	store     *store.ChunkStore
+	nodeStore *store.ChunkStore
 }
 
-// Create creates a new repository
+// Create creates a new repository at the given path
 func Create(path string) (*Repository, error) {
-	// Create chunk store first since it implements transaction.Storage
+	// Create repository directory
+	if err := os.MkdirAll(path, 0755); err != nil {
+		return nil, fmt.Errorf("creating repository directory: %w", err)
+	}
+
+	// Create chunker
 	chunker := rabin.NewChunker()
-	chunkStore, err := store.NewStore(path, chunker, nil) // nil txStore initially
+
+	// Create store
+	contentStore, err := store.NewStore(filepath.Join(path, "store"), chunker, nil)
 	if err != nil {
 		return nil, fmt.Errorf("creating store: %w", err)
 	}
 
-	// Create transaction store using chunk store as storage
-	txStore, err := transaction.NewActionStore(chunkStore)
+	// Create node store
+	nodeStore, err := store.NewStore(filepath.Join(path, "nodes"), chunker, nil)
 	if err != nil {
-		chunkStore.Close()
-		return nil, fmt.Errorf("creating transaction store: %w", err)
+		return nil, fmt.Errorf("creating node store: %w", err)
 	}
 
-	// Update chunk store with transaction store
-	chunkStore.SetTxStore(txStore)
-
 	return &Repository{
-		store:   chunkStore,
-		txStore: txStore,
-		path:    path,
+		path:      path,
+		store:     contentStore,
+		nodeStore: nodeStore,
 	}, nil
 }
 
 // Open opens an existing repository
 func Open(path string) (*Repository, error) {
-	// Ensure path has .mx extension
-	if filepath.Ext(path) != ".mx" {
-		path += ".mx"
-	}
-
-	// Open chunk store first
+	// Create chunker
 	chunker := rabin.NewChunker()
-	chunkStore, err := store.NewStore(path, chunker, nil) // nil txStore initially
+
+	// Open store
+	contentStore, err := store.NewStore(filepath.Join(path, "store"), chunker, nil)
 	if err != nil {
 		return nil, fmt.Errorf("opening store: %w", err)
 	}
 
-	// Create transaction store using chunk store as storage
-	txStore, err := transaction.NewActionStore(chunkStore)
+	// Open node store
+	nodeStore, err := store.NewStore(filepath.Join(path, "nodes"), chunker, nil)
 	if err != nil {
-		chunkStore.Close()
-		return nil, fmt.Errorf("opening transaction store: %w", err)
+		return nil, fmt.Errorf("opening node store: %w", err)
 	}
 
-	// Update chunk store with transaction store
-	chunkStore.SetTxStore(txStore)
-
 	return &Repository{
-		store:   chunkStore,
-		txStore: txStore,
-		path:    path,
+		path:      path,
+		store:     contentStore,
+		nodeStore: nodeStore,
 	}, nil
 }
 
-// Helper function to convert interface{} to float64
-func toFloat64(v interface{}) (float64, bool) {
-	switch x := v.(type) {
-	case float64:
-		return x, true
-	case float32:
-		return float64(x), true
-	case int:
-		return float64(x), true
-	case int64:
-		return float64(x), true
-	case json.Number:
-		if f, err := x.Float64(); err == nil {
-			return f, true
-		}
-	case string:
-		if f, err := strconv.ParseFloat(x, 64); err == nil {
-			return f, true
-		}
-	}
-	return 0, false
-}
-
-// AddNode adds a new node
+// AddNode adds a node to the repository
 func (r *Repository) AddNode(content []byte, nodeType string, meta map[string]interface{}) (string, error) {
-	// Store content first
-	contentAddresses, err := r.store.Put(content)
+	// Store content
+	chunks, err := r.store.Put(content)
 	if err != nil {
 		return "", fmt.Errorf("storing content: %w", err)
 	}
 
-	// Convert addresses to hex strings
-	chunks := make([]string, len(contentAddresses))
-	for i, addr := range contentAddresses {
-		chunks[i] = hex.EncodeToString(addr)
-	}
-
-	// Create node metadata
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	nodeMeta := map[string]interface{}{
-		"type":     nodeType,
-		"created":  now,
-		"modified": now,
-		"chunks":   chunks,
-	}
-	if meta != nil {
-		for k, v := range meta {
-			if k != "chunks" { // Don't overwrite chunks
-				// Convert numbers to float64
-				if f, ok := toFloat64(v); ok {
-					nodeMeta[k] = f
-				} else {
-					nodeMeta[k] = v
-				}
-			}
-		}
-	}
-
-	// Store node metadata
-	metaBytes, err := json.Marshal(nodeMeta)
-	if err != nil {
-		return "", fmt.Errorf("marshaling metadata: %w", err)
-	}
-
-	// Store metadata
-	metaAddresses, err := r.store.Put(metaBytes)
-	if err != nil {
-		return "", fmt.Errorf("storing metadata: %w", err)
-	}
-
-	// Use first metadata chunk address as node ID
-	return hex.EncodeToString(metaAddresses[0]), nil
-}
-
-// GetNode retrieves a node
-func (r *Repository) GetNode(id string) (*core.Node, error) {
-	// Convert ID from hex string to bytes
-	metaAddr, err := hex.DecodeString(id)
-	if err != nil {
-		return nil, fmt.Errorf("parsing node ID: %w", err)
-	}
-
-	// Get node metadata
-	metaBytes, err := r.store.Get([][]byte{metaAddr})
-	if err != nil {
-		return nil, fmt.Errorf("getting metadata: %w", err)
-	}
-
-	// Parse metadata
-	var meta map[string]interface{}
-	dec := json.NewDecoder(bytes.NewReader(metaBytes))
-	dec.UseNumber() // Preserve number formats
-	if err := dec.Decode(&meta); err != nil {
-		return nil, fmt.Errorf("unmarshaling metadata: %w", err)
-	}
-
-	// Convert numbers to float64
-	for k, v := range meta {
-		if f, ok := toFloat64(v); ok {
-			meta[k] = f
-		}
-	}
-
-	// Get content chunks
-	var addresses [][]byte
-	if chunks, ok := meta["chunks"].([]interface{}); ok {
-		addresses = make([][]byte, len(chunks))
-		for i, chunk := range chunks {
-			if chunkStr, ok := chunk.(string); ok {
-				addr, err := hex.DecodeString(chunkStr)
-				if err != nil {
-					return nil, fmt.Errorf("parsing chunk address: %w", err)
-				}
-				addresses[i] = addr
-			}
-		}
-	}
-
-	// Get content
-	content, err := r.store.Get(addresses)
-	if err != nil {
-		return nil, fmt.Errorf("getting content: %w", err)
-	}
-
-	// Parse timestamps
-	created, _ := time.Parse(time.RFC3339Nano, meta["created"].(string))
-	modified, _ := time.Parse(time.RFC3339Nano, meta["modified"].(string))
-
-	return &core.Node{
-		ID:       id,
-		Type:     meta["type"].(string),
+	// Create node
+	now := time.Now().UTC()
+	node := &core.Node{
+		Type:     nodeType,
 		Content:  content,
 		Meta:     meta,
-		Created:  created,
-		Modified: modified,
-	}, nil
+		Created:  now,
+		Modified: now,
+	}
+
+	// Add chunks to metadata
+	if node.Meta == nil {
+		node.Meta = make(map[string]interface{})
+	} else {
+		// Deep copy metadata to avoid modifying the original
+		metaCopy := make(map[string]interface{})
+		metaJSON, err := json.Marshal(meta)
+		if err != nil {
+			return "", fmt.Errorf("marshaling metadata: %w", err)
+		}
+		if err := json.Unmarshal(metaJSON, &metaCopy); err != nil {
+			return "", fmt.Errorf("unmarshaling metadata: %w", err)
+		}
+		node.Meta = metaCopy
+	}
+
+	// Add chunks to metadata
+	chunkHashes := make([]string, len(chunks))
+	for i, chunk := range chunks {
+		chunkHashes[i] = fmt.Sprintf("%x", chunk)
+	}
+	node.Meta["chunks"] = chunkHashes
+
+	// Store node
+	data, err := json.Marshal(node)
+	if err != nil {
+		return "", fmt.Errorf("marshaling node: %w", err)
+	}
+
+	nodeChunks, err := r.nodeStore.Put(data)
+	if err != nil {
+		return "", fmt.Errorf("storing node: %w", err)
+	}
+
+	// Use first chunk hash as node ID
+	if len(nodeChunks) == 0 {
+		return "", fmt.Errorf("no chunks generated for node")
+	}
+	node.ID = fmt.Sprintf("%x", nodeChunks[0])
+	return node.ID, nil
 }
 
-// DeleteNode removes a node and its associated links
+// AddNodeWithID adds a node with a specific ID to the repository
+func (r *Repository) AddNodeWithID(id string, content []byte, nodeType string, meta map[string]interface{}) error {
+	// Store content
+	chunks, err := r.store.Put(content)
+	if err != nil {
+		return fmt.Errorf("storing content: %w", err)
+	}
+
+	// Create node
+	now := time.Now().UTC()
+	node := &core.Node{
+		ID:       id,
+		Type:     nodeType,
+		Content:  content,
+		Meta:     meta,
+		Created:  now,
+		Modified: now,
+	}
+
+	// Add chunks to metadata
+	if node.Meta == nil {
+		node.Meta = make(map[string]interface{})
+	} else {
+		// Deep copy metadata to avoid modifying the original
+		metaCopy := make(map[string]interface{})
+		metaJSON, err := json.Marshal(meta)
+		if err != nil {
+			return fmt.Errorf("marshaling metadata: %w", err)
+		}
+		if err := json.Unmarshal(metaJSON, &metaCopy); err != nil {
+			return fmt.Errorf("unmarshaling metadata: %w", err)
+		}
+		node.Meta = metaCopy
+	}
+
+	// Add chunks to metadata
+	chunkHashes := make([]string, len(chunks))
+	for i, chunk := range chunks {
+		chunkHashes[i] = fmt.Sprintf("%x", chunk)
+	}
+	node.Meta["chunks"] = chunkHashes
+
+	// Store node
+	data, err := json.Marshal(node)
+	if err != nil {
+		return fmt.Errorf("marshaling node: %w", err)
+	}
+
+	// Store node with specific ID
+	if err := r.nodeStore.PutWithID(id, data); err != nil {
+		return fmt.Errorf("storing node: %w", err)
+	}
+
+	return nil
+}
+
+// GetNode retrieves a node from the repository
+func (r *Repository) GetNode(id string) (*core.Node, error) {
+	// Get node data
+	data, err := r.nodeStore.Get([][]byte{[]byte(id)})
+	if err != nil {
+		// Try hex decoding if it's a hex string
+		if len(id) == 64 { // Length of a hex-encoded SHA-256 hash
+			if hashBytes, err := hex.DecodeString(id); err == nil {
+				data, err = r.nodeStore.Get([][]byte{hashBytes})
+				if err != nil {
+					return nil, fmt.Errorf("getting node: %w", err)
+				}
+			}
+		} else {
+			return nil, fmt.Errorf("getting node: %w", err)
+		}
+	}
+
+	// Parse node
+	var node core.Node
+	if err := json.Unmarshal(data, &node); err != nil {
+		return nil, fmt.Errorf("parsing node: %w", err)
+	}
+
+	node.ID = id
+	return &node, nil
+}
+
+// ListNodes returns a list of all node IDs in the repository
+func (r *Repository) ListNodes() ([]string, error) {
+	chunks, err := r.nodeStore.ListChunks()
+	if err != nil {
+		return nil, fmt.Errorf("listing chunks: %w", err)
+	}
+
+	ids := make([]string, len(chunks))
+	for i, chunk := range chunks {
+		ids[i] = fmt.Sprintf("%x", chunk)
+	}
+	return ids, nil
+}
+
+// DeleteNode removes a node from the repository
 func (r *Repository) DeleteNode(id string) error {
-	// Get node first
+	// Get node first to get chunk references
 	node, err := r.GetNode(id)
 	if err != nil {
 		return fmt.Errorf("getting node: %w", err)
 	}
 
-	// Delete all links associated with this node
-	chunks, err := r.store.ListChunks()
+	// Delete node
+	err = r.nodeStore.Delete([][]byte{[]byte(id)})
 	if err != nil {
-		return fmt.Errorf("listing chunks: %w", err)
-	}
-
-	for _, chunkID := range chunks {
-		// Get chunk data
-		data, err := r.store.Get([][]byte{chunkID})
-		if err != nil {
-			continue
-		}
-
-		// Try to parse as link metadata
-		var meta map[string]interface{}
-		if err := json.Unmarshal(data, &meta); err != nil {
-			continue
-		}
-
-		// Check if this is a link chunk
-		if isLink, ok := meta["isLink"].(bool); !ok || !isLink {
-			continue
-		}
-
-		// Check if this link involves our node
-		source, _ := meta["source"].(string)
-		target, _ := meta["target"].(string)
-		if source == id || target == id {
-			// Delete this link
-			if err := r.store.Delete([][]byte{chunkID}); err != nil {
-				return fmt.Errorf("deleting associated link: %w", err)
-			}
-		}
-	}
-
-	// Get chunk addresses
-	var addresses [][]byte
-	if chunks, ok := node.Meta["chunks"].([]interface{}); ok {
-		addresses = make([][]byte, len(chunks))
-		for i, chunk := range chunks {
-			if chunkStr, ok := chunk.(string); ok {
-				addr, err := hex.DecodeString(chunkStr)
-				if err != nil {
-					return fmt.Errorf("parsing chunk address: %w", err)
+		// Try hex decoding if it's a hex string
+		if len(id) == 64 { // Length of a hex-encoded SHA-256 hash
+			if hashBytes, err := hex.DecodeString(id); err == nil {
+				if err := r.nodeStore.Delete([][]byte{hashBytes}); err != nil {
+					return fmt.Errorf("deleting node: %w", err)
 				}
-				addresses[i] = addr
 			}
+		} else {
+			return fmt.Errorf("deleting node: %w", err)
 		}
 	}
 
 	// Delete content chunks
-	if err := r.store.Delete(addresses); err != nil {
-		return fmt.Errorf("deleting content: %w", err)
+	if chunks, ok := node.Meta["chunks"].([]string); ok {
+		chunkData := make([][]byte, len(chunks))
+		for i, chunk := range chunks {
+			hashBytes, err := hex.DecodeString(chunk)
+			if err != nil {
+				continue
+			}
+			chunkData[i] = hashBytes
+		}
+		if err := r.store.Delete(chunkData); err != nil {
+			return fmt.Errorf("deleting chunks: %w", err)
+		}
 	}
 
-	// Delete metadata chunk
-	metaAddr, err := hex.DecodeString(id)
+	// Delete associated links
+	links, err := r.GetLinks(id)
 	if err != nil {
-		return fmt.Errorf("parsing metadata address: %w", err)
+		return fmt.Errorf("getting links: %w", err)
 	}
-	if err := r.store.Delete([][]byte{metaAddr}); err != nil {
-		return fmt.Errorf("deleting metadata: %w", err)
+	for _, link := range links {
+		if err := r.DeleteLink(link.Source, link.Target, link.Type); err != nil {
+			return fmt.Errorf("deleting link: %w", err)
+		}
 	}
 
 	return nil
@@ -297,175 +287,137 @@ func (r *Repository) DeleteNode(id string) error {
 func (r *Repository) AddLink(source, target, linkType string, meta map[string]interface{}) error {
 	// Verify nodes exist
 	if _, err := r.GetNode(source); err != nil {
-		return fmt.Errorf("source node not found: %w", err)
+		return fmt.Errorf("getting source node: %w", err)
 	}
 	if _, err := r.GetNode(target); err != nil {
-		return fmt.Errorf("target node not found: %w", err)
+		return fmt.Errorf("getting target node: %w", err)
 	}
 
-	// Create link metadata
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	linkMeta := map[string]interface{}{
-		"source":   source,
-		"target":   target,
-		"type":     linkType,
-		"created":  now,
-		"modified": now,
-		"isLink":   true, // Mark this chunk as a link
+	// Create link
+	now := time.Now().UTC()
+	link := &core.Link{
+		Source:   source,
+		Target:   target,
+		Type:     linkType,
+		Meta:     meta,
+		Created:  now,
+		Modified: now,
 	}
+
+	// Deep copy metadata to avoid modifying the original
 	if meta != nil {
-		for k, v := range meta {
-			if k != "isLink" { // Don't overwrite isLink flag
-				// Convert numbers to float64
-				if f, ok := toFloat64(v); ok {
-					linkMeta[k] = f
-				} else {
-					linkMeta[k] = v
-				}
-			}
+		metaCopy := make(map[string]interface{})
+		metaJSON, err := json.Marshal(meta)
+		if err != nil {
+			return fmt.Errorf("marshaling metadata: %w", err)
 		}
+		if err := json.Unmarshal(metaJSON, &metaCopy); err != nil {
+			return fmt.Errorf("unmarshaling metadata: %w", err)
+		}
+		link.Meta = metaCopy
 	}
 
-	// Store link metadata
-	metaBytes, err := json.Marshal(linkMeta)
+	// Store link
+	data, err := json.Marshal(link)
 	if err != nil {
-		return fmt.Errorf("marshaling metadata: %w", err)
+		return fmt.Errorf("marshaling link: %w", err)
 	}
 
-	// Store metadata
-	_, err = r.store.Put(metaBytes)
+	chunks, err := r.nodeStore.Put(data)
 	if err != nil {
 		return fmt.Errorf("storing link: %w", err)
+	}
+
+	// Use first chunk hash as link ID
+	if len(chunks) == 0 {
+		return fmt.Errorf("no chunks generated for link")
 	}
 
 	return nil
 }
 
-// GetLinks retrieves links for a node
+// GetLinks returns all links for a node (both incoming and outgoing)
 func (r *Repository) GetLinks(nodeID string) ([]*core.Link, error) {
-	// Get all chunks and look for link metadata
-	chunks, err := r.store.ListChunks()
+	// List all chunks
+	chunks, err := r.nodeStore.ListChunks()
 	if err != nil {
 		return nil, fmt.Errorf("listing chunks: %w", err)
 	}
 
+	// Filter and parse links
 	var links []*core.Link
-	for _, chunkID := range chunks {
+	for _, chunk := range chunks {
 		// Get chunk data
-		data, err := r.store.Get([][]byte{chunkID})
+		data, err := r.nodeStore.Get([][]byte{chunk})
 		if err != nil {
-			continue // Skip chunks we can't read
-		}
-
-		// Try to parse as link metadata
-		var meta map[string]interface{}
-		dec := json.NewDecoder(bytes.NewReader(data))
-		dec.UseNumber() // Preserve number formats
-		if err := dec.Decode(&meta); err != nil {
-			continue // Skip non-JSON chunks
-		}
-
-		// Convert numbers to float64
-		for k, v := range meta {
-			if f, ok := toFloat64(v); ok {
-				meta[k] = f
-			}
-		}
-
-		// Check if this is a link chunk
-		if isLink, ok := meta["isLink"].(bool); !ok || !isLink {
 			continue
 		}
 
-		// Check if this link involves our node
-		source, _ := meta["source"].(string)
-		target, _ := meta["target"].(string)
-		if source != nodeID && target != nodeID {
+		// Try to parse as link
+		var link core.Link
+		if err := json.Unmarshal(data, &link); err != nil {
 			continue
 		}
 
-		// Parse timestamps with nanosecond precision
-		created, _ := time.Parse(time.RFC3339Nano, meta["created"].(string))
-		modified, _ := time.Parse(time.RFC3339Nano, meta["modified"].(string))
-
-		// Create link
-		link := &core.Link{
-			Source:   source,
-			Target:   target,
-			Type:     meta["type"].(string),
-			Meta:     meta,
-			Created:  created,
-			Modified: modified,
+		// Check if link is related to node (either as source or target)
+		if link.Source == nodeID || link.Target == nodeID {
+			links = append(links, &link)
 		}
-
-		links = append(links, link)
 	}
-
-	// Sort links by creation time and then by order field
-	sort.SliceStable(links, func(i, j int) bool {
-		if links[i].Created.Equal(links[j].Created) {
-			// If timestamps are equal, use order field
-			orderI, _ := toFloat64(links[i].Meta["order"])
-			orderJ, _ := toFloat64(links[j].Meta["order"])
-			return orderI < orderJ
-		}
-		return links[i].Created.Before(links[j].Created)
-	})
 
 	return links, nil
 }
 
 // DeleteLink removes a link
 func (r *Repository) DeleteLink(source, target, linkType string) error {
-	// Get all chunks and look for matching link
-	chunks, err := r.store.ListChunks()
+	// List all chunks
+	chunks, err := r.nodeStore.ListChunks()
 	if err != nil {
 		return fmt.Errorf("listing chunks: %w", err)
 	}
 
-	for _, chunkID := range chunks {
+	// Find and delete matching link
+	for _, chunk := range chunks {
 		// Get chunk data
-		data, err := r.store.Get([][]byte{chunkID})
+		data, err := r.nodeStore.Get([][]byte{chunk})
 		if err != nil {
 			continue
 		}
 
-		// Try to parse as link metadata
-		var meta map[string]interface{}
-		if err := json.Unmarshal(data, &meta); err != nil {
+		// Try to parse as link
+		var link core.Link
+		if err := json.Unmarshal(data, &link); err != nil {
 			continue
 		}
 
-		// Check if this is our link
-		if isLink, ok := meta["isLink"].(bool); !ok || !isLink {
-			continue
-		}
-
-		if meta["source"] == source && meta["target"] == target && meta["type"] == linkType {
-			// Delete this chunk
-			if err := r.store.Delete([][]byte{chunkID}); err != nil {
+		// Check if this is the link to delete
+		if link.Source == source && link.Target == target && link.Type == linkType {
+			if err := r.nodeStore.Delete([][]byte{chunk}); err != nil {
 				return fmt.Errorf("deleting link: %w", err)
 			}
 			return nil
 		}
 	}
 
-	return fmt.Errorf("link not found")
+	return nil
 }
 
-// GetContent retrieves content by ID
+// GetContent retrieves content from the repository
 func (r *Repository) GetContent(id string) ([]byte, error) {
-	node, err := r.GetNode(id)
+	hashBytes, err := hex.DecodeString(id)
 	if err != nil {
-		return nil, fmt.Errorf("getting node: %w", err)
+		return nil, fmt.Errorf("parsing content ID: %w", err)
 	}
-	return node.Content, nil
+	return r.store.Get([][]byte{hashBytes})
 }
 
 // Close closes the repository
 func (r *Repository) Close() error {
 	if err := r.store.Close(); err != nil {
 		return fmt.Errorf("closing store: %w", err)
+	}
+	if err := r.nodeStore.Close(); err != nil {
+		return fmt.Errorf("closing node store: %w", err)
 	}
 	return nil
 }

@@ -28,8 +28,10 @@ type Link struct {
 type Repository interface {
 	// Node operations
 	AddNode(content []byte, nodeType string, meta map[string]interface{}) (string, error)
+	AddNodeWithID(id string, content []byte, nodeType string, meta map[string]interface{}) error
 	GetNode(id string) (*Node, error)
 	DeleteNode(id string) error
+	ListNodes() ([]string, error)
 
 	// Link operations
 	AddLink(source, target, linkType string, meta map[string]interface{}) error
