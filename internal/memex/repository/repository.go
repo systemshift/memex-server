@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"time"
 
 	"memex/internal/memex/core"
@@ -78,6 +80,29 @@ func Open(path string) (*Repository, error) {
 	}, nil
 }
 
+// Helper function to convert interface{} to float64
+func toFloat64(v interface{}) (float64, bool) {
+	switch x := v.(type) {
+	case float64:
+		return x, true
+	case float32:
+		return float64(x), true
+	case int:
+		return float64(x), true
+	case int64:
+		return float64(x), true
+	case json.Number:
+		if f, err := x.Float64(); err == nil {
+			return f, true
+		}
+	case string:
+		if f, err := strconv.ParseFloat(x, 64); err == nil {
+			return f, true
+		}
+	}
+	return 0, false
+}
+
 // AddNode adds a new node
 func (r *Repository) AddNode(content []byte, nodeType string, meta map[string]interface{}) (string, error) {
 	// Store content first
@@ -93,7 +118,7 @@ func (r *Repository) AddNode(content []byte, nodeType string, meta map[string]in
 	}
 
 	// Create node metadata
-	now := time.Now().Format(time.RFC3339)
+	now := time.Now().UTC().Format(time.RFC3339Nano)
 	nodeMeta := map[string]interface{}{
 		"type":     nodeType,
 		"created":  now,
@@ -103,7 +128,12 @@ func (r *Repository) AddNode(content []byte, nodeType string, meta map[string]in
 	if meta != nil {
 		for k, v := range meta {
 			if k != "chunks" { // Don't overwrite chunks
-				nodeMeta[k] = v
+				// Convert numbers to float64
+				if f, ok := toFloat64(v); ok {
+					nodeMeta[k] = f
+				} else {
+					nodeMeta[k] = v
+				}
 			}
 		}
 	}
@@ -112,12 +142,6 @@ func (r *Repository) AddNode(content []byte, nodeType string, meta map[string]in
 	metaBytes, err := json.Marshal(nodeMeta)
 	if err != nil {
 		return "", fmt.Errorf("marshaling metadata: %w", err)
-	}
-
-	// Verify JSON is valid
-	var verify map[string]interface{}
-	if err := json.Unmarshal(metaBytes, &verify); err != nil {
-		return "", fmt.Errorf("verifying metadata: %w", err)
 	}
 
 	// Store metadata
@@ -144,17 +168,19 @@ func (r *Repository) GetNode(id string) (*core.Node, error) {
 		return nil, fmt.Errorf("getting metadata: %w", err)
 	}
 
-	// Verify metadata is complete JSON
-	if !json.Valid(metaBytes) {
-		return nil, fmt.Errorf("invalid metadata JSON")
-	}
-
 	// Parse metadata
 	var meta map[string]interface{}
 	dec := json.NewDecoder(bytes.NewReader(metaBytes))
 	dec.UseNumber() // Preserve number formats
 	if err := dec.Decode(&meta); err != nil {
 		return nil, fmt.Errorf("unmarshaling metadata: %w", err)
+	}
+
+	// Convert numbers to float64
+	for k, v := range meta {
+		if f, ok := toFloat64(v); ok {
+			meta[k] = f
+		}
 	}
 
 	// Get content chunks
@@ -179,8 +205,8 @@ func (r *Repository) GetNode(id string) (*core.Node, error) {
 	}
 
 	// Parse timestamps
-	created, _ := time.Parse(time.RFC3339, meta["created"].(string))
-	modified, _ := time.Parse(time.RFC3339, meta["modified"].(string))
+	created, _ := time.Parse(time.RFC3339Nano, meta["created"].(string))
+	modified, _ := time.Parse(time.RFC3339Nano, meta["modified"].(string))
 
 	return &core.Node{
 		ID:       id,
@@ -192,12 +218,47 @@ func (r *Repository) GetNode(id string) (*core.Node, error) {
 	}, nil
 }
 
-// DeleteNode removes a node
+// DeleteNode removes a node and its associated links
 func (r *Repository) DeleteNode(id string) error {
 	// Get node first
 	node, err := r.GetNode(id)
 	if err != nil {
 		return fmt.Errorf("getting node: %w", err)
+	}
+
+	// Delete all links associated with this node
+	chunks, err := r.store.ListChunks()
+	if err != nil {
+		return fmt.Errorf("listing chunks: %w", err)
+	}
+
+	for _, chunkID := range chunks {
+		// Get chunk data
+		data, err := r.store.Get([][]byte{chunkID})
+		if err != nil {
+			continue
+		}
+
+		// Try to parse as link metadata
+		var meta map[string]interface{}
+		if err := json.Unmarshal(data, &meta); err != nil {
+			continue
+		}
+
+		// Check if this is a link chunk
+		if isLink, ok := meta["isLink"].(bool); !ok || !isLink {
+			continue
+		}
+
+		// Check if this link involves our node
+		source, _ := meta["source"].(string)
+		target, _ := meta["target"].(string)
+		if source == id || target == id {
+			// Delete this link
+			if err := r.store.Delete([][]byte{chunkID}); err != nil {
+				return fmt.Errorf("deleting associated link: %w", err)
+			}
+		}
 	}
 
 	// Get chunk addresses
@@ -243,7 +304,7 @@ func (r *Repository) AddLink(source, target, linkType string, meta map[string]in
 	}
 
 	// Create link metadata
-	now := time.Now().Format(time.RFC3339)
+	now := time.Now().UTC().Format(time.RFC3339Nano)
 	linkMeta := map[string]interface{}{
 		"source":   source,
 		"target":   target,
@@ -254,7 +315,14 @@ func (r *Repository) AddLink(source, target, linkType string, meta map[string]in
 	}
 	if meta != nil {
 		for k, v := range meta {
-			linkMeta[k] = v
+			if k != "isLink" { // Don't overwrite isLink flag
+				// Convert numbers to float64
+				if f, ok := toFloat64(v); ok {
+					linkMeta[k] = f
+				} else {
+					linkMeta[k] = v
+				}
+			}
 		}
 	}
 
@@ -262,12 +330,6 @@ func (r *Repository) AddLink(source, target, linkType string, meta map[string]in
 	metaBytes, err := json.Marshal(linkMeta)
 	if err != nil {
 		return fmt.Errorf("marshaling metadata: %w", err)
-	}
-
-	// Verify JSON is valid
-	var verify map[string]interface{}
-	if err := json.Unmarshal(metaBytes, &verify); err != nil {
-		return fmt.Errorf("verifying metadata: %w", err)
 	}
 
 	// Store metadata
@@ -295,17 +357,19 @@ func (r *Repository) GetLinks(nodeID string) ([]*core.Link, error) {
 			continue // Skip chunks we can't read
 		}
 
-		// Verify data is complete JSON
-		if !json.Valid(data) {
-			continue // Skip invalid JSON
-		}
-
 		// Try to parse as link metadata
 		var meta map[string]interface{}
 		dec := json.NewDecoder(bytes.NewReader(data))
 		dec.UseNumber() // Preserve number formats
 		if err := dec.Decode(&meta); err != nil {
 			continue // Skip non-JSON chunks
+		}
+
+		// Convert numbers to float64
+		for k, v := range meta {
+			if f, ok := toFloat64(v); ok {
+				meta[k] = f
+			}
 		}
 
 		// Check if this is a link chunk
@@ -320,9 +384,9 @@ func (r *Repository) GetLinks(nodeID string) ([]*core.Link, error) {
 			continue
 		}
 
-		// Parse timestamps
-		created, _ := time.Parse(time.RFC3339, meta["created"].(string))
-		modified, _ := time.Parse(time.RFC3339, meta["modified"].(string))
+		// Parse timestamps with nanosecond precision
+		created, _ := time.Parse(time.RFC3339Nano, meta["created"].(string))
+		modified, _ := time.Parse(time.RFC3339Nano, meta["modified"].(string))
 
 		// Create link
 		link := &core.Link{
@@ -336,6 +400,17 @@ func (r *Repository) GetLinks(nodeID string) ([]*core.Link, error) {
 
 		links = append(links, link)
 	}
+
+	// Sort links by creation time and then by order field
+	sort.SliceStable(links, func(i, j int) bool {
+		if links[i].Created.Equal(links[j].Created) {
+			// If timestamps are equal, use order field
+			orderI, _ := toFloat64(links[i].Meta["order"])
+			orderJ, _ := toFloat64(links[j].Meta["order"])
+			return orderI < orderJ
+		}
+		return links[i].Created.Before(links[j].Created)
+	})
 
 	return links, nil
 }
@@ -355,16 +430,9 @@ func (r *Repository) DeleteLink(source, target, linkType string) error {
 			continue
 		}
 
-		// Verify data is complete JSON
-		if !json.Valid(data) {
-			continue // Skip invalid JSON
-		}
-
 		// Try to parse as link metadata
 		var meta map[string]interface{}
-		dec := json.NewDecoder(bytes.NewReader(data))
-		dec.UseNumber() // Preserve number formats
-		if err := dec.Decode(&meta); err != nil {
+		if err := json.Unmarshal(data, &meta); err != nil {
 			continue
 		}
 
