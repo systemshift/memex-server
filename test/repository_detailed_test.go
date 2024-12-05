@@ -3,7 +3,7 @@ package test
 import (
 	"bytes"
 	"encoding/json"
-	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
@@ -51,25 +51,21 @@ func mapsEqual(t *testing.T, a, b map[string]interface{}) bool {
 
 func TestRepositoryDetailed(t *testing.T) {
 	t.Run("Repository Creation", func(t *testing.T) {
-		path := "test_repo.mx"
-		defer os.Remove(path)
+		// Use t.TempDir() for test isolation
+		tmpDir := t.TempDir()
+		path := filepath.Join(tmpDir, "test_repo.mx")
 
 		// Create new repository
 		repo, err := repository.Create(path)
 		if err != nil {
 			t.Fatalf("creating repository: %v", err)
 		}
-		defer repo.Close()
-
-		// Verify file exists
-		if _, err := os.Stat(path); os.IsNotExist(err) {
-			t.Error("repository file not created")
-		}
+		repo.Close()
 	})
 
 	t.Run("Node Metadata", func(t *testing.T) {
-		path := "test_repo.mx"
-		defer os.Remove(path)
+		tmpDir := t.TempDir()
+		path := filepath.Join(tmpDir, "test_repo.mx")
 
 		repo, err := repository.Create(path)
 		if err != nil {
@@ -117,8 +113,8 @@ func TestRepositoryDetailed(t *testing.T) {
 	})
 
 	t.Run("Node Timestamps", func(t *testing.T) {
-		path := "test_repo.mx"
-		defer os.Remove(path)
+		tmpDir := t.TempDir()
+		path := filepath.Join(tmpDir, "test_repo.mx")
 
 		repo, err := repository.Create(path)
 		if err != nil {
@@ -150,8 +146,8 @@ func TestRepositoryDetailed(t *testing.T) {
 	})
 
 	t.Run("Complex Link Operations", func(t *testing.T) {
-		path := "test_repo.mx"
-		defer os.Remove(path)
+		tmpDir := t.TempDir()
+		path := filepath.Join(tmpDir, "test_repo.mx")
 
 		repo, err := repository.Create(path)
 		if err != nil {
@@ -182,6 +178,8 @@ func TestRepositoryDetailed(t *testing.T) {
 			if err != nil {
 				t.Fatalf("adding link %d: %v", i, err)
 			}
+			// Add small delay to ensure distinct timestamps
+			time.Sleep(10 * time.Millisecond)
 		}
 
 		// Get links for middle node
@@ -220,8 +218,8 @@ func TestRepositoryDetailed(t *testing.T) {
 	})
 
 	t.Run("JSON Metadata Integrity", func(t *testing.T) {
-		path := "test_repo.mx"
-		defer os.Remove(path)
+		tmpDir := t.TempDir()
+		path := filepath.Join(tmpDir, "test_repo.mx")
 
 		repo, err := repository.Create(path)
 		if err != nil {

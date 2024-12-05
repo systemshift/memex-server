@@ -2,7 +2,7 @@ package test
 
 import (
 	"bytes"
-	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -10,9 +10,9 @@ import (
 )
 
 func TestRepository(t *testing.T) {
-	// Create test file
-	path := "test.mx"
-	defer os.Remove(path)
+	// Use t.TempDir() for test isolation
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "test.mx")
 
 	// Create repository
 	repo, err := repository.Create(path)

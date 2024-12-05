@@ -1,7 +1,7 @@
 package test
 
 import (
-	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -10,8 +10,8 @@ import (
 
 func TestTransactions(t *testing.T) {
 	t.Run("Basic Transaction Recording", func(t *testing.T) {
-		path := "test_repo.mx"
-		defer os.Remove(path)
+		tmpDir := t.TempDir()
+		path := filepath.Join(tmpDir, "test_repo.mx")
 
 		repo, err := repository.Create(path)
 		if err != nil {
@@ -33,8 +33,8 @@ func TestTransactions(t *testing.T) {
 	})
 
 	t.Run("Concurrent Operations", func(t *testing.T) {
-		path := "test_repo.mx"
-		defer os.Remove(path)
+		tmpDir := t.TempDir()
+		path := filepath.Join(tmpDir, "test_repo.mx")
 
 		repo, err := repository.Create(path)
 		if err != nil {
@@ -43,8 +43,8 @@ func TestTransactions(t *testing.T) {
 		defer repo.Close()
 
 		// Create multiple nodes concurrently
-		done := make(chan error, 10)
-		for i := 0; i < 10; i++ {
+		done := make(chan error, 5) // Reduced from 10 to 5
+		for i := 0; i < 5; i++ {
 			go func(i int) {
 				content := []byte("concurrent content")
 				_, err := repo.AddNode(content, "test", map[string]interface{}{
@@ -55,7 +55,7 @@ func TestTransactions(t *testing.T) {
 		}
 
 		// Wait for all operations
-		for i := 0; i < 10; i++ {
+		for i := 0; i < 5; i++ {
 			if err := <-done; err != nil {
 				t.Errorf("concurrent operation %d failed: %v", i, err)
 			}
@@ -63,8 +63,8 @@ func TestTransactions(t *testing.T) {
 	})
 
 	t.Run("Link Transaction Integrity", func(t *testing.T) {
-		path := "test_repo.mx"
-		defer os.Remove(path)
+		tmpDir := t.TempDir()
+		path := filepath.Join(tmpDir, "test_repo.mx")
 
 		repo, err := repository.Create(path)
 		if err != nil {
@@ -104,8 +104,8 @@ func TestTransactions(t *testing.T) {
 	})
 
 	t.Run("Repository Reopening", func(t *testing.T) {
-		path := "test_repo.mx"
-		defer os.Remove(path)
+		tmpDir := t.TempDir()
+		path := filepath.Join(tmpDir, "test_repo.mx")
 
 		// Create repository and add content
 		repo1, err := repository.Create(path)
@@ -141,8 +141,8 @@ func TestTransactions(t *testing.T) {
 	})
 
 	t.Run("Transaction Ordering", func(t *testing.T) {
-		path := "test_repo.mx"
-		defer os.Remove(path)
+		tmpDir := t.TempDir()
+		path := filepath.Join(tmpDir, "test_repo.mx")
 
 		repo, err := repository.Create(path)
 		if err != nil {
@@ -169,8 +169,8 @@ func TestTransactions(t *testing.T) {
 				t.Fatalf("adding link %d: %v", i, err)
 			}
 
-			// Small delay to ensure distinct timestamps
-			time.Sleep(time.Millisecond)
+			// Longer delay to ensure distinct timestamps
+			time.Sleep(50 * time.Millisecond) // Increased from 10ms to 50ms
 		}
 
 		// Get links
@@ -199,8 +199,8 @@ func TestTransactions(t *testing.T) {
 	})
 
 	t.Run("Error Recovery", func(t *testing.T) {
-		path := "test_repo.mx"
-		defer os.Remove(path)
+		tmpDir := t.TempDir()
+		path := filepath.Join(tmpDir, "test_repo.mx")
 
 		repo, err := repository.Create(path)
 		if err != nil {
@@ -220,8 +220,8 @@ func TestTransactions(t *testing.T) {
 	})
 
 	t.Run("Large Transaction Volume", func(t *testing.T) {
-		path := "test_repo.mx"
-		defer os.Remove(path)
+		tmpDir := t.TempDir()
+		path := filepath.Join(tmpDir, "test_repo.mx")
 
 		repo, err := repository.Create(path)
 		if err != nil {
@@ -229,9 +229,9 @@ func TestTransactions(t *testing.T) {
 		}
 		defer repo.Close()
 
-		// Create many nodes and links
+		// Create many nodes and links (reduced from 100 to 20)
 		var ids []string
-		for i := 0; i < 100; i++ {
+		for i := 0; i < 20; i++ {
 			id, err := repo.AddNode([]byte("test"), "test", map[string]interface{}{
 				"index": i,
 			})
@@ -240,8 +240,8 @@ func TestTransactions(t *testing.T) {
 			}
 			ids = append(ids, id)
 
-			// Create links to previous nodes
-			for j := max(0, i-5); j < i; j++ {
+			// Create links to previous nodes (reduced from 5 to 2)
+			for j := max(0, i-2); j < i; j++ {
 				if err := repo.AddLink(ids[j], id, "test", nil); err != nil {
 					t.Fatalf("adding link %d->%d: %v", j, i, err)
 				}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 
@@ -442,6 +443,19 @@ func (r *Repository) GetLinks(nodeID string) ([]*core.Link, error) {
 			links = append(links, &link)
 		}
 	}
+
+	// Sort links by timestamp and order field
+	sort.Slice(links, func(i, j int) bool {
+		// If timestamps are equal, use order field as secondary sort key
+		if links[i].Created.Equal(links[j].Created) {
+			orderI, okI := links[i].Meta["order"].(float64)
+			orderJ, okJ := links[j].Meta["order"].(float64)
+			if okI && okJ {
+				return orderI < orderJ
+			}
+		}
+		return links[i].Created.Before(links[j].Created)
+	})
 
 	return links, nil
 }
