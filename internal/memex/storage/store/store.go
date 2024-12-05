@@ -71,6 +71,11 @@ func (s *ChunkStore) SetTxStore(txStore *transaction.ActionStore) {
 	s.txStore = txStore
 }
 
+// GetTxStore returns the transaction store
+func (s *ChunkStore) GetTxStore() *transaction.ActionStore {
+	return s.txStore
+}
+
 // GetFile returns the underlying file for transaction storage
 func (s *ChunkStore) GetFile() interface{} {
 	return s.file
@@ -189,6 +194,14 @@ func (s *ChunkStore) PutWithID(id string, content []byte) error {
 		s.index[hex.EncodeToString([]byte(id))] = offset
 	}
 
+	// Also store using hex string if ID has a prefix
+	if len(id) > 64 && id[len(id)-64:] != id { // Has prefix
+		baseID := id[len(id)-64:]
+		if hashBytes, err := hex.DecodeString(baseID); err == nil {
+			s.index[string(hashBytes)] = offset
+		}
+	}
+
 	return nil
 }
 
@@ -206,7 +219,16 @@ func (s *ChunkStore) Get(addresses [][]byte) ([]byte, error) {
 			hashStr := hex.EncodeToString(addr)
 			offset, exists = s.index[hashStr]
 			if !exists {
-				return nil, fmt.Errorf("chunk not found: %x", addr)
+				// If still not found and address has prefix, try using base ID
+				if len(hashStr) > 64 && hashStr[len(hashStr)-64:] != hashStr {
+					baseID := hashStr[len(hashStr)-64:]
+					offset, exists = s.index[baseID]
+					if !exists {
+						return nil, fmt.Errorf("chunk not found: %x", addr)
+					}
+				} else {
+					return nil, fmt.Errorf("chunk not found: %x", addr)
+				}
 			}
 		}
 
@@ -239,15 +261,24 @@ func (s *ChunkStore) Delete(addresses [][]byte) error {
 	}
 
 	for _, addr := range addresses {
-		hashStr := hex.EncodeToString(addr)
-		offset, exists := s.index[hashStr]
+		// Try using the raw address as the key first
+		offset, exists := s.index[string(addr)]
 		if !exists {
-			continue
-		}
-
-		// Decrement ref count
-		if err := s.decrementRefCount(offset, hashStr); err != nil {
-			return fmt.Errorf("updating ref count: %w", err)
+			// If not found, try using it as a hex string
+			hashStr := hex.EncodeToString(addr)
+			offset, exists = s.index[hashStr]
+			if !exists {
+				continue
+			}
+			// Decrement ref count using hex string
+			if err := s.decrementRefCount(offset, hashStr); err != nil {
+				return fmt.Errorf("updating ref count: %w", err)
+			}
+		} else {
+			// Decrement ref count using raw address
+			if err := s.decrementRefCount(offset, string(addr)); err != nil {
+				return fmt.Errorf("updating ref count: %w", err)
+			}
 		}
 	}
 
@@ -488,6 +519,11 @@ func (s *ChunkStore) decrementRefCount(offset int64, hashStr string) error {
 			}
 		} else if len(hashStr) == 32 { // Length of a raw SHA-256 hash
 			delete(s.index, hex.EncodeToString([]byte(hashStr)))
+		} else if len(hashStr) > 64 && hashStr[len(hashStr)-64:] != hashStr { // Has prefix
+			baseID := hashStr[len(hashStr)-64:]
+			if hashBytes, err := hex.DecodeString(baseID); err == nil {
+				delete(s.index, string(hashBytes))
+			}
 		}
 	}
 

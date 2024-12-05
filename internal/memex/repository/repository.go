@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"memex/internal/memex/core"
 	"memex/internal/memex/storage/rabin"
 	"memex/internal/memex/storage/store"
+	"memex/internal/memex/transaction"
 )
 
 // Repository represents a content repository
@@ -18,7 +20,12 @@ type Repository struct {
 	path      string
 	store     *store.ChunkStore
 	nodeStore *store.ChunkStore
+	txStore   *transaction.ActionStore
+	lockMgr   sync.Mutex
 }
+
+// Ensure Repository implements transaction.Storage
+var _ transaction.Storage = (*Repository)(nil)
 
 // Create creates a new repository at the given path
 func Create(path string) (*Repository, error) {
@@ -27,50 +34,85 @@ func Create(path string) (*Repository, error) {
 		return nil, fmt.Errorf("creating repository directory: %w", err)
 	}
 
+	// Create repository instance
+	repo := &Repository{
+		path: path,
+	}
+
+	// Create transaction store first
+	txStore, err := transaction.NewActionStore(repo)
+	if err != nil {
+		return nil, fmt.Errorf("creating transaction store: %w", err)
+	}
+	repo.txStore = txStore
+
 	// Create chunker
 	chunker := rabin.NewChunker()
 
 	// Create store
-	contentStore, err := store.NewStore(filepath.Join(path, "store"), chunker, nil)
+	contentStore, err := store.NewStore(filepath.Join(path, "store"), chunker, txStore)
 	if err != nil {
 		return nil, fmt.Errorf("creating store: %w", err)
 	}
+	repo.store = contentStore
 
 	// Create node store
-	nodeStore, err := store.NewStore(filepath.Join(path, "nodes"), chunker, nil)
+	nodeStore, err := store.NewStore(filepath.Join(path, "nodes"), chunker, txStore)
 	if err != nil {
 		return nil, fmt.Errorf("creating node store: %w", err)
 	}
+	repo.nodeStore = nodeStore
 
-	return &Repository{
-		path:      path,
-		store:     contentStore,
-		nodeStore: nodeStore,
-	}, nil
+	return repo, nil
 }
 
 // Open opens an existing repository
 func Open(path string) (*Repository, error) {
+	// Create repository instance
+	repo := &Repository{
+		path: path,
+	}
+
+	// Create transaction store first
+	txStore, err := transaction.NewActionStore(repo)
+	if err != nil {
+		return nil, fmt.Errorf("creating transaction store: %w", err)
+	}
+	repo.txStore = txStore
+
 	// Create chunker
 	chunker := rabin.NewChunker()
 
 	// Open store
-	contentStore, err := store.NewStore(filepath.Join(path, "store"), chunker, nil)
+	contentStore, err := store.NewStore(filepath.Join(path, "store"), chunker, txStore)
 	if err != nil {
 		return nil, fmt.Errorf("opening store: %w", err)
 	}
+	repo.store = contentStore
 
 	// Open node store
-	nodeStore, err := store.NewStore(filepath.Join(path, "nodes"), chunker, nil)
+	nodeStore, err := store.NewStore(filepath.Join(path, "nodes"), chunker, txStore)
 	if err != nil {
 		return nil, fmt.Errorf("opening node store: %w", err)
 	}
+	repo.nodeStore = nodeStore
 
-	return &Repository{
-		path:      path,
-		store:     contentStore,
-		nodeStore: nodeStore,
-	}, nil
+	return repo, nil
+}
+
+// Path returns the repository path (implements transaction.Storage)
+func (r *Repository) Path() string {
+	return r.path
+}
+
+// GetFile returns the underlying file for transaction storage (implements transaction.Storage)
+func (r *Repository) GetFile() interface{} {
+	return r.nodeStore.GetFile()
+}
+
+// GetLockManager returns the lock manager for transaction storage (implements transaction.Storage)
+func (r *Repository) GetLockManager() interface{} {
+	return &r.lockMgr
 }
 
 // AddNode adds a node to the repository
@@ -130,6 +172,16 @@ func (r *Repository) AddNode(content []byte, nodeType string, meta map[string]in
 		return "", fmt.Errorf("no chunks generated for node")
 	}
 	node.ID = fmt.Sprintf("%x", nodeChunks[0])
+
+	// Record action
+	if err := r.txStore.RecordAction(transaction.ActionAddNode, map[string]any{
+		"id":   node.ID,
+		"type": nodeType,
+		"meta": meta,
+	}); err != nil {
+		return "", fmt.Errorf("recording action: %w", err)
+	}
+
 	return node.ID, nil
 }
 
@@ -184,6 +236,15 @@ func (r *Repository) AddNodeWithID(id string, content []byte, nodeType string, m
 	// Store node with specific ID
 	if err := r.nodeStore.PutWithID(id, data); err != nil {
 		return fmt.Errorf("storing node: %w", err)
+	}
+
+	// Record action
+	if err := r.txStore.RecordAction(transaction.ActionAddNode, map[string]any{
+		"id":   id,
+		"type": nodeType,
+		"meta": meta,
+	}); err != nil {
+		return fmt.Errorf("recording action: %w", err)
 	}
 
 	return nil
@@ -280,6 +341,13 @@ func (r *Repository) DeleteNode(id string) error {
 		}
 	}
 
+	// Record action
+	if err := r.txStore.RecordAction(transaction.ActionDeleteNode, map[string]any{
+		"id": id,
+	}); err != nil {
+		return fmt.Errorf("recording action: %w", err)
+	}
+
 	return nil
 }
 
@@ -331,6 +399,16 @@ func (r *Repository) AddLink(source, target, linkType string, meta map[string]in
 	// Use first chunk hash as link ID
 	if len(chunks) == 0 {
 		return fmt.Errorf("no chunks generated for link")
+	}
+
+	// Record action with metadata
+	if err := r.txStore.RecordAction(transaction.ActionAddLink, map[string]any{
+		"source": source,
+		"target": target,
+		"type":   linkType,
+		"meta":   meta,
+	}); err != nil {
+		return fmt.Errorf("recording action: %w", err)
 	}
 
 	return nil
@@ -395,6 +473,16 @@ func (r *Repository) DeleteLink(source, target, linkType string) error {
 			if err := r.nodeStore.Delete([][]byte{chunk}); err != nil {
 				return fmt.Errorf("deleting link: %w", err)
 			}
+
+			// Record action
+			if err := r.txStore.RecordAction(transaction.ActionDeleteLink, map[string]any{
+				"source": source,
+				"target": target,
+				"type":   linkType,
+			}); err != nil {
+				return fmt.Errorf("recording action: %w", err)
+			}
+
 			return nil
 		}
 	}
@@ -418,6 +506,9 @@ func (r *Repository) Close() error {
 	}
 	if err := r.nodeStore.Close(); err != nil {
 		return fmt.Errorf("closing node store: %w", err)
+	}
+	if err := r.txStore.Close(); err != nil {
+		return fmt.Errorf("closing transaction store: %w", err)
 	}
 	return nil
 }

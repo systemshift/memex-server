@@ -8,23 +8,23 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 
-	"memex/internal/memex/core/transaction"
 	"memex/internal/memex/storage/common"
 )
 
 // ActionStore manages the history of actions in the graph
 type ActionStore struct {
-	store    transaction.Storage // Reference to storage interface
-	file     *common.File        // Action log file
-	mu       sync.RWMutex        // Mutex for thread safety
-	lastHash [32]byte            // Hash of last action
+	store    Storage      // Reference to storage interface
+	file     *common.File // Action log file
+	mu       sync.RWMutex // Mutex for thread safety
+	lastHash [32]byte     // Hash of last action
 }
 
 // NewActionStore creates a new action store
-func NewActionStore(store transaction.Storage) (*ActionStore, error) {
+func NewActionStore(store Storage) (*ActionStore, error) {
 	// Create actions directory next to .mx file
 	mxPath := store.Path()
 	actionsPath := filepath.Join(filepath.Dir(mxPath), ".actions")
@@ -71,12 +71,12 @@ func (as *ActionStore) Close() error {
 }
 
 // RecordAction records a new action in the store
-func (as *ActionStore) RecordAction(actionType transaction.ActionType, payload map[string]any) error {
+func (as *ActionStore) RecordAction(actionType ActionType, payload map[string]any) error {
 	as.mu.Lock()
 	defer as.mu.Unlock()
 
 	// Create new action
-	action := &transaction.Action{
+	action := &Action{
 		Type:      actionType,
 		Payload:   payload,
 		Timestamp: time.Now(),
@@ -105,11 +105,11 @@ func (as *ActionStore) RecordAction(actionType transaction.ActionType, payload m
 }
 
 // GetHistory returns all actions in chronological order
-func (as *ActionStore) GetHistory() ([]*transaction.Action, error) {
+func (as *ActionStore) GetHistory() ([]*Action, error) {
 	as.mu.RLock()
 	defer as.mu.RUnlock()
 
-	var actions []*transaction.Action
+	var actions []*Action
 
 	// Seek to start of file
 	if _, err := as.file.Seek(0, io.SeekStart); err != nil {
@@ -128,7 +128,38 @@ func (as *ActionStore) GetHistory() ([]*transaction.Action, error) {
 		actions = append(actions, action)
 	}
 
+	// Sort actions by timestamp and order field if present
+	sort.Slice(actions, func(i, j int) bool {
+		// If timestamps are equal, use order field as secondary sort key
+		if actions[i].Timestamp.Equal(actions[j].Timestamp) {
+			// Get order from metadata if it exists
+			orderI, okI := getOrder(actions[i])
+			orderJ, okJ := getOrder(actions[j])
+			if okI && okJ {
+				return orderI < orderJ
+			}
+		}
+		return actions[i].Timestamp.Before(actions[j].Timestamp)
+	})
+
 	return actions, nil
+}
+
+// Helper function to get order from action payload
+func getOrder(action *Action) (float64, bool) {
+	if action.Type != ActionAddLink {
+		return 0, false
+	}
+	if action.Payload == nil {
+		return 0, false
+	}
+	// The order is in the link metadata
+	meta, ok := action.Payload["meta"].(map[string]interface{})
+	if !ok {
+		return 0, false
+	}
+	order, ok := meta["order"].(float64)
+	return order, ok
 }
 
 // VerifyHistory verifies the entire action history
@@ -138,7 +169,7 @@ func (as *ActionStore) VerifyHistory() (bool, error) {
 		return false, fmt.Errorf("getting history: %w", err)
 	}
 
-	var prevAction *transaction.Action
+	var prevAction *Action
 	for _, action := range actions {
 		valid, err := action.Verify(prevAction)
 		if err != nil {
@@ -155,7 +186,7 @@ func (as *ActionStore) VerifyHistory() (bool, error) {
 
 // Internal methods
 
-func (as *ActionStore) writeAction(action *transaction.Action) error {
+func (as *ActionStore) writeAction(action *Action) error {
 	// Marshal action to JSON
 	data, err := json.Marshal(action)
 	if err != nil {
@@ -175,7 +206,7 @@ func (as *ActionStore) writeAction(action *transaction.Action) error {
 	return nil
 }
 
-func (as *ActionStore) readAction() (*transaction.Action, error) {
+func (as *ActionStore) readAction() (*Action, error) {
 	// Read length prefix
 	var length uint32
 	if err := binary.Read(as.file, binary.LittleEndian, &length); err != nil {
@@ -189,7 +220,7 @@ func (as *ActionStore) readAction() (*transaction.Action, error) {
 	}
 
 	// Unmarshal action
-	var action transaction.Action
+	var action Action
 	if err := json.Unmarshal(data, &action); err != nil {
 		return nil, fmt.Errorf("unmarshaling action: %w", err)
 	}
@@ -197,7 +228,7 @@ func (as *ActionStore) readAction() (*transaction.Action, error) {
 	return &action, nil
 }
 
-func (as *ActionStore) readLastAction() (*transaction.Action, error) {
+func (as *ActionStore) readLastAction() (*Action, error) {
 	// Get file size
 	info, err := as.file.Stat()
 	if err != nil {
@@ -238,7 +269,7 @@ func (as *ActionStore) readLastAction() (*transaction.Action, error) {
 	return nil, fmt.Errorf("no valid actions found")
 }
 
-func (as *ActionStore) calculateStateHash(action *transaction.Action) ([32]byte, error) {
+func (as *ActionStore) calculateStateHash(action *Action) ([32]byte, error) {
 	// Get affected nodes/edges from payload
 	affectedIDs := make([]string, 0)
 	if nodes, ok := action.Payload["nodes"].([]string); ok {
