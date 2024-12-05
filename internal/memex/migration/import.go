@@ -2,11 +2,13 @@ package migration
 
 import (
 	"archive/tar"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"memex/internal/memex/core"
 )
@@ -31,8 +33,14 @@ func NewImporter(repo core.Repository, r io.Reader, opts ImportOptions) *Importe
 func (i *Importer) Import() error {
 	fmt.Println("Starting import")
 
+	// Read entire content into buffer to allow seeking
+	var buf bytes.Buffer
+	if _, err := io.Copy(&buf, i.reader); err != nil {
+		return fmt.Errorf("buffering content: %w", err)
+	}
+
 	// Create tar reader
-	tr := tar.NewReader(i.reader)
+	tr := tar.NewReader(bytes.NewReader(buf.Bytes()))
 
 	// Read manifest first
 	manifest, err := i.readManifest(tr)
@@ -42,9 +50,10 @@ func (i *Importer) Import() error {
 
 	fmt.Printf("Importing version %d content\n", manifest.Version)
 
-	// Import chunks
+	// Import chunks first
 	fmt.Println("Importing chunks...")
-	chunks := make(map[string][]byte)
+	chunkMap := make(map[string][]byte) // Map original chunk ID to content
+	tr = tar.NewReader(bytes.NewReader(buf.Bytes()))
 	for {
 		header, err := tr.Next()
 		if err == io.EOF {
@@ -68,13 +77,14 @@ func (i *Importer) Import() error {
 			return fmt.Errorf("reading chunk data: %w", err)
 		}
 
-		// Store chunk
-		chunks[hash] = data
+		// Store chunk in map
+		chunkMap[hash] = data
 	}
 
 	// Import nodes
 	fmt.Println("Importing nodes...")
 	nodes := make(map[string]string) // Map original ID to new ID
+	tr = tar.NewReader(bytes.NewReader(buf.Bytes()))
 	for {
 		header, err := tr.Next()
 		if err == io.EOF {
@@ -110,6 +120,35 @@ func (i *Importer) Import() error {
 			nodeID = i.options.Prefix + originalID
 		}
 
+		// Handle ID conflicts
+		if _, err := i.repo.GetNode(nodeID); err == nil {
+			switch i.options.OnConflict {
+			case Skip:
+				continue
+			case Replace:
+				if err := i.repo.DeleteNode(nodeID); err != nil {
+					return fmt.Errorf("replacing node: %w", err)
+				}
+			case Rename:
+				nodeID = fmt.Sprintf("%s-%s", nodeID, time.Now().Format("20060102150405"))
+			default:
+				return fmt.Errorf("invalid conflict resolution strategy: %s", i.options.OnConflict)
+			}
+		}
+
+		// Get chunk content if this node has chunks
+		if nodeChunks, ok := node.Meta["chunks"].([]interface{}); ok {
+			content := make([]byte, 0)
+			for _, c := range nodeChunks {
+				if chunkID, ok := c.(string); ok {
+					if chunkData, exists := chunkMap[chunkID]; exists {
+						content = append(content, chunkData...)
+					}
+				}
+			}
+			node.Content = content
+		}
+
 		// Store node with ID
 		if err := i.repo.AddNodeWithID(nodeID, node.Content, node.Type, node.Meta); err != nil {
 			return fmt.Errorf("storing node: %w", err)
@@ -121,6 +160,8 @@ func (i *Importer) Import() error {
 
 	// Import edges
 	fmt.Println("Importing edges...")
+	tr = tar.NewReader(bytes.NewReader(buf.Bytes()))
+	seenLinks := make(map[string]bool) // Track unique links
 	for {
 		header, err := tr.Next()
 		if err == io.EOF {
@@ -150,6 +191,13 @@ func (i *Importer) Import() error {
 		// Map to new IDs
 		sourceID := nodes[link.Source]
 		targetID := nodes[link.Target]
+
+		// Create unique key for this link
+		linkKey := fmt.Sprintf("%s-%s-%s", sourceID, link.Type, targetID)
+		if seenLinks[linkKey] {
+			continue // Skip duplicate links
+		}
+		seenLinks[linkKey] = true
 
 		// Store link
 		if err := i.repo.AddLink(sourceID, targetID, link.Type, link.Meta); err != nil {

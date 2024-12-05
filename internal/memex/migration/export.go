@@ -61,6 +61,16 @@ func (e *Exporter) Export() error {
 
 	fmt.Printf("Exported %d nodes\n", manifest.Nodes)
 
+	// Export chunks
+	fmt.Println("Exporting chunks...")
+	for chunkID := range chunks {
+		if err := exportChunk(e.repo, chunkID, tw); err != nil {
+			return fmt.Errorf("exporting chunk %s: %w", chunkID, err)
+		}
+		manifest.Chunks++
+	}
+	fmt.Printf("Exported %d chunks\n", manifest.Chunks)
+
 	// Export links
 	fmt.Println("Exporting edges...")
 	for id := range nodes {
@@ -134,6 +144,16 @@ func (e *Exporter) ExportSubgraph(nodes []string, depth int) error {
 		}
 	}
 	fmt.Printf("Exported %d nodes\n", manifest.Nodes)
+
+	// Export chunks
+	fmt.Println("Exporting chunks...")
+	for chunkID := range chunks {
+		if err := exportChunk(e.repo, chunkID, tw); err != nil {
+			return fmt.Errorf("exporting chunk %s: %w", chunkID, err)
+		}
+		manifest.Chunks++
+	}
+	fmt.Printf("Exported %d chunks\n", manifest.Chunks)
 
 	// Export links
 	fmt.Println("Exporting edges...")
@@ -255,6 +275,33 @@ func exportNode(repo core.Repository, id string, tw *tar.Writer, nodes map[strin
 
 	if _, err := tw.Write(data); err != nil {
 		return fmt.Errorf("writing node data: %w", err)
+	}
+
+	return nil
+}
+
+func exportChunk(repo core.Repository, id string, tw *tar.Writer) error {
+	// Get chunk content
+	content, err := repo.GetContent(id)
+	if err != nil {
+		return fmt.Errorf("getting chunk content: %w", err)
+	}
+
+	// Write chunk to tar
+	header := &tar.Header{
+		Name:     filepath.Join("chunks", id),
+		Size:     int64(len(content)),
+		Mode:     0644,
+		ModTime:  time.Now(),
+		Typeflag: tar.TypeReg,
+	}
+
+	if err := tw.WriteHeader(header); err != nil {
+		return fmt.Errorf("writing chunk header: %w", err)
+	}
+
+	if _, err := tw.Write(content); err != nil {
+		return fmt.Errorf("writing chunk data: %w", err)
 	}
 
 	return nil
