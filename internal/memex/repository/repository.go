@@ -1,11 +1,11 @@
 package repository
 
 import (
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 	"sync"
 	"time"
@@ -16,33 +16,74 @@ import (
 	"memex/internal/memex/transaction"
 )
 
-// Repository represents a content repository
-type Repository struct {
-	path      string
-	store     *store.ChunkStore
-	nodeStore *store.ChunkStore
-	txStore   *transaction.ActionStore
-	lockMgr   sync.Mutex
+// Magic number for .mx files
+const MagicNumber = "MEMEX01"
+
+// Header represents the .mx file header (128 bytes)
+type Header struct {
+	Magic     [7]byte  // "MEMEX01"
+	Version   uint8    // Format version
+	Created   int64    // Creation timestamp (Unix seconds)
+	Modified  int64    // Last modified timestamp (Unix seconds)
+	NodeCount uint32   // Number of nodes
+	EdgeCount uint32   // Number of edges
+	NodeIndex uint64   // Offset to node index
+	EdgeIndex uint64   // Offset to edge index
+	Reserved  [64]byte // Future use
 }
 
-// Ensure Repository implements transaction.Storage
-var _ transaction.Storage = (*Repository)(nil)
+// Repository represents a content repository
+type Repository struct {
+	path    string
+	file    *os.File
+	header  Header
+	store   *store.ChunkStore
+	txStore *transaction.ActionStore
+	lockMgr sync.Mutex
+}
+
+// Ensure Repository implements required interfaces
+var (
+	_ transaction.Storage = (*Repository)(nil)
+	_ core.Repository     = (*Repository)(nil)
+)
 
 // Create creates a new repository at the given path
 func Create(path string) (*Repository, error) {
-	// Create repository directory
-	if err := os.MkdirAll(path, 0755); err != nil {
-		return nil, fmt.Errorf("creating repository directory: %w", err)
+	// Create file
+	file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0644)
+	if err != nil {
+		return nil, fmt.Errorf("creating repository file: %w", err)
+	}
+
+	// Initialize header
+	now := time.Now().UTC().Unix()
+	header := Header{
+		Version:   1,
+		Created:   now,
+		Modified:  now,
+		NodeCount: 0,
+		EdgeCount: 0,
+	}
+	copy(header.Magic[:], MagicNumber)
+
+	// Write header
+	if err := binary.Write(file, binary.LittleEndian, &header); err != nil {
+		file.Close()
+		return nil, fmt.Errorf("writing header: %w", err)
 	}
 
 	// Create repository instance
 	repo := &Repository{
-		path: path,
+		path:   path,
+		file:   file,
+		header: header,
 	}
 
-	// Create transaction store first
+	// Create transaction store
 	txStore, err := transaction.NewActionStore(repo)
 	if err != nil {
+		file.Close()
 		return nil, fmt.Errorf("creating transaction store: %w", err)
 	}
 	repo.txStore = txStore
@@ -50,33 +91,49 @@ func Create(path string) (*Repository, error) {
 	// Create chunker
 	chunker := rabin.NewChunker()
 
-	// Create store
-	contentStore, err := store.NewStore(filepath.Join(path, "store"), chunker, txStore)
+	// Create store using the same file
+	store, err := store.NewStore(path, chunker, txStore)
 	if err != nil {
+		file.Close()
 		return nil, fmt.Errorf("creating store: %w", err)
 	}
-	repo.store = contentStore
-
-	// Create node store
-	nodeStore, err := store.NewStore(filepath.Join(path, "nodes"), chunker, txStore)
-	if err != nil {
-		return nil, fmt.Errorf("creating node store: %w", err)
-	}
-	repo.nodeStore = nodeStore
+	repo.store = store
 
 	return repo, nil
 }
 
 // Open opens an existing repository
 func Open(path string) (*Repository, error) {
-	// Create repository instance
-	repo := &Repository{
-		path: path,
+	// Open file
+	file, err := os.OpenFile(path, os.O_RDWR, 0644)
+	if err != nil {
+		return nil, fmt.Errorf("opening repository file: %w", err)
 	}
 
-	// Create transaction store first
+	// Read header
+	var header Header
+	if err := binary.Read(file, binary.LittleEndian, &header); err != nil {
+		file.Close()
+		return nil, fmt.Errorf("reading header: %w", err)
+	}
+
+	// Verify magic number
+	if string(header.Magic[:]) != MagicNumber {
+		file.Close()
+		return nil, fmt.Errorf("invalid repository file")
+	}
+
+	// Create repository instance
+	repo := &Repository{
+		path:   path,
+		file:   file,
+		header: header,
+	}
+
+	// Create transaction store
 	txStore, err := transaction.NewActionStore(repo)
 	if err != nil {
+		file.Close()
 		return nil, fmt.Errorf("creating transaction store: %w", err)
 	}
 	repo.txStore = txStore
@@ -84,19 +141,13 @@ func Open(path string) (*Repository, error) {
 	// Create chunker
 	chunker := rabin.NewChunker()
 
-	// Open store
-	contentStore, err := store.NewStore(filepath.Join(path, "store"), chunker, txStore)
+	// Open store using the same file
+	store, err := store.NewStore(path, chunker, txStore)
 	if err != nil {
+		file.Close()
 		return nil, fmt.Errorf("opening store: %w", err)
 	}
-	repo.store = contentStore
-
-	// Open node store
-	nodeStore, err := store.NewStore(filepath.Join(path, "nodes"), chunker, txStore)
-	if err != nil {
-		return nil, fmt.Errorf("opening node store: %w", err)
-	}
-	repo.nodeStore = nodeStore
+	repo.store = store
 
 	return repo, nil
 }
@@ -108,7 +159,7 @@ func (r *Repository) Path() string {
 
 // GetFile returns the underlying file for transaction storage (implements transaction.Storage)
 func (r *Repository) GetFile() interface{} {
-	return r.nodeStore.GetFile()
+	return r.file
 }
 
 // GetLockManager returns the lock manager for transaction storage (implements transaction.Storage)
@@ -116,9 +167,58 @@ func (r *Repository) GetLockManager() interface{} {
 	return &r.lockMgr
 }
 
+// GetContent retrieves content from the repository
+func (r *Repository) GetContent(id string) ([]byte, error) {
+	hashBytes, err := hex.DecodeString(id)
+	if err != nil {
+		return nil, fmt.Errorf("parsing content ID: %w", err)
+	}
+	return r.store.Get([][]byte{hashBytes})
+}
+
+// GetNode retrieves a node from the repository
+func (r *Repository) GetNode(id string) (*core.Node, error) {
+	var data []byte
+	var err error
+
+	// Try getting node data directly first
+	data, err = r.store.Get([][]byte{[]byte(id)})
+	if err != nil {
+		// If that fails, try hex decoding if it's a hex string
+		if len(id) == 64 { // Length of a hex-encoded SHA-256 hash
+			if hashBytes, decodeErr := hex.DecodeString(id); decodeErr == nil {
+				data, err = r.store.Get([][]byte{hashBytes})
+				if err != nil {
+					return nil, fmt.Errorf("getting node with hex ID: %w", err)
+				}
+			}
+		} else {
+			return nil, fmt.Errorf("getting node: %w", err)
+		}
+	}
+
+	// Parse node
+	var node core.Node
+	if err := json.Unmarshal(data, &node); err != nil {
+		// If parsing fails, try wrapping the data in a basic node structure
+		node = core.Node{
+			Content: data,
+			Meta:    make(map[string]interface{}),
+		}
+	}
+
+	// Ensure node has an ID and metadata
+	node.ID = id
+	if node.Meta == nil {
+		node.Meta = make(map[string]interface{})
+	}
+
+	return &node, nil
+}
+
 // AddNode adds a node to the repository
 func (r *Repository) AddNode(content []byte, nodeType string, meta map[string]interface{}) (string, error) {
-	// Store content
+	// Store content first to get chunks
 	chunks, err := r.store.Put(content)
 	if err != nil {
 		return "", fmt.Errorf("storing content: %w", err)
@@ -134,11 +234,11 @@ func (r *Repository) AddNode(content []byte, nodeType string, meta map[string]in
 		Modified: now,
 	}
 
-	// Add chunks to metadata
+	// Initialize metadata if nil
 	if node.Meta == nil {
 		node.Meta = make(map[string]interface{})
 	} else {
-		// Deep copy metadata to avoid modifying the original
+		// Deep copy metadata
 		metaCopy := make(map[string]interface{})
 		metaJSON, err := json.Marshal(meta)
 		if err != nil {
@@ -153,17 +253,18 @@ func (r *Repository) AddNode(content []byte, nodeType string, meta map[string]in
 	// Add chunks to metadata
 	chunkHashes := make([]string, len(chunks))
 	for i, chunk := range chunks {
-		chunkHashes[i] = fmt.Sprintf("%x", chunk)
+		chunkHashes[i] = hex.EncodeToString(chunk)
 	}
 	node.Meta["chunks"] = chunkHashes
 
-	// Store node
+	// Store node data
 	data, err := json.Marshal(node)
 	if err != nil {
 		return "", fmt.Errorf("marshaling node: %w", err)
 	}
 
-	nodeChunks, err := r.nodeStore.Put(data)
+	// Store in chunk store
+	nodeChunks, err := r.store.Put(data)
 	if err != nil {
 		return "", fmt.Errorf("storing node: %w", err)
 	}
@@ -172,7 +273,14 @@ func (r *Repository) AddNode(content []byte, nodeType string, meta map[string]in
 	if len(nodeChunks) == 0 {
 		return "", fmt.Errorf("no chunks generated for node")
 	}
-	node.ID = fmt.Sprintf("%x", nodeChunks[0])
+	node.ID = hex.EncodeToString(nodeChunks[0])
+
+	// Update header
+	r.header.NodeCount++
+	r.header.Modified = time.Now().UTC().Unix()
+	if err := r.updateHeader(); err != nil {
+		return "", fmt.Errorf("updating header: %w", err)
+	}
 
 	// Record action
 	if err := r.txStore.RecordAction(transaction.ActionAddNode, map[string]any{
@@ -186,9 +294,9 @@ func (r *Repository) AddNode(content []byte, nodeType string, meta map[string]in
 	return node.ID, nil
 }
 
-// AddNodeWithID adds a node with a specific ID to the repository
+// AddNodeWithID adds a node with a specific ID
 func (r *Repository) AddNodeWithID(id string, content []byte, nodeType string, meta map[string]interface{}) error {
-	// Store content
+	// Store content first to get chunks
 	chunks, err := r.store.Put(content)
 	if err != nil {
 		return fmt.Errorf("storing content: %w", err)
@@ -205,11 +313,11 @@ func (r *Repository) AddNodeWithID(id string, content []byte, nodeType string, m
 		Modified: now,
 	}
 
-	// Add chunks to metadata
+	// Initialize metadata if nil
 	if node.Meta == nil {
 		node.Meta = make(map[string]interface{})
 	} else {
-		// Deep copy metadata to avoid modifying the original
+		// Deep copy metadata
 		metaCopy := make(map[string]interface{})
 		metaJSON, err := json.Marshal(meta)
 		if err != nil {
@@ -224,19 +332,26 @@ func (r *Repository) AddNodeWithID(id string, content []byte, nodeType string, m
 	// Add chunks to metadata
 	chunkHashes := make([]string, len(chunks))
 	for i, chunk := range chunks {
-		chunkHashes[i] = fmt.Sprintf("%x", chunk)
+		chunkHashes[i] = hex.EncodeToString(chunk)
 	}
 	node.Meta["chunks"] = chunkHashes
 
-	// Store node
+	// Store node data
 	data, err := json.Marshal(node)
 	if err != nil {
 		return fmt.Errorf("marshaling node: %w", err)
 	}
 
-	// Store node with specific ID
-	if err := r.nodeStore.PutWithID(id, data); err != nil {
+	// Store in chunk store with specific ID
+	if err := r.store.PutWithID(id, data); err != nil {
 		return fmt.Errorf("storing node: %w", err)
+	}
+
+	// Update header
+	r.header.NodeCount++
+	r.header.Modified = time.Now().UTC().Unix()
+	if err := r.updateHeader(); err != nil {
+		return fmt.Errorf("updating header: %w", err)
 	}
 
 	// Record action
@@ -251,49 +366,21 @@ func (r *Repository) AddNodeWithID(id string, content []byte, nodeType string, m
 	return nil
 }
 
-// GetNode retrieves a node from the repository
-func (r *Repository) GetNode(id string) (*core.Node, error) {
-	// Get node data
-	data, err := r.nodeStore.Get([][]byte{[]byte(id)})
-	if err != nil {
-		// Try hex decoding if it's a hex string
-		if len(id) == 64 { // Length of a hex-encoded SHA-256 hash
-			if hashBytes, err := hex.DecodeString(id); err == nil {
-				data, err = r.nodeStore.Get([][]byte{hashBytes})
-				if err != nil {
-					return nil, fmt.Errorf("getting node: %w", err)
-				}
-			}
-		} else {
-			return nil, fmt.Errorf("getting node: %w", err)
-		}
-	}
-
-	// Parse node
-	var node core.Node
-	if err := json.Unmarshal(data, &node); err != nil {
-		return nil, fmt.Errorf("parsing node: %w", err)
-	}
-
-	node.ID = id
-	return &node, nil
-}
-
-// ListNodes returns a list of all node IDs in the repository
+// ListNodes returns a list of all node IDs
 func (r *Repository) ListNodes() ([]string, error) {
-	chunks, err := r.nodeStore.ListChunks()
+	chunks, err := r.store.ListChunks()
 	if err != nil {
 		return nil, fmt.Errorf("listing chunks: %w", err)
 	}
 
 	ids := make([]string, len(chunks))
 	for i, chunk := range chunks {
-		ids[i] = fmt.Sprintf("%x", chunk)
+		ids[i] = hex.EncodeToString(chunk)
 	}
 	return ids, nil
 }
 
-// DeleteNode removes a node from the repository
+// DeleteNode removes a node and its associated links
 func (r *Repository) DeleteNode(id string) error {
 	// Get node first to get chunk references
 	node, err := r.GetNode(id)
@@ -301,45 +388,46 @@ func (r *Repository) DeleteNode(id string) error {
 		return fmt.Errorf("getting node: %w", err)
 	}
 
-	// Delete node
-	err = r.nodeStore.Delete([][]byte{[]byte(id)})
-	if err != nil {
-		// Try hex decoding if it's a hex string
-		if len(id) == 64 { // Length of a hex-encoded SHA-256 hash
-			if hashBytes, err := hex.DecodeString(id); err == nil {
-				if err := r.nodeStore.Delete([][]byte{hashBytes}); err != nil {
-					return fmt.Errorf("deleting node: %w", err)
-				}
-			}
-		} else {
-			return fmt.Errorf("deleting node: %w", err)
-		}
-	}
-
-	// Delete content chunks
-	if chunks, ok := node.Meta["chunks"].([]string); ok {
-		chunkData := make([][]byte, len(chunks))
-		for i, chunk := range chunks {
-			hashBytes, err := hex.DecodeString(chunk)
-			if err != nil {
-				continue
-			}
-			chunkData[i] = hashBytes
-		}
-		if err := r.store.Delete(chunkData); err != nil {
-			return fmt.Errorf("deleting chunks: %w", err)
-		}
-	}
-
-	// Delete associated links
+	// Get associated links before deleting node
 	links, err := r.GetLinks(id)
 	if err != nil {
 		return fmt.Errorf("getting links: %w", err)
 	}
+
+	// Delete all associated links first
 	for _, link := range links {
 		if err := r.DeleteLink(link.Source, link.Target, link.Type); err != nil {
 			return fmt.Errorf("deleting link: %w", err)
 		}
+	}
+
+	// Delete content chunks if they exist in metadata
+	if chunks, ok := node.Meta["chunks"].([]interface{}); ok {
+		for _, chunk := range chunks {
+			if chunkStr, ok := chunk.(string); ok {
+				hashBytes, err := hex.DecodeString(chunkStr)
+				if err != nil {
+					continue
+				}
+				if err := r.store.Delete([][]byte{hashBytes}); err != nil {
+					return fmt.Errorf("deleting content chunk: %w", err)
+				}
+			}
+		}
+	}
+
+	// Delete node
+	if err := r.store.Delete([][]byte{[]byte(id)}); err != nil {
+		return fmt.Errorf("deleting node: %w", err)
+	}
+
+	// Update header
+	if r.header.NodeCount > 0 {
+		r.header.NodeCount--
+	}
+	r.header.Modified = time.Now().UTC().Unix()
+	if err := r.updateHeader(); err != nil {
+		return fmt.Errorf("updating header: %w", err)
 	}
 
 	// Record action
@@ -373,7 +461,7 @@ func (r *Repository) AddLink(source, target, linkType string, meta map[string]in
 		Modified: now,
 	}
 
-	// Deep copy metadata to avoid modifying the original
+	// Deep copy metadata
 	if meta != nil {
 		metaCopy := make(map[string]interface{})
 		metaJSON, err := json.Marshal(meta)
@@ -386,23 +474,26 @@ func (r *Repository) AddLink(source, target, linkType string, meta map[string]in
 		link.Meta = metaCopy
 	}
 
-	// Store link
+	// Store link data
 	data, err := json.Marshal(link)
 	if err != nil {
 		return fmt.Errorf("marshaling link: %w", err)
 	}
 
-	chunks, err := r.nodeStore.Put(data)
+	// Store in chunk store
+	_, err = r.store.Put(data)
 	if err != nil {
 		return fmt.Errorf("storing link: %w", err)
 	}
 
-	// Use first chunk hash as link ID
-	if len(chunks) == 0 {
-		return fmt.Errorf("no chunks generated for link")
+	// Update header
+	r.header.EdgeCount++
+	r.header.Modified = time.Now().UTC().Unix()
+	if err := r.updateHeader(); err != nil {
+		return fmt.Errorf("updating header: %w", err)
 	}
 
-	// Record action with metadata
+	// Record action
 	if err := r.txStore.RecordAction(transaction.ActionAddLink, map[string]any{
 		"source": source,
 		"target": target,
@@ -415,10 +506,10 @@ func (r *Repository) AddLink(source, target, linkType string, meta map[string]in
 	return nil
 }
 
-// GetLinks returns all links for a node (both incoming and outgoing)
+// GetLinks returns all links for a node
 func (r *Repository) GetLinks(nodeID string) ([]*core.Link, error) {
 	// List all chunks
-	chunks, err := r.nodeStore.ListChunks()
+	chunks, err := r.store.ListChunks()
 	if err != nil {
 		return nil, fmt.Errorf("listing chunks: %w", err)
 	}
@@ -427,7 +518,7 @@ func (r *Repository) GetLinks(nodeID string) ([]*core.Link, error) {
 	var links []*core.Link
 	for _, chunk := range chunks {
 		// Get chunk data
-		data, err := r.nodeStore.Get([][]byte{chunk})
+		data, err := r.store.Get([][]byte{chunk})
 		if err != nil {
 			continue
 		}
@@ -438,15 +529,14 @@ func (r *Repository) GetLinks(nodeID string) ([]*core.Link, error) {
 			continue
 		}
 
-		// Check if link is related to node (either as source or target)
+		// Check if link is related to node
 		if link.Source == nodeID || link.Target == nodeID {
 			links = append(links, &link)
 		}
 	}
 
-	// Sort links by timestamp and order field
+	// Sort links by timestamp
 	sort.Slice(links, func(i, j int) bool {
-		// If timestamps are equal, use order field as secondary sort key
 		if links[i].Created.Equal(links[j].Created) {
 			orderI, okI := links[i].Meta["order"].(float64)
 			orderJ, okJ := links[j].Meta["order"].(float64)
@@ -463,7 +553,7 @@ func (r *Repository) GetLinks(nodeID string) ([]*core.Link, error) {
 // DeleteLink removes a link
 func (r *Repository) DeleteLink(source, target, linkType string) error {
 	// List all chunks
-	chunks, err := r.nodeStore.ListChunks()
+	chunks, err := r.store.ListChunks()
 	if err != nil {
 		return fmt.Errorf("listing chunks: %w", err)
 	}
@@ -471,7 +561,7 @@ func (r *Repository) DeleteLink(source, target, linkType string) error {
 	// Find and delete matching link
 	for _, chunk := range chunks {
 		// Get chunk data
-		data, err := r.nodeStore.Get([][]byte{chunk})
+		data, err := r.store.Get([][]byte{chunk})
 		if err != nil {
 			continue
 		}
@@ -484,8 +574,17 @@ func (r *Repository) DeleteLink(source, target, linkType string) error {
 
 		// Check if this is the link to delete
 		if link.Source == source && link.Target == target && link.Type == linkType {
-			if err := r.nodeStore.Delete([][]byte{chunk}); err != nil {
+			if err := r.store.Delete([][]byte{chunk}); err != nil {
 				return fmt.Errorf("deleting link: %w", err)
+			}
+
+			// Update header
+			if r.header.EdgeCount > 0 {
+				r.header.EdgeCount--
+			}
+			r.header.Modified = time.Now().UTC().Unix()
+			if err := r.updateHeader(); err != nil {
+				return fmt.Errorf("updating header: %w", err)
 			}
 
 			// Record action
@@ -504,25 +603,30 @@ func (r *Repository) DeleteLink(source, target, linkType string) error {
 	return nil
 }
 
-// GetContent retrieves content from the repository
-func (r *Repository) GetContent(id string) ([]byte, error) {
-	hashBytes, err := hex.DecodeString(id)
-	if err != nil {
-		return nil, fmt.Errorf("parsing content ID: %w", err)
-	}
-	return r.store.Get([][]byte{hashBytes})
-}
-
 // Close closes the repository
 func (r *Repository) Close() error {
 	if err := r.store.Close(); err != nil {
 		return fmt.Errorf("closing store: %w", err)
 	}
-	if err := r.nodeStore.Close(); err != nil {
-		return fmt.Errorf("closing node store: %w", err)
-	}
 	if err := r.txStore.Close(); err != nil {
 		return fmt.Errorf("closing transaction store: %w", err)
 	}
-	return nil
+	return r.file.Close()
+}
+
+// Internal methods
+
+func (r *Repository) updateHeader() error {
+	// Seek to start of file
+	if _, err := r.file.Seek(0, 0); err != nil {
+		return fmt.Errorf("seeking to header: %w", err)
+	}
+
+	// Write header
+	if err := binary.Write(r.file, binary.LittleEndian, &r.header); err != nil {
+		return fmt.Errorf("writing header: %w", err)
+	}
+
+	// Sync to disk
+	return r.file.Sync()
 }
