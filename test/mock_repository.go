@@ -11,15 +11,53 @@ import (
 
 // MockRepository implements core.Repository for testing
 type MockRepository struct {
-	nodes map[string]*core.Node
-	links map[string][]*core.Link
+	nodes   map[string]*core.Node
+	links   map[string][]*core.Link
+	modules *core.ModuleRegistry
 }
 
 func NewMockRepository() *MockRepository {
 	return &MockRepository{
-		nodes: make(map[string]*core.Node),
-		links: make(map[string][]*core.Link),
+		nodes:   make(map[string]*core.Node),
+		links:   make(map[string][]*core.Link),
+		modules: core.NewModuleRegistry(),
 	}
+}
+
+// Module operations
+
+func (r *MockRepository) RegisterModule(module core.Module) error {
+	return r.modules.RegisterModule(module)
+}
+
+func (r *MockRepository) GetModule(id string) (core.Module, bool) {
+	return r.modules.GetModule(id)
+}
+
+func (r *MockRepository) ListModules() []core.Module {
+	return r.modules.ListModules()
+}
+
+func (r *MockRepository) QueryNodesByModule(moduleID string) ([]*core.Node, error) {
+	nodes := []*core.Node{}
+	for _, node := range r.nodes {
+		if modID, ok := node.Meta["module"].(string); ok && modID == moduleID {
+			nodes = append(nodes, node)
+		}
+	}
+	return nodes, nil
+}
+
+func (r *MockRepository) QueryLinksByModule(moduleID string) ([]*core.Link, error) {
+	links := []*core.Link{}
+	for _, nodeLinks := range r.links {
+		for _, link := range nodeLinks {
+			if modID, ok := link.Meta["module"].(string); ok && modID == moduleID {
+				links = append(links, link)
+			}
+		}
+	}
+	return links, nil
 }
 
 func (r *MockRepository) AddNode(content []byte, nodeType string, meta map[string]interface{}) (string, error) {
