@@ -41,6 +41,19 @@ type Repository interface {
 	// Content operations
 	GetContent(id string) ([]byte, error)
 
+	// Module operations
+	RegisterModule(module Module) error
+	GetModule(id string) (Module, bool)
+	ListModules() []Module
+	QueryNodesByModule(moduleID string) ([]*Node, error)
+	QueryLinksByModule(moduleID string) ([]*Link, error)
+
 	// Repository operations
 	Close() error
+}
+
+// ModuleAwareRepository represents a repository that supports module operations
+type ModuleAwareRepository interface {
+	Repository
+	ModuleRegistry() *ModuleRegistry
 }

@@ -40,6 +40,7 @@ type Repository struct {
 	store   *store.ChunkStore
 	txStore *transaction.ActionStore
 	lockMgr sync.Mutex
+	modules *core.ModuleRegistry
 }
 
 // Ensure Repository implements required interfaces
@@ -75,9 +76,10 @@ func Create(path string) (*Repository, error) {
 
 	// Create repository instance
 	repo := &Repository{
-		path:   path,
-		file:   file,
-		header: header,
+		path:    path,
+		file:    file,
+		header:  header,
+		modules: core.NewModuleRegistry(),
 	}
 
 	// Create transaction store
@@ -125,9 +127,10 @@ func Open(path string) (*Repository, error) {
 
 	// Create repository instance
 	repo := &Repository{
-		path:   path,
-		file:   file,
-		header: header,
+		path:    path,
+		file:    file,
+		header:  header,
+		modules: core.NewModuleRegistry(),
 	}
 
 	// Create transaction store
@@ -165,6 +168,64 @@ func (r *Repository) GetFile() interface{} {
 // GetLockManager returns the lock manager for transaction storage (implements transaction.Storage)
 func (r *Repository) GetLockManager() interface{} {
 	return &r.lockMgr
+}
+
+// Module operations
+
+func (r *Repository) RegisterModule(module core.Module) error {
+	return r.modules.RegisterModule(module)
+}
+
+func (r *Repository) GetModule(id string) (core.Module, bool) {
+	return r.modules.GetModule(id)
+}
+
+func (r *Repository) ListModules() []core.Module {
+	return r.modules.ListModules()
+}
+
+func (r *Repository) QueryNodesByModule(moduleID string) ([]*core.Node, error) {
+	nodes := []*core.Node{}
+	ids, err := r.ListNodes()
+	if err != nil {
+		return nil, err
+	}
+
+	for _, id := range ids {
+		node, err := r.GetNode(id)
+		if err != nil {
+			continue
+		}
+		if modID, ok := node.Meta["module"].(string); ok && modID == moduleID {
+			nodes = append(nodes, node)
+		}
+	}
+	return nodes, nil
+}
+
+func (r *Repository) QueryLinksByModule(moduleID string) ([]*core.Link, error) {
+	links := []*core.Link{}
+	chunks, err := r.store.ListChunks()
+	if err != nil {
+		return nil, err
+	}
+
+	for _, chunk := range chunks {
+		data, err := r.store.Get([][]byte{chunk})
+		if err != nil {
+			continue
+		}
+
+		var link core.Link
+		if err := json.Unmarshal(data, &link); err != nil {
+			continue
+		}
+
+		if modID, ok := link.Meta["module"].(string); ok && modID == moduleID {
+			links = append(links, &link)
+		}
+	}
+	return links, nil
 }
 
 // GetContent retrieves content from the repository
