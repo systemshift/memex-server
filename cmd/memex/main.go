@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"memex/internal/memex"
+	"memex/pkg/memex"
 )
 
 func usage() {
@@ -38,18 +38,25 @@ Import options:
 }
 
 func main() {
+	// Import flags
+	importFlags := flag.NewFlagSet("import", flag.ExitOnError)
+	onConflict := importFlags.String("on-conflict", "skip", "How to handle ID conflicts (skip, replace, rename)")
+	merge := importFlags.Bool("merge", false, "Merge with existing content")
+	prefix := importFlags.String("prefix", "", "Add prefix to imported node IDs")
+
 	flag.Usage = usage
 	flag.Parse()
 
+	cmds := memex.NewCommands()
+	defer cmds.Close()
+
 	if flag.NArg() < 1 {
-		// No command provided, open editor for new note
-		if err := memex.OpenRepository(); err != nil {
+		// No command provided
+		if err := cmds.AutoConnect(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
-		defer memex.CloseRepository()
-
-		if err := memex.EditCommand(); err != nil {
+		if err := cmds.Edit(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
@@ -62,90 +69,103 @@ func main() {
 	var err error
 	switch cmd {
 	case "init":
-		err = memex.InitCommand(args...)
+		if len(args) != 1 {
+			usage()
+		}
+		err = cmds.Init(args[0])
 
 	case "connect":
-		err = memex.ConnectCommand(args...)
+		if len(args) != 1 {
+			usage()
+		}
+		err = cmds.Connect(args[0])
 
 	case "add":
-		// Try to open repository in current directory
-		if err := memex.OpenRepository(); err != nil {
+		if len(args) != 1 {
+			usage()
+		}
+		if err := cmds.AutoConnect(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
-		defer memex.CloseRepository()
-
-		err = memex.AddCommand(args...)
+		err = cmds.Add(args[0])
 
 	case "delete":
-		// Try to open repository in current directory
-		if err := memex.OpenRepository(); err != nil {
+		if len(args) != 1 {
+			usage()
+		}
+		if err := cmds.AutoConnect(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
-		defer memex.CloseRepository()
-
-		err = memex.DeleteCommand(args...)
+		err = cmds.Delete(args[0])
 
 	case "edit":
-		// Try to open repository in current directory
-		if err := memex.OpenRepository(); err != nil {
+		if err := cmds.AutoConnect(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
-		defer memex.CloseRepository()
-
-		err = memex.EditCommand(args...)
+		err = cmds.Edit()
 
 	case "link":
-		// Try to open repository in current directory
-		if err := memex.OpenRepository(); err != nil {
+		if len(args) < 3 {
+			usage()
+		}
+		if err := cmds.AutoConnect(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
-		defer memex.CloseRepository()
-
-		err = memex.LinkCommand(args...)
+		note := ""
+		if len(args) > 3 {
+			note = args[3]
+		}
+		err = cmds.Link(args[0], args[1], args[2], note)
 
 	case "links":
-		// Try to open repository in current directory
-		if err := memex.OpenRepository(); err != nil {
+		if len(args) != 1 {
+			usage()
+		}
+		if err := cmds.AutoConnect(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
-		defer memex.CloseRepository()
-
-		err = memex.LinksCommand(args...)
+		err = cmds.Links(args[0])
 
 	case "status":
-		// Try to open repository in current directory
-		if err := memex.OpenRepository(); err != nil {
+		if err := cmds.AutoConnect(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
-		defer memex.CloseRepository()
-
-		err = memex.StatusCommand(args...)
+		err = cmds.Status()
 
 	case "export":
-		// Try to open repository in current directory
-		if err := memex.OpenRepository(); err != nil {
+		if len(args) != 1 {
+			usage()
+		}
+		if err := cmds.AutoConnect(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
-		defer memex.CloseRepository()
-
-		err = memex.ExportCommand(args...)
+		err = cmds.Export(args[0])
 
 	case "import":
-		// Try to open repository in current directory
-		if err := memex.OpenRepository(); err != nil {
+		if len(args) < 1 {
+			usage()
+		}
+		if err := cmds.AutoConnect(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
-		defer memex.CloseRepository()
 
-		err = memex.ImportCommand(args...)
+		// Parse import flags
+		importFlags.Parse(args[1:])
+		opts := memex.ImportOptions{
+			OnConflict: *onConflict,
+			Merge:      *merge,
+			Prefix:     *prefix,
+		}
+
+		err = cmds.Import(args[0], opts)
 
 	default:
 		usage()
