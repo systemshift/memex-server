@@ -2,154 +2,104 @@ package memex
 
 import (
 	"fmt"
-	"os"
 
-	"memex/internal/memex/storage"
+	"memex/internal/memex/core"
+	"memex/internal/memex/repository"
 )
 
 // Memex represents a memex instance
 type Memex struct {
-	repo *storage.MXStore
+	repo core.Repository
 }
 
-// Open opens a memex repository at the given path
+// Open opens an existing repository
 func Open(path string) (*Memex, error) {
-	// If repository exists, open it
-	if _, err := os.Stat(path); err == nil {
-		repo, err := storage.OpenMX(path)
-		if err != nil {
-			return nil, fmt.Errorf("opening repository: %w", err)
-		}
-		return &Memex{repo: repo}, nil
-	}
-
-	// Create new repository
-	repo, err := storage.CreateMX(path)
+	repo, err := repository.Open(path)
 	if err != nil {
-		return nil, fmt.Errorf("creating repository: %w", err)
+		return nil, fmt.Errorf("opening repository: %w", err)
 	}
-
 	return &Memex{repo: repo}, nil
 }
 
-// GetRepository returns the underlying repository
-func (m *Memex) GetRepository() (*storage.MXStore, error) {
-	if m.repo == nil {
-		return nil, fmt.Errorf("repository not initialized")
+// Create creates a new repository
+func Create(path string) (*Memex, error) {
+	repo, err := repository.Create(path)
+	if err != nil {
+		return nil, fmt.Errorf("creating repository: %w", err)
 	}
-	return m.repo, nil
+	return &Memex{repo: repo}, nil
+}
+
+// Close closes the repository
+func (m *Memex) Close() error {
+	return m.repo.Close()
 }
 
 // Add adds content to the repository
-func (m *Memex) Add(content []byte, nodeType string, meta map[string]any) (string, error) {
-	// Store content as chunks
-	if meta == nil {
-		meta = make(map[string]any)
-	}
+func (m *Memex) Add(content []byte, nodeType string, meta map[string]interface{}) (string, error) {
 	return m.repo.AddNode(content, nodeType, meta)
 }
 
-// Get retrieves an object by ID
-func (m *Memex) Get(id string) (Node, error) {
+// AddWithID adds content with a specific ID
+func (m *Memex) AddWithID(id string, content []byte, nodeType string, meta map[string]interface{}) error {
+	return m.repo.AddNodeWithID(id, content, nodeType, meta)
+}
+
+// Get retrieves a node by ID
+func (m *Memex) Get(id string) (*Node, error) {
 	node, err := m.repo.GetNode(id)
 	if err != nil {
-		return Node{}, fmt.Errorf("getting node: %w", err)
+		return nil, fmt.Errorf("getting node: %w", err)
 	}
-
-	// Reconstruct content from chunks if available
-	if contentHash, ok := node.Meta["content"].(string); ok {
-		content, err := m.repo.ReconstructContent(contentHash)
-		if err != nil {
-			return Node{}, fmt.Errorf("reconstructing content: %w", err)
-		}
-		return Node{
-			ID:       node.ID,
-			Type:     node.Type,
-			Meta:     node.Meta,
-			Content:  content,
-			Created:  node.Created,
-			Modified: node.Modified,
-		}, nil
-	}
-
-	return Node{
+	return &Node{
 		ID:       node.ID,
 		Type:     node.Type,
+		Content:  node.Content,
 		Meta:     node.Meta,
 		Created:  node.Created,
 		Modified: node.Modified,
 	}, nil
 }
 
-// Update updates an object's content and metadata
-func (m *Memex) Update(id string, content []byte) error {
-	// Get existing object to preserve metadata
-	node, err := m.repo.GetNode(id)
-	if err != nil {
-		return fmt.Errorf("getting node: %w", err)
-	}
-
-	// Store new content
-	meta := make(map[string]any)
-	for k, v := range node.Meta {
-		if k != "content" && k != "chunks" { // Don't copy old content hash or chunks
-			meta[k] = v
-		}
-	}
-
-	// Add new node
-	newID, err := m.repo.AddNode(content, node.Type, meta)
-	if err != nil {
-		return fmt.Errorf("adding new node: %w", err)
-	}
-
-	// Get all links to update
-	links, err := m.repo.GetLinks(id)
-	if err != nil {
-		return fmt.Errorf("getting links: %w", err)
-	}
-
-	// Delete old node
-	if err := m.repo.DeleteNode(id); err != nil {
-		return fmt.Errorf("deleting old node: %w", err)
-	}
-
-	// Recreate links with new ID
-	for _, link := range links {
-		err := m.repo.AddLink(newID, link.Target, link.Type, link.Meta)
-		if err != nil {
-			return fmt.Errorf("recreating link: %w", err)
-		}
-	}
-
-	return nil
-}
-
-// Delete removes an object
+// Delete removes a node
 func (m *Memex) Delete(id string) error {
 	return m.repo.DeleteNode(id)
 }
 
-// Link creates a link between objects
-func (m *Memex) Link(source, target, linkType string, meta map[string]any) error {
+// Link creates a link between nodes
+func (m *Memex) Link(source, target, linkType string, meta map[string]interface{}) error {
 	return m.repo.AddLink(source, target, linkType, meta)
 }
 
-// GetLinks returns all links for an object
-func (m *Memex) GetLinks(id string) ([]Link, error) {
+// GetLinks returns all links for a node
+func (m *Memex) GetLinks(id string) ([]*Link, error) {
 	links, err := m.repo.GetLinks(id)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("getting links: %w", err)
 	}
 
-	result := make([]Link, len(links))
+	result := make([]*Link, len(links))
 	for i, link := range links {
-		result[i] = Link{
+		result[i] = &Link{
 			Target: link.Target,
 			Type:   link.Type,
 			Meta:   link.Meta,
 		}
 	}
-
 	return result, nil
+}
+
+// DeleteLink removes a link
+func (m *Memex) DeleteLink(source, target, linkType string) error {
+	return m.repo.DeleteLink(source, target, linkType)
+}
+
+// ListNodes returns a list of all node IDs
+func (m *Memex) ListNodes() ([]string, error) {
+	return m.repo.ListNodes()
+}
+
+// GetContent retrieves raw content by ID
+func (m *Memex) GetContent(id string) ([]byte, error) {
+	return m.repo.GetContent(id)
 }
