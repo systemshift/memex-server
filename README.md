@@ -1,6 +1,10 @@
 # Memex - Personal Knowledge Graph
 
-A personal knowledge management system that helps you organize, connect, and explore your digital content through meaningful relationships.
+[![Go Report Card](https://goreportcard.com/badge/github.com/aviaryan/memex)](https://goreportcard.com/report/github.com/aviaryan/memex)
+[![License](https://img.shields.io/badge/License-BSD%203--Clause-blue.svg)](LICENSE)
+[![GitHub release](https://img.shields.io/github/v/release/aviaryan/memex)](https://github.com/aviaryan/memex/releases)
+
+Memex is a graph-oriented data management tool.
 
 ## Key Features
 
