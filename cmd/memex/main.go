@@ -23,6 +23,13 @@ Commands:
   status                   Show repository status
   export <path>            Export repository to tar archive
   import <path>            Import repository from tar archive
+  module <subcommand>      Module management commands
+
+Module Commands:
+  module list              List installed modules
+  module install <path>    Install module from path
+  module remove <name>     Remove installed module
+  module run <name> [args] Run module-specific command
 
 Export options:
   --nodes <id1,id2,...>    Export specific nodes and their subgraph
@@ -166,6 +173,13 @@ func main() {
 		}
 
 		err = cmds.Import(args[0], opts)
+
+	case "module":
+		if err := cmds.AutoConnect(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		err = cmds.Module(args...)
 
 	default:
 		usage()

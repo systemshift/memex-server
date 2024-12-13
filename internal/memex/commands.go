@@ -17,6 +17,65 @@ var (
 	repoPath    string
 )
 
+// ModuleCommand handles module operations
+func ModuleCommand(args ...string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("module command requires subcommand (list, install, remove, run)")
+	}
+
+	repo, err := GetRepository()
+	if err != nil {
+		return err
+	}
+
+	switch args[0] {
+	case "list":
+		// List installed modules
+		modules := repo.ListModules()
+		if len(modules) == 0 {
+			fmt.Println("No modules installed")
+			return nil
+		}
+		fmt.Println("Installed modules:")
+		for _, mod := range modules {
+			fmt.Printf("  %s - %s\n", mod.ID(), mod.Name())
+			fmt.Printf("    %s\n", mod.Description())
+		}
+		return nil
+
+	case "install":
+		if len(args) < 2 {
+			return fmt.Errorf("install requires module path")
+		}
+		// TODO: Implement module installation
+		return fmt.Errorf("module installation not implemented yet")
+
+	case "remove":
+		if len(args) < 2 {
+			return fmt.Errorf("remove requires module name")
+		}
+		// TODO: Implement module removal
+		return fmt.Errorf("module removal not implemented yet")
+
+	case "run":
+		if len(args) < 2 {
+			return fmt.Errorf("run requires module name")
+		}
+		module, exists := repo.GetModule(args[1])
+		if !exists {
+			return fmt.Errorf("module not found: %s", args[1])
+		}
+		// Pass remaining args to module
+		moduleArgs := args[2:]
+		fmt.Printf("Running module %s with args: %v\n", module.ID(), moduleArgs)
+		// TODO: Implement module command execution
+		return fmt.Errorf("module execution not implemented yet")
+
+	default:
+		return fmt.Errorf("unknown module subcommand: %s", args[0])
+	}
+}
+
 // StatusCommand shows repository status
 func StatusCommand(args ...string) error {
 	repo, err := GetRepository()
@@ -130,8 +189,8 @@ func EditCommand(args ...string) error {
 		return err
 	}
 
-	editor := NewEditor(repoPath)
-	content, err := editor.Run()
+	ed := NewEditor(repoPath)
+	content, err := ed.Run()
 	if err != nil {
 		return fmt.Errorf("editing content: %w", err)
 	}
