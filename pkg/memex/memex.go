@@ -7,6 +7,14 @@ import (
 	"memex/internal/memex/repository"
 )
 
+// Module represents a module that can be installed and used
+type Module interface {
+	ID() string
+	Name() string
+	Description() string
+	Run(args []string) error
+}
+
 // Memex represents a memex instance
 type Memex struct {
 	repo core.Repository
@@ -102,4 +110,60 @@ func (m *Memex) ListNodes() ([]string, error) {
 // GetContent retrieves raw content by ID
 func (m *Memex) GetContent(id string) ([]byte, error) {
 	return m.repo.GetContent(id)
+}
+
+// Module operations
+
+// RegisterModule registers a new module
+func (m *Memex) RegisterModule(module core.Module) error {
+	return m.repo.RegisterModule(module)
+}
+
+// GetModule returns a module by ID
+func (m *Memex) GetModule(id string) (core.Module, bool) {
+	return m.repo.GetModule(id)
+}
+
+// ListModules returns all registered modules
+func (m *Memex) ListModules() []core.Module {
+	return m.repo.ListModules()
+}
+
+// QueryNodesByModule returns all nodes created by a module
+func (m *Memex) QueryNodesByModule(moduleID string) ([]*Node, error) {
+	nodes, err := m.repo.QueryNodesByModule(moduleID)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]*Node, len(nodes))
+	for i, node := range nodes {
+		result[i] = &Node{
+			ID:       node.ID,
+			Type:     node.Type,
+			Content:  node.Content,
+			Meta:     node.Meta,
+			Created:  node.Created,
+			Modified: node.Modified,
+		}
+	}
+	return result, nil
+}
+
+// QueryLinksByModule returns all links created by a module
+func (m *Memex) QueryLinksByModule(moduleID string) ([]*Link, error) {
+	links, err := m.repo.QueryLinksByModule(moduleID)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]*Link, len(links))
+	for i, link := range links {
+		result[i] = &Link{
+			Target: link.Target,
+			Type:   link.Type,
+			Meta:   link.Meta,
+		}
+	}
+	return result, nil
 }
