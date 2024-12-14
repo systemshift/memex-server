@@ -105,20 +105,38 @@ func (c *Commands) Import(path string, opts ImportOptions) error {
 
 // Module handles module operations
 func (c *Commands) Module(args ...string) error {
-	// If first arg is "run", use old style: module run <module> <cmd> [args]
-	if len(args) > 0 && args[0] == "run" {
-		return memex.ModuleCommand(args...)
+	// If first arg is not "run", treat as direct module command
+	if len(args) > 0 && args[0] != "run" {
+		// Convert to run command format
+		moduleID := args[0]
+		if len(args) < 2 {
+			return fmt.Errorf("module command required")
+		}
+		cmd := args[1]
+		cmdArgs := args[2:]
+		newArgs := append([]string{"run", moduleID, cmd}, cmdArgs...)
+		return memex.ModuleCommand(newArgs...)
 	}
-
-	// Otherwise, treat as direct module command: <module> <cmd> [args]
-	// Prepend "run" to convert to old style
-	newArgs := append([]string{"run"}, args...)
-	return memex.ModuleCommand(newArgs...)
+	return memex.ModuleCommand(args...)
 }
 
 // ModuleHelp shows help for a module
 func (c *Commands) ModuleHelp(moduleID string) error {
-	commands, err := memex.GetModuleCommands(moduleID)
+	// Get module manager
+	manager, err := memex.NewModuleManager()
+	if err != nil {
+		return fmt.Errorf("creating module manager: %w", err)
+	}
+
+	// Set repository
+	repo, err := memex.GetRepository()
+	if err != nil {
+		return fmt.Errorf("getting repository: %w", err)
+	}
+	manager.SetRepository(repo)
+
+	// Get module commands
+	commands, err := manager.GetModuleCommands(moduleID)
 	if err != nil {
 		return fmt.Errorf("getting module commands: %w", err)
 	}

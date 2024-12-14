@@ -16,7 +16,8 @@ type MockModule struct {
 func (m *MockModule) ID() string                                         { return m.id }
 func (m *MockModule) Name() string                                       { return m.name }
 func (m *MockModule) Description() string                                { return m.description }
-func (m *MockModule) Capabilities() []core.ModuleCapability              { return nil }
+func (m *MockModule) Commands() []core.ModuleCommand                     { return nil }
+func (m *MockModule) HandleCommand(cmd string, args []string) error      { return nil }
 func (m *MockModule) ValidateNodeType(nodeType string) bool              { return true }
 func (m *MockModule) ValidateLinkType(linkType string) bool              { return true }
 func (m *MockModule) ValidateMetadata(meta map[string]interface{}) error { return nil }

@@ -18,13 +18,14 @@ var (
 	moduleManager *ModuleManager
 )
 
-func init() {
-	// Initialize module manager
-	var err error
-	moduleManager, err = NewModuleManager()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: Failed to initialize module manager: %v\n", err)
+// SetRepository sets the current repository (used for testing)
+func SetRepository(repo core.Repository) {
+	currentRepo = repo
+	repoPath = "test.mx"
+	if moduleManager == nil {
+		moduleManager, _ = NewModuleManager()
 	}
+	moduleManager.SetRepository(repo)
 }
 
 // GetModuleCommands returns available commands for a module
@@ -134,7 +135,20 @@ func ModuleCommand(args ...string) error {
 		return moduleManager.HandleCommand(moduleID, cmd, cmdArgs)
 
 	default:
-		return fmt.Errorf("unknown module subcommand: %s", args[0])
+		// Try to handle as direct module command
+		moduleID := args[0]
+		if !moduleManager.IsModuleEnabled(moduleID) {
+			return fmt.Errorf("module not found or not enabled: %s", moduleID)
+		}
+
+		if len(args) < 2 {
+			return fmt.Errorf("module command required")
+		}
+
+		cmd := args[1]
+		cmdArgs := args[2:]
+
+		return moduleManager.HandleCommand(moduleID, cmd, cmdArgs)
 	}
 }
 

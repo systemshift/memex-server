@@ -21,7 +21,7 @@ type ModuleManager struct {
 	config     *core.ModulesConfig
 	configPath string
 	modulesDir string
-	registry   *core.ModuleRegistry
+	repo       core.Repository
 }
 
 // NewModuleManager creates a new module manager
@@ -44,7 +44,6 @@ func NewModuleManager() (*ModuleManager, error) {
 	manager := &ModuleManager{
 		configPath: filepath.Join(configDir, ModulesConfigFile),
 		modulesDir: modulesDir,
-		registry:   core.NewModuleRegistry(),
 	}
 
 	// Load or create config
@@ -55,49 +54,60 @@ func NewModuleManager() (*ModuleManager, error) {
 	return manager, nil
 }
 
-// GetModuleConfig returns configuration for a module
-func (m *ModuleManager) GetModuleConfig(moduleID string) (core.ModuleConfig, bool) {
-	return m.config.GetModule(moduleID)
-}
-
-// IsModuleEnabled checks if a module is enabled
-func (m *ModuleManager) IsModuleEnabled(moduleID string) bool {
-	return m.config.IsModuleEnabled(moduleID)
-}
-
-// HandleCommand handles a module command
-func (m *ModuleManager) HandleCommand(moduleID string, cmd string, args []string) error {
-	// Check if module exists and is enabled
-	if !m.config.IsModuleEnabled(moduleID) {
-		return fmt.Errorf("module not enabled: %s", moduleID)
+// SetRepository sets the repository for module operations
+func (m *ModuleManager) SetRepository(repo core.Repository) {
+	m.repo = repo
+	// Sync config with repository state
+	if repo != nil {
+		for _, module := range repo.ListModules() {
+			moduleID := module.ID()
+			if _, exists := m.config.GetModule(moduleID); !exists {
+				m.config.AddModule(moduleID, core.ModuleConfig{
+					Path:     moduleID,
+					Type:     "package",
+					Enabled:  true,
+					Settings: make(map[string]interface{}),
+				})
+			}
+		}
+		m.saveConfig()
 	}
-
-	// Get module from registry
-	module, exists := m.registry.GetModule(moduleID)
-	if !exists {
-		return fmt.Errorf("module not found: %s", moduleID)
-	}
-
-	// Handle command
-	return module.HandleCommand(cmd, args)
 }
 
 // GetModuleCommands returns available commands for a module
 func (m *ModuleManager) GetModuleCommands(moduleID string) ([]core.ModuleCommand, error) {
-	module, exists := m.registry.GetModule(moduleID)
+	if m.repo == nil {
+		return nil, fmt.Errorf("no repository connected")
+	}
+
+	module, exists := m.repo.GetModule(moduleID)
 	if !exists {
 		return nil, fmt.Errorf("module not found: %s", moduleID)
 	}
+
+	if !m.IsModuleEnabled(moduleID) {
+		return nil, fmt.Errorf("module not enabled: %s", moduleID)
+	}
+
 	return module.Commands(), nil
 }
 
-// ListModuleCommands returns all available module commands
-func (m *ModuleManager) ListModuleCommands() map[string][]core.ModuleCommand {
-	commands := make(map[string][]core.ModuleCommand)
-	for _, module := range m.registry.ListModules() {
-		commands[module.ID()] = module.Commands()
+// HandleCommand handles a module command
+func (m *ModuleManager) HandleCommand(moduleID string, cmd string, args []string) error {
+	if m.repo == nil {
+		return fmt.Errorf("no repository connected")
 	}
-	return commands
+
+	module, exists := m.repo.GetModule(moduleID)
+	if !exists {
+		return fmt.Errorf("module not found: %s", moduleID)
+	}
+
+	if !m.IsModuleEnabled(moduleID) {
+		return fmt.Errorf("module not enabled: %s", moduleID)
+	}
+
+	return module.HandleCommand(cmd, args)
 }
 
 // loadConfig loads the modules configuration file
@@ -151,8 +161,13 @@ func (m *ModuleManager) InstallModule(path string) error {
 		moduleType = "binary"
 	}
 
-	// TODO: Load and validate module
-	// For now, just use the directory/file name as the module ID
+	// Use absolute path
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return fmt.Errorf("getting absolute path: %w", err)
+	}
+
+	// Use directory/file name as the module ID
 	moduleID := filepath.Base(path)
 
 	// Create module directory
@@ -163,7 +178,7 @@ func (m *ModuleManager) InstallModule(path string) error {
 
 	// Add module configuration
 	m.config.AddModule(moduleID, core.ModuleConfig{
-		Path:     path,
+		Path:     absPath,
 		Type:     moduleType,
 		Enabled:  true,
 		Settings: make(map[string]interface{}),
@@ -179,7 +194,7 @@ func (m *ModuleManager) InstallModule(path string) error {
 
 // RemoveModule removes a module
 func (m *ModuleManager) RemoveModule(moduleID string) error {
-	// Check if module exists
+	// Check if module exists in config
 	if _, exists := m.config.GetModule(moduleID); !exists {
 		return fmt.Errorf("module not found: %s", moduleID)
 	}
@@ -203,25 +218,78 @@ func (m *ModuleManager) RemoveModule(moduleID string) error {
 
 // ListModules returns list of installed modules
 func (m *ModuleManager) ListModules() []string {
-	modules := make([]string, 0, len(m.config.Modules))
-	for id := range m.config.Modules {
-		modules = append(modules, id)
+	if m.repo == nil {
+		return nil
 	}
-	return modules
+
+	modules := m.repo.ListModules()
+	result := make([]string, len(modules))
+	for i, module := range modules {
+		result[i] = module.ID()
+	}
+	return result
 }
 
 // EnableModule enables a module
 func (m *ModuleManager) EnableModule(moduleID string) error {
-	if !m.config.EnableModule(moduleID) {
+	if m.repo == nil {
+		return fmt.Errorf("no repository connected")
+	}
+
+	if _, exists := m.repo.GetModule(moduleID); !exists {
 		return fmt.Errorf("module not found: %s", moduleID)
 	}
+
+	if !m.config.EnableModule(moduleID) {
+		// Add module to config if it doesn't exist
+		m.config.AddModule(moduleID, core.ModuleConfig{
+			Path:     moduleID,
+			Type:     "package",
+			Enabled:  true,
+			Settings: make(map[string]interface{}),
+		})
+	}
+
 	return m.saveConfig()
 }
 
 // DisableModule disables a module
 func (m *ModuleManager) DisableModule(moduleID string) error {
-	if !m.config.DisableModule(moduleID) {
+	if m.repo == nil {
+		return fmt.Errorf("no repository connected")
+	}
+
+	if _, exists := m.repo.GetModule(moduleID); !exists {
 		return fmt.Errorf("module not found: %s", moduleID)
 	}
+
+	if !m.config.DisableModule(moduleID) {
+		// Add module to config if it doesn't exist
+		m.config.AddModule(moduleID, core.ModuleConfig{
+			Path:     moduleID,
+			Type:     "package",
+			Enabled:  false,
+			Settings: make(map[string]interface{}),
+		})
+	}
+
 	return m.saveConfig()
+}
+
+// IsModuleEnabled checks if a module is enabled
+func (m *ModuleManager) IsModuleEnabled(moduleID string) bool {
+	if m.repo == nil {
+		return false
+	}
+
+	if _, exists := m.repo.GetModule(moduleID); !exists {
+		return false
+	}
+
+	return m.config.IsModuleEnabled(moduleID)
+}
+
+// GetModuleConfig returns configuration for a module
+func (m *ModuleManager) GetModuleConfig(moduleID string) (core.ModuleConfig, bool) {
+	return m.config.GetModule(moduleID)
 }
