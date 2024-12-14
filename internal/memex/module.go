@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"memex/internal/memex/core"
 )
@@ -145,40 +147,91 @@ func (m *ModuleManager) saveConfig() error {
 	return nil
 }
 
-// InstallModule installs a module from a path
+// isGitURL checks if a path is a Git URL
+func isGitURL(path string) bool {
+	return strings.HasPrefix(path, "https://") ||
+		strings.HasPrefix(path, "git@") ||
+		strings.HasSuffix(path, ".git")
+}
+
+// getModuleIDFromGit extracts module ID from Git URL
+func getModuleIDFromGit(url string) string {
+	// Remove .git suffix if present
+	url = strings.TrimSuffix(url, ".git")
+
+	// Extract repo name from URL
+	parts := strings.Split(url, "/")
+	if len(parts) >= 1 {
+		return parts[len(parts)-1]
+	}
+	return url
+}
+
+// cloneGitRepo clones a Git repository
+func (m *ModuleManager) cloneGitRepo(url, moduleDir string) error {
+	cmd := exec.Command("git", "clone", url, moduleDir)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("cloning repository: %w\nOutput: %s", err, output)
+	}
+	return nil
+}
+
+// InstallModule installs a module from a path or Git URL
 func (m *ModuleManager) InstallModule(path string) error {
-	// Validate module path
-	info, err := os.Stat(path)
-	if err != nil {
-		return fmt.Errorf("checking module path: %w", err)
-	}
-
-	// Read module metadata
+	var moduleID string
 	var moduleType string
-	if info.IsDir() {
-		moduleType = "package"
+	var modulePath string
+
+	if isGitURL(path) {
+		// Handle Git installation
+		moduleID = getModuleIDFromGit(path)
+		moduleType = "git"
+
+		// Create module directory
+		moduleDir := filepath.Join(m.modulesDir, moduleID)
+		if err := os.MkdirAll(moduleDir, 0755); err != nil {
+			return fmt.Errorf("creating module directory: %w", err)
+		}
+
+		// Clone repository
+		if err := m.cloneGitRepo(path, moduleDir); err != nil {
+			return err
+		}
+
+		modulePath = moduleDir
 	} else {
-		moduleType = "binary"
-	}
+		// Handle local installation
+		// Validate module path
+		info, err := os.Stat(path)
+		if err != nil {
+			return fmt.Errorf("checking module path: %w", err)
+		}
 
-	// Use absolute path
-	absPath, err := filepath.Abs(path)
-	if err != nil {
-		return fmt.Errorf("getting absolute path: %w", err)
-	}
+		if info.IsDir() {
+			moduleType = "package"
+		} else {
+			moduleType = "binary"
+		}
 
-	// Use directory/file name as the module ID
-	moduleID := filepath.Base(path)
+		// Use absolute path
+		absPath, err := filepath.Abs(path)
+		if err != nil {
+			return fmt.Errorf("getting absolute path: %w", err)
+		}
 
-	// Create module directory
-	moduleDir := filepath.Join(m.modulesDir, moduleID)
-	if err := os.MkdirAll(moduleDir, 0755); err != nil {
-		return fmt.Errorf("creating module directory: %w", err)
+		moduleID = filepath.Base(path)
+		modulePath = absPath
+
+		// Create module directory
+		moduleDir := filepath.Join(m.modulesDir, moduleID)
+		if err := os.MkdirAll(moduleDir, 0755); err != nil {
+			return fmt.Errorf("creating module directory: %w", err)
+		}
 	}
 
 	// Add module configuration
 	m.config.AddModule(moduleID, core.ModuleConfig{
-		Path:     absPath,
+		Path:     modulePath,
 		Type:     moduleType,
 		Enabled:  true,
 		Settings: make(map[string]interface{}),
