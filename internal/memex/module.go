@@ -18,12 +18,29 @@ const (
 	ModulesDir        = "modules"
 )
 
+// GitSystem defines the interface for Git operations
+type GitSystem interface {
+	Clone(url, targetDir string) error
+}
+
+// DefaultGitSystem implements GitSystem using real Git commands
+type DefaultGitSystem struct{}
+
+func (g *DefaultGitSystem) Clone(url, targetDir string) error {
+	cmd := exec.Command("git", "clone", url, targetDir)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("cloning repository: %w\nOutput: %s", err, output)
+	}
+	return nil
+}
+
 // ModuleManager handles module installation and configuration
 type ModuleManager struct {
 	config     *core.ModulesConfig
 	configPath string
 	modulesDir string
 	repo       core.Repository
+	git        GitSystem
 }
 
 // NewModuleManager creates a new module manager
@@ -46,6 +63,7 @@ func NewModuleManager() (*ModuleManager, error) {
 	manager := &ModuleManager{
 		configPath: filepath.Join(configDir, ModulesConfigFile),
 		modulesDir: modulesDir,
+		git:        &DefaultGitSystem{},
 	}
 
 	// Load or create config
@@ -54,6 +72,11 @@ func NewModuleManager() (*ModuleManager, error) {
 	}
 
 	return manager, nil
+}
+
+// SetGitSystem sets the Git system implementation
+func (m *ModuleManager) SetGitSystem(git GitSystem) {
+	m.git = git
 }
 
 // SetRepository sets the repository for module operations
@@ -147,15 +170,15 @@ func (m *ModuleManager) saveConfig() error {
 	return nil
 }
 
-// isGitURL checks if a path is a Git URL
-func isGitURL(path string) bool {
+// IsGitURL checks if a path is a Git URL
+func IsGitURL(path string) bool {
 	return strings.HasPrefix(path, "https://") ||
 		strings.HasPrefix(path, "git@") ||
 		strings.HasSuffix(path, ".git")
 }
 
-// getModuleIDFromGit extracts module ID from Git URL
-func getModuleIDFromGit(url string) string {
+// GetModuleIDFromGit extracts module ID from Git URL
+func GetModuleIDFromGit(url string) string {
 	// Remove .git suffix if present
 	url = strings.TrimSuffix(url, ".git")
 
@@ -169,11 +192,7 @@ func getModuleIDFromGit(url string) string {
 
 // cloneGitRepo clones a Git repository
 func (m *ModuleManager) cloneGitRepo(url, moduleDir string) error {
-	cmd := exec.Command("git", "clone", url, moduleDir)
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("cloning repository: %w\nOutput: %s", err, output)
-	}
-	return nil
+	return m.git.Clone(url, moduleDir)
 }
 
 // InstallModule installs a module from a path or Git URL
@@ -182,9 +201,9 @@ func (m *ModuleManager) InstallModule(path string) error {
 	var moduleType string
 	var modulePath string
 
-	if isGitURL(path) {
+	if IsGitURL(path) {
 		// Handle Git installation
-		moduleID = getModuleIDFromGit(path)
+		moduleID = GetModuleIDFromGit(path)
 		moduleType = "git"
 
 		// Create module directory
