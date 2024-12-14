@@ -13,33 +13,49 @@ import (
 )
 
 var (
-	currentRepo core.Repository
-	repoPath    string
+	currentRepo   core.Repository
+	repoPath      string
+	moduleManager *ModuleManager
 )
+
+func init() {
+	// Initialize module manager
+	var err error
+	moduleManager, err = NewModuleManager()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: Failed to initialize module manager: %v\n", err)
+	}
+}
 
 // ModuleCommand handles module operations
 func ModuleCommand(args ...string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("module command requires subcommand (list, install, remove, run)")
-	}
-
-	repo, err := GetRepository()
-	if err != nil {
-		return err
+		return fmt.Errorf("module command requires subcommand (list, install, remove, enable, disable)")
 	}
 
 	switch args[0] {
 	case "list":
 		// List installed modules
-		modules := repo.ListModules()
+		if moduleManager == nil {
+			return fmt.Errorf("module manager not initialized")
+		}
+
+		modules := moduleManager.ListModules()
 		if len(modules) == 0 {
 			fmt.Println("No modules installed")
 			return nil
 		}
+
 		fmt.Println("Installed modules:")
-		for _, mod := range modules {
-			fmt.Printf("  %s - %s\n", mod.ID(), mod.Name())
-			fmt.Printf("    %s\n", mod.Description())
+		for _, moduleID := range modules {
+			if config, exists := moduleManager.config.GetModule(moduleID); exists {
+				status := "disabled"
+				if config.Enabled {
+					status = "enabled"
+				}
+				fmt.Printf("  %s (%s) - %s\n", moduleID, config.Type, status)
+				fmt.Printf("    Path: %s\n", config.Path)
+			}
 		}
 		return nil
 
@@ -47,28 +63,76 @@ func ModuleCommand(args ...string) error {
 		if len(args) < 2 {
 			return fmt.Errorf("install requires module path")
 		}
-		// TODO: Implement module installation
-		return fmt.Errorf("module installation not implemented yet")
+		if moduleManager == nil {
+			return fmt.Errorf("module manager not initialized")
+		}
+
+		path := args[1]
+		if err := moduleManager.InstallModule(path); err != nil {
+			return fmt.Errorf("installing module: %w", err)
+		}
+		fmt.Printf("Module installed: %s\n", filepath.Base(path))
+		return nil
 
 	case "remove":
 		if len(args) < 2 {
 			return fmt.Errorf("remove requires module name")
 		}
-		// TODO: Implement module removal
-		return fmt.Errorf("module removal not implemented yet")
+		if moduleManager == nil {
+			return fmt.Errorf("module manager not initialized")
+		}
+
+		moduleID := args[1]
+		if err := moduleManager.RemoveModule(moduleID); err != nil {
+			return fmt.Errorf("removing module: %w", err)
+		}
+		fmt.Printf("Module removed: %s\n", moduleID)
+		return nil
+
+	case "enable":
+		if len(args) < 2 {
+			return fmt.Errorf("enable requires module name")
+		}
+		if moduleManager == nil {
+			return fmt.Errorf("module manager not initialized")
+		}
+
+		moduleID := args[1]
+		if err := moduleManager.EnableModule(moduleID); err != nil {
+			return fmt.Errorf("enabling module: %w", err)
+		}
+		fmt.Printf("Module enabled: %s\n", moduleID)
+		return nil
+
+	case "disable":
+		if len(args) < 2 {
+			return fmt.Errorf("disable requires module name")
+		}
+		if moduleManager == nil {
+			return fmt.Errorf("module manager not initialized")
+		}
+
+		moduleID := args[1]
+		if err := moduleManager.DisableModule(moduleID); err != nil {
+			return fmt.Errorf("disabling module: %w", err)
+		}
+		fmt.Printf("Module disabled: %s\n", moduleID)
+		return nil
 
 	case "run":
 		if len(args) < 2 {
 			return fmt.Errorf("run requires module name")
 		}
-		module, exists := repo.GetModule(args[1])
-		if !exists {
-			return fmt.Errorf("module not found: %s", args[1])
+		if moduleManager == nil {
+			return fmt.Errorf("module manager not initialized")
 		}
-		// Pass remaining args to module
-		moduleArgs := args[2:]
-		fmt.Printf("Running module %s with args: %v\n", module.ID(), moduleArgs)
-		// TODO: Implement module command execution
+
+		moduleID := args[1]
+		if !moduleManager.config.IsModuleEnabled(moduleID) {
+			return fmt.Errorf("module is not enabled: %s", moduleID)
+		}
+
+		// TODO: Implement module execution
 		return fmt.Errorf("module execution not implemented yet")
 
 	default:
