@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"memex/pkg/memex"
 )
@@ -12,7 +13,7 @@ import (
 func usage() {
 	fmt.Printf(`Usage: %s <command> [arguments]
 
-Commands:
+Built-in Commands:
   init <name>                Create a new repository
   connect <path>            Connect to existing repository
   add <file>               Add a file to repository
@@ -24,13 +25,16 @@ Commands:
   export <path>            Export repository to tar archive
   import <path>            Import repository from tar archive
 
-Module Commands:
+Module Management:
   module list              List installed modules
   module install <path>    Install module from path
   module remove <name>     Remove installed module
   module enable <name>     Enable module
   module disable <name>    Disable module
-  module run <name> [args] Run module command
+
+Module Commands:
+  <module> <command> [args] Run module command (e.g., ast add main.go)
+  module help <name>        Show module help
 
 Export options:
   --nodes <id1,id2,...>    Export specific nodes and their subgraph
@@ -176,9 +180,37 @@ func main() {
 		err = cmds.Import(args[0], opts)
 
 	case "module":
-		err = cmds.Module(args...)
+		if len(args) > 0 && args[0] == "help" {
+			if len(args) < 2 {
+				usage()
+			}
+			// Show module help
+			err = cmds.ModuleHelp(args[1])
+		} else {
+			// Handle other module commands
+			err = cmds.Module(args...)
+		}
 
 	default:
+		// Check if it's a module command
+		if err := cmds.AutoConnect(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Try to handle as module command (e.g., "ast add main.go")
+		if len(args) > 0 {
+			moduleArgs := append([]string{cmd, args[0]}, args[1:]...)
+			if err := cmds.Module(moduleArgs...); err != nil {
+				if strings.Contains(err.Error(), "module not found") {
+					usage()
+				}
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+			os.Exit(0)
+		}
+
 		usage()
 	}
 

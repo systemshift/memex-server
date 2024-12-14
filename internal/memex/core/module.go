@@ -1,37 +1,115 @@
 package core
 
-import (
-	"fmt"
-)
+import "fmt"
 
 // ModuleCapability represents a specific capability a module provides
 type ModuleCapability string
 
-// Module represents a special app module that can be registered with Memex
+// ModuleCommand represents a command provided by a module
+type ModuleCommand struct {
+	Name        string   // Command name (e.g., "add", "remove")
+	Description string   // Command description
+	Usage       string   // Command usage (e.g., "ast add <file>")
+	Args        []string // Expected arguments
+}
+
+// ModuleCommandHandler handles execution of a module command
+type ModuleCommandHandler func(repo Repository, args []string) error
+
+// Module defines the interface that all memex modules must implement
 type Module interface {
-	// ID returns the unique identifier for this module
+	// Identity
 	ID() string
-
-	// Name returns the human-readable name of this module
 	Name() string
-
-	// Description returns a description of what this module does
 	Description() string
 
-	// Capabilities returns the list of capabilities this module provides
-	Capabilities() []ModuleCapability
+	// Commands
+	Commands() []ModuleCommand                     // List of commands provided by this module
+	HandleCommand(cmd string, args []string) error // Handle a command
 
-	// ValidateNodeType checks if a node type is valid for this module
+	// Validation
 	ValidateNodeType(nodeType string) bool
-
-	// ValidateLinkType checks if a link type is valid for this module
 	ValidateLinkType(linkType string) bool
-
-	// ValidateMetadata validates module-specific metadata
 	ValidateMetadata(meta map[string]interface{}) error
 }
 
-// ModuleRegistry manages registered modules
+// BaseModule provides a basic implementation of the Module interface
+type BaseModule struct {
+	id          string
+	name        string
+	description string
+	repo        Repository
+	commands    map[string]ModuleCommandHandler
+}
+
+// NewBaseModule creates a new base module
+func NewBaseModule(id, name, description string, repo Repository) *BaseModule {
+	return &BaseModule{
+		id:          id,
+		name:        name,
+		description: description,
+		repo:        repo,
+		commands:    make(map[string]ModuleCommandHandler),
+	}
+}
+
+// ID returns the module identifier
+func (m *BaseModule) ID() string {
+	return m.id
+}
+
+// Name returns the module name
+func (m *BaseModule) Name() string {
+	return m.name
+}
+
+// Description returns the module description
+func (m *BaseModule) Description() string {
+	return m.description
+}
+
+// Commands returns the list of available commands
+func (m *BaseModule) Commands() []ModuleCommand {
+	cmds := make([]ModuleCommand, 0, len(m.commands))
+	for name := range m.commands {
+		cmds = append(cmds, ModuleCommand{
+			Name: name,
+			// Description and usage would be set by implementing module
+		})
+	}
+	return cmds
+}
+
+// HandleCommand handles a module command
+func (m *BaseModule) HandleCommand(cmd string, args []string) error {
+	handler, ok := m.commands[cmd]
+	if !ok {
+		return fmt.Errorf("unknown command: %s", cmd)
+	}
+	return handler(m.repo, args)
+}
+
+// RegisterCommand registers a command handler
+func (m *BaseModule) RegisterCommand(name string, handler ModuleCommandHandler) {
+	m.commands[name] = handler
+}
+
+// ValidateNodeType returns true by default
+func (m *BaseModule) ValidateNodeType(nodeType string) bool {
+	return true
+}
+
+// ValidateLinkType returns true by default
+func (m *BaseModule) ValidateLinkType(linkType string) bool {
+	return true
+}
+
+// ValidateMetadata returns nil by default
+func (m *BaseModule) ValidateMetadata(meta map[string]interface{}) error {
+	return nil
+}
+
+// ModuleRegistry manages module registration and lookup
 type ModuleRegistry struct {
 	modules map[string]Module
 }
@@ -43,16 +121,16 @@ func NewModuleRegistry() *ModuleRegistry {
 	}
 }
 
-// RegisterModule registers a new module
+// RegisterModule registers a module
 func (r *ModuleRegistry) RegisterModule(module Module) error {
 	if _, exists := r.modules[module.ID()]; exists {
-		return fmt.Errorf("module %s already registered", module.ID())
+		return fmt.Errorf("module already registered: %s", module.ID())
 	}
 	r.modules[module.ID()] = module
 	return nil
 }
 
-// GetModule returns a registered module by ID
+// GetModule returns a module by ID
 func (r *ModuleRegistry) GetModule(id string) (Module, bool) {
 	module, exists := r.modules[id]
 	return module, exists
@@ -67,7 +145,7 @@ func (r *ModuleRegistry) ListModules() []Module {
 	return modules
 }
 
-// ValidateNodeType checks if a node type is valid for any registered module
+// ValidateNodeType checks if any module accepts this node type
 func (r *ModuleRegistry) ValidateNodeType(nodeType string) bool {
 	for _, module := range r.modules {
 		if module.ValidateNodeType(nodeType) {
@@ -77,7 +155,7 @@ func (r *ModuleRegistry) ValidateNodeType(nodeType string) bool {
 	return false
 }
 
-// ValidateLinkType checks if a link type is valid for any registered module
+// ValidateLinkType checks if any module accepts this link type
 func (r *ModuleRegistry) ValidateLinkType(linkType string) bool {
 	for _, module := range r.modules {
 		if module.ValidateLinkType(linkType) {
@@ -85,15 +163,4 @@ func (r *ModuleRegistry) ValidateLinkType(linkType string) bool {
 		}
 	}
 	return false
-}
-
-// ValidateMetadata validates metadata against all relevant modules
-func (r *ModuleRegistry) ValidateMetadata(meta map[string]interface{}) error {
-	if moduleID, ok := meta["module"].(string); ok {
-		if module, exists := r.modules[moduleID]; exists {
-			return module.ValidateMetadata(meta)
-		}
-		return fmt.Errorf("module %s not found", moduleID)
-	}
-	return nil
 }

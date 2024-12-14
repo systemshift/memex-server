@@ -27,19 +27,27 @@ func init() {
 	}
 }
 
+// GetModuleCommands returns available commands for a module
+func GetModuleCommands(moduleID string) ([]core.ModuleCommand, error) {
+	if moduleManager == nil {
+		return nil, fmt.Errorf("module manager not initialized")
+	}
+	return moduleManager.GetModuleCommands(moduleID)
+}
+
 // ModuleCommand handles module operations
 func ModuleCommand(args ...string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("module command requires subcommand (list, install, remove, enable, disable)")
+		return fmt.Errorf("module command requires subcommand (list, install, remove, enable, disable, run)")
+	}
+
+	if moduleManager == nil {
+		return fmt.Errorf("module manager not initialized")
 	}
 
 	switch args[0] {
 	case "list":
 		// List installed modules
-		if moduleManager == nil {
-			return fmt.Errorf("module manager not initialized")
-		}
-
 		modules := moduleManager.ListModules()
 		if len(modules) == 0 {
 			fmt.Println("No modules installed")
@@ -48,13 +56,21 @@ func ModuleCommand(args ...string) error {
 
 		fmt.Println("Installed modules:")
 		for _, moduleID := range modules {
-			if config, exists := moduleManager.config.GetModule(moduleID); exists {
+			if config, exists := moduleManager.GetModuleConfig(moduleID); exists {
 				status := "disabled"
 				if config.Enabled {
 					status = "enabled"
 				}
 				fmt.Printf("  %s (%s) - %s\n", moduleID, config.Type, status)
 				fmt.Printf("    Path: %s\n", config.Path)
+
+				// Show available commands
+				if commands, err := moduleManager.GetModuleCommands(moduleID); err == nil && len(commands) > 0 {
+					fmt.Println("    Commands:")
+					for _, cmd := range commands {
+						fmt.Printf("      %s - %s\n", cmd.Name, cmd.Description)
+					}
+				}
 			}
 		}
 		return nil
@@ -63,77 +79,59 @@ func ModuleCommand(args ...string) error {
 		if len(args) < 2 {
 			return fmt.Errorf("install requires module path")
 		}
-		if moduleManager == nil {
-			return fmt.Errorf("module manager not initialized")
-		}
-
-		path := args[1]
-		if err := moduleManager.InstallModule(path); err != nil {
+		if err := moduleManager.InstallModule(args[1]); err != nil {
 			return fmt.Errorf("installing module: %w", err)
 		}
-		fmt.Printf("Module installed: %s\n", filepath.Base(path))
+		fmt.Printf("Module installed: %s\n", filepath.Base(args[1]))
 		return nil
 
 	case "remove":
 		if len(args) < 2 {
 			return fmt.Errorf("remove requires module name")
 		}
-		if moduleManager == nil {
-			return fmt.Errorf("module manager not initialized")
-		}
-
-		moduleID := args[1]
-		if err := moduleManager.RemoveModule(moduleID); err != nil {
+		if err := moduleManager.RemoveModule(args[1]); err != nil {
 			return fmt.Errorf("removing module: %w", err)
 		}
-		fmt.Printf("Module removed: %s\n", moduleID)
+		fmt.Printf("Module removed: %s\n", args[1])
 		return nil
 
 	case "enable":
 		if len(args) < 2 {
 			return fmt.Errorf("enable requires module name")
 		}
-		if moduleManager == nil {
-			return fmt.Errorf("module manager not initialized")
-		}
-
-		moduleID := args[1]
-		if err := moduleManager.EnableModule(moduleID); err != nil {
+		if err := moduleManager.EnableModule(args[1]); err != nil {
 			return fmt.Errorf("enabling module: %w", err)
 		}
-		fmt.Printf("Module enabled: %s\n", moduleID)
+		fmt.Printf("Module enabled: %s\n", args[1])
 		return nil
 
 	case "disable":
 		if len(args) < 2 {
 			return fmt.Errorf("disable requires module name")
 		}
-		if moduleManager == nil {
-			return fmt.Errorf("module manager not initialized")
-		}
-
-		moduleID := args[1]
-		if err := moduleManager.DisableModule(moduleID); err != nil {
+		if err := moduleManager.DisableModule(args[1]); err != nil {
 			return fmt.Errorf("disabling module: %w", err)
 		}
-		fmt.Printf("Module disabled: %s\n", moduleID)
+		fmt.Printf("Module disabled: %s\n", args[1])
 		return nil
 
 	case "run":
 		if len(args) < 2 {
 			return fmt.Errorf("run requires module name")
 		}
-		if moduleManager == nil {
-			return fmt.Errorf("module manager not initialized")
-		}
-
 		moduleID := args[1]
-		if !moduleManager.config.IsModuleEnabled(moduleID) {
+		if !moduleManager.IsModuleEnabled(moduleID) {
 			return fmt.Errorf("module is not enabled: %s", moduleID)
 		}
 
-		// TODO: Implement module execution
-		return fmt.Errorf("module execution not implemented yet")
+		// Pass remaining args to module command
+		if len(args) < 3 {
+			return fmt.Errorf("run requires command name")
+		}
+		cmd := args[2]
+		cmdArgs := args[3:]
+
+		return moduleManager.HandleCommand(moduleID, cmd, cmdArgs)
 
 	default:
 		return fmt.Errorf("unknown module subcommand: %s", args[0])

@@ -21,6 +21,7 @@ type ModuleManager struct {
 	config     *core.ModulesConfig
 	configPath string
 	modulesDir string
+	registry   *core.ModuleRegistry
 }
 
 // NewModuleManager creates a new module manager
@@ -43,6 +44,7 @@ func NewModuleManager() (*ModuleManager, error) {
 	manager := &ModuleManager{
 		configPath: filepath.Join(configDir, ModulesConfigFile),
 		modulesDir: modulesDir,
+		registry:   core.NewModuleRegistry(),
 	}
 
 	// Load or create config
@@ -61,6 +63,41 @@ func (m *ModuleManager) GetModuleConfig(moduleID string) (core.ModuleConfig, boo
 // IsModuleEnabled checks if a module is enabled
 func (m *ModuleManager) IsModuleEnabled(moduleID string) bool {
 	return m.config.IsModuleEnabled(moduleID)
+}
+
+// HandleCommand handles a module command
+func (m *ModuleManager) HandleCommand(moduleID string, cmd string, args []string) error {
+	// Check if module exists and is enabled
+	if !m.config.IsModuleEnabled(moduleID) {
+		return fmt.Errorf("module not enabled: %s", moduleID)
+	}
+
+	// Get module from registry
+	module, exists := m.registry.GetModule(moduleID)
+	if !exists {
+		return fmt.Errorf("module not found: %s", moduleID)
+	}
+
+	// Handle command
+	return module.HandleCommand(cmd, args)
+}
+
+// GetModuleCommands returns available commands for a module
+func (m *ModuleManager) GetModuleCommands(moduleID string) ([]core.ModuleCommand, error) {
+	module, exists := m.registry.GetModule(moduleID)
+	if !exists {
+		return nil, fmt.Errorf("module not found: %s", moduleID)
+	}
+	return module.Commands(), nil
+}
+
+// ListModuleCommands returns all available module commands
+func (m *ModuleManager) ListModuleCommands() map[string][]core.ModuleCommand {
+	commands := make(map[string][]core.ModuleCommand)
+	for _, module := range m.registry.ListModules() {
+		commands[module.ID()] = module.Commands()
+	}
+	return commands
 }
 
 // loadConfig loads the modules configuration file

@@ -2,9 +2,8 @@ package memex
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
-	"strings"
+
+	"memex/internal/memex"
 )
 
 // Commands provides command functions for the CLI
@@ -27,153 +26,59 @@ func (c *Commands) Close() error {
 
 // AutoConnect attempts to connect to a repository in the current directory
 func (c *Commands) AutoConnect() error {
-	// Look for .mx files in current directory
-	entries, err := os.ReadDir(".")
-	if err != nil {
-		return fmt.Errorf("reading directory: %w", err)
+	if err := memex.OpenRepository(); err != nil {
+		return fmt.Errorf("auto-connecting: %w", err)
 	}
-
-	// Find first .mx file
-	for _, entry := range entries {
-		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".mx") {
-			memex, err := Open(entry.Name())
-			if err != nil {
-				return fmt.Errorf("opening repository: %w", err)
-			}
-			c.memex = memex
-			return nil
-		}
-	}
-
-	return fmt.Errorf("no repository found in current directory")
+	return nil
 }
 
 // Init initializes a new repository
 func (c *Commands) Init(name string) error {
-	if !strings.HasSuffix(name, ".mx") {
-		name += ".mx"
-	}
-
-	memex, err := Create(name)
-	if err != nil {
-		return fmt.Errorf("creating repository: %w", err)
-	}
-	c.memex = memex
-	return nil
+	return memex.InitCommand(name)
 }
 
 // Connect connects to an existing repository
 func (c *Commands) Connect(path string) error {
-	if !strings.HasSuffix(path, ".mx") {
-		path += ".mx"
-	}
-
-	memex, err := Open(path)
-	if err != nil {
-		return fmt.Errorf("opening repository: %w", err)
-	}
-	c.memex = memex
-	return nil
+	return memex.ConnectCommand(path)
 }
 
 // Status shows repository status
 func (c *Commands) Status() error {
-	if c.memex == nil {
-		return fmt.Errorf("no repository connected")
-	}
-
-	// Check repository access by listing nodes
-	_, err := c.memex.ListNodes()
-	if err != nil {
-		return fmt.Errorf("checking repository: %w", err)
-	}
-
-	fmt.Printf("Status: Ready\n")
-	return nil
+	return memex.StatusCommand()
 }
 
 // Add adds a file to the repository
 func (c *Commands) Add(path string) error {
-	if c.memex == nil {
-		return fmt.Errorf("no repository connected")
-	}
-
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return fmt.Errorf("reading file: %w", err)
-	}
-
-	meta := map[string]interface{}{
-		"filename": filepath.Base(path),
-		"type":     "file",
-	}
-
-	_, err = c.memex.Add(content, "file", meta)
-	return err
+	return memex.AddCommand(path)
 }
 
 // Delete removes a node
 func (c *Commands) Delete(id string) error {
-	if c.memex == nil {
-		return fmt.Errorf("no repository connected")
-	}
-	return c.memex.Delete(id)
+	return memex.DeleteCommand(id)
 }
 
 // Edit opens the editor for a new note
 func (c *Commands) Edit() error {
-	if c.memex == nil {
-		return fmt.Errorf("no repository connected")
-	}
-
-	// TODO: Implement editor
-	return fmt.Errorf("editor not implemented yet")
+	return memex.EditCommand()
 }
 
 // Link creates a link between nodes
 func (c *Commands) Link(source, target, linkType, note string) error {
-	if c.memex == nil {
-		return fmt.Errorf("no repository connected")
-	}
-
-	meta := map[string]interface{}{}
+	args := []string{source, target, linkType}
 	if note != "" {
-		meta["note"] = note
+		args = append(args, note)
 	}
-
-	return c.memex.Link(source, target, linkType, meta)
+	return memex.LinkCommand(args...)
 }
 
 // Links shows links for a node
 func (c *Commands) Links(id string) error {
-	if c.memex == nil {
-		return fmt.Errorf("no repository connected")
-	}
-
-	links, err := c.memex.GetLinks(id)
-	if err != nil {
-		return err
-	}
-
-	fmt.Printf("Links for node %s:\n", id)
-	for _, link := range links {
-		fmt.Printf("%s -> %s [%s]\n", id[:8], link.Target[:8], link.Type)
-		if note, ok := link.Meta["note"].(string); ok {
-			fmt.Printf("  Note: %s\n", note)
-		}
-	}
-
-	return nil
+	return memex.LinksCommand(id)
 }
 
 // Export exports the repository
 func (c *Commands) Export(path string) error {
-	if c.memex == nil {
-		return fmt.Errorf("no repository connected")
-	}
-
-	// TODO: Implement export
-	return fmt.Errorf("export not implemented yet")
+	return memex.ExportCommand(path)
 }
 
 // Import imports content into the repository
@@ -185,51 +90,51 @@ type ImportOptions struct {
 
 // Import imports content from a file
 func (c *Commands) Import(path string, opts ImportOptions) error {
-	if c.memex == nil {
-		return fmt.Errorf("no repository connected")
+	args := []string{path}
+	if opts.OnConflict != "" {
+		args = append(args, "--on-conflict", opts.OnConflict)
 	}
-
-	// TODO: Implement import
-	return fmt.Errorf("import not implemented yet")
+	if opts.Merge {
+		args = append(args, "--merge")
+	}
+	if opts.Prefix != "" {
+		args = append(args, "--prefix", opts.Prefix)
+	}
+	return memex.ImportCommand(args...)
 }
 
 // Module handles module operations
 func (c *Commands) Module(args ...string) error {
-	if c.memex == nil {
-		return fmt.Errorf("no repository connected")
+	// If first arg is "run", use old style: module run <module> <cmd> [args]
+	if len(args) > 0 && args[0] == "run" {
+		return memex.ModuleCommand(args...)
 	}
 
-	if len(args) < 1 {
-		return fmt.Errorf("module command requires subcommand (list, install, remove, run)")
+	// Otherwise, treat as direct module command: <module> <cmd> [args]
+	// Prepend "run" to convert to old style
+	newArgs := append([]string{"run"}, args...)
+	return memex.ModuleCommand(newArgs...)
+}
+
+// ModuleHelp shows help for a module
+func (c *Commands) ModuleHelp(moduleID string) error {
+	commands, err := memex.GetModuleCommands(moduleID)
+	if err != nil {
+		return fmt.Errorf("getting module commands: %w", err)
 	}
 
-	switch args[0] {
-	case "list":
-		// TODO: Implement module listing
-		return fmt.Errorf("module listing not implemented yet")
-
-	case "install":
-		if len(args) < 2 {
-			return fmt.Errorf("install requires module path")
+	fmt.Printf("Module: %s\n\n", moduleID)
+	fmt.Println("Commands:")
+	for _, cmd := range commands {
+		fmt.Printf("  %-20s %s\n", cmd.Name, cmd.Description)
+		if cmd.Usage != "" {
+			fmt.Printf("    Usage: %s\n", cmd.Usage)
 		}
-		// TODO: Implement module installation
-		return fmt.Errorf("module installation not implemented yet")
-
-	case "remove":
-		if len(args) < 2 {
-			return fmt.Errorf("remove requires module name")
+		if len(cmd.Args) > 0 {
+			fmt.Printf("    Args:  %s\n", cmd.Args)
 		}
-		// TODO: Implement module removal
-		return fmt.Errorf("module removal not implemented yet")
-
-	case "run":
-		if len(args) < 2 {
-			return fmt.Errorf("run requires module name")
-		}
-		// TODO: Implement module execution
-		return fmt.Errorf("module execution not implemented yet")
-
-	default:
-		return fmt.Errorf("unknown module subcommand: %s", args[0])
+		fmt.Println()
 	}
+
+	return nil
 }
