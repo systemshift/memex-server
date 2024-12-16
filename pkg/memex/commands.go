@@ -105,9 +105,26 @@ func (c *Commands) Import(path string, opts ImportOptions) error {
 
 // Module handles module operations
 func (c *Commands) Module(args ...string) error {
-	// If first arg is not "run", treat as direct module command
-	if len(args) > 0 && args[0] != "run" {
-		// Convert to run command format
+	// Ensure we're connected to a repository first
+	if err := c.AutoConnect(); err != nil {
+		return fmt.Errorf("connecting to repository: %w", err)
+	}
+
+	if len(args) == 0 {
+		return fmt.Errorf("module command required")
+	}
+
+	// Handle built-in module commands directly
+	switch args[0] {
+	case "list", "install", "remove", "enable", "disable":
+		return memex.ModuleCommand(args...)
+	case "run":
+		if len(args) < 2 {
+			return fmt.Errorf("run requires module name")
+		}
+		return memex.ModuleCommand(args...)
+	default:
+		// Convert to run command format for direct module commands
 		moduleID := args[0]
 		if len(args) < 2 {
 			return fmt.Errorf("module command required")
@@ -117,7 +134,6 @@ func (c *Commands) Module(args ...string) error {
 		newArgs := append([]string{"run", moduleID, cmd}, cmdArgs...)
 		return memex.ModuleCommand(newArgs...)
 	}
-	return memex.ModuleCommand(args...)
 }
 
 // ModuleHelp shows help for a module

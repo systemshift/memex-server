@@ -31,7 +31,14 @@ func SetRepository(repo core.Repository) {
 // GetModuleCommands returns available commands for a module
 func GetModuleCommands(moduleID string) ([]core.ModuleCommand, error) {
 	if moduleManager == nil {
-		return nil, fmt.Errorf("module manager not initialized")
+		var err error
+		moduleManager, err = NewModuleManager()
+		if err != nil {
+			return nil, fmt.Errorf("initializing module manager: %w", err)
+		}
+		if currentRepo != nil {
+			moduleManager.SetRepository(currentRepo)
+		}
 	}
 	return moduleManager.GetModuleCommands(moduleID)
 }
@@ -39,14 +46,37 @@ func GetModuleCommands(moduleID string) ([]core.ModuleCommand, error) {
 // ModuleCommand handles module operations
 func ModuleCommand(args ...string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("module command requires subcommand (list, install, remove, enable, disable, run)")
+		return fmt.Errorf("module command requires subcommand (list, install, remove)")
 	}
 
+	fmt.Fprintf(os.Stderr, "Debug: Initializing module manager...\n")
+	// Initialize module manager if needed
 	if moduleManager == nil {
-		return fmt.Errorf("module manager not initialized")
+		var err error
+		moduleManager, err = NewModuleManager()
+		if err != nil {
+			return fmt.Errorf("initializing module manager: %w", err)
+		}
+		fmt.Fprintf(os.Stderr, "Debug: Module manager initialized\n")
+	} else {
+		fmt.Fprintf(os.Stderr, "Debug: Module manager already initialized\n")
 	}
 
-	switch args[0] {
+	fmt.Fprintf(os.Stderr, "Debug: Getting repository...\n")
+	// Get current repository
+	repo, err := GetRepository()
+	if err != nil {
+		return fmt.Errorf("getting repository: %w", err)
+	}
+	fmt.Fprintf(os.Stderr, "Debug: Got repository\n")
+
+	fmt.Fprintf(os.Stderr, "Debug: Setting repository for module manager...\n")
+	// Set repository for module manager
+	moduleManager.SetRepository(repo)
+	fmt.Fprintf(os.Stderr, "Debug: Repository set for module manager\n")
+
+	cmd := args[0]
+	switch cmd {
 	case "list":
 		// List installed modules
 		modules := moduleManager.ListModules()
@@ -58,11 +88,7 @@ func ModuleCommand(args ...string) error {
 		fmt.Println("Installed modules:")
 		for _, moduleID := range modules {
 			if config, exists := moduleManager.GetModuleConfig(moduleID); exists {
-				status := "disabled"
-				if config.Enabled {
-					status = "enabled"
-				}
-				fmt.Printf("  %s (%s) - %s\n", moduleID, config.Type, status)
+				fmt.Printf("  %s (%s)\n", moduleID, config.Type)
 				fmt.Printf("    Path: %s\n", config.Path)
 
 				// Show available commands
@@ -96,55 +122,12 @@ func ModuleCommand(args ...string) error {
 		fmt.Printf("Module removed: %s\n", args[1])
 		return nil
 
-	case "enable":
-		if len(args) < 2 {
-			return fmt.Errorf("enable requires module name")
-		}
-		if err := moduleManager.EnableModule(args[1]); err != nil {
-			return fmt.Errorf("enabling module: %w", err)
-		}
-		fmt.Printf("Module enabled: %s\n", args[1])
-		return nil
-
-	case "disable":
-		if len(args) < 2 {
-			return fmt.Errorf("disable requires module name")
-		}
-		if err := moduleManager.DisableModule(args[1]); err != nil {
-			return fmt.Errorf("disabling module: %w", err)
-		}
-		fmt.Printf("Module disabled: %s\n", args[1])
-		return nil
-
-	case "run":
-		if len(args) < 2 {
-			return fmt.Errorf("run requires module name")
-		}
-		moduleID := args[1]
-		if !moduleManager.IsModuleEnabled(moduleID) {
-			return fmt.Errorf("module is not enabled: %s", moduleID)
-		}
-
-		// Pass remaining args to module command
-		if len(args) < 3 {
-			return fmt.Errorf("run requires command name")
-		}
-		cmd := args[2]
-		cmdArgs := args[3:]
-
-		return moduleManager.HandleCommand(moduleID, cmd, cmdArgs)
-
 	default:
-		// Try to handle as direct module command
+		// Try to handle as module command (e.g., ast parse main.go)
 		moduleID := args[0]
-		if !moduleManager.IsModuleEnabled(moduleID) {
-			return fmt.Errorf("module not found or not enabled: %s", moduleID)
-		}
-
 		if len(args) < 2 {
 			return fmt.Errorf("module command required")
 		}
-
 		cmd := args[1]
 		cmdArgs := args[2:]
 

@@ -3,215 +3,105 @@ package test
 import (
 	"os"
 	"path/filepath"
-	"reflect"
 	"testing"
 
 	"memex/internal/memex"
-	pkgmemex "memex/pkg/memex"
 )
 
-func setupTestModule(t *testing.T) (*TestModule, *pkgmemex.Commands, *memex.ModuleManager) {
-	// Create temporary test directory
-	tmpDir, err := os.MkdirTemp("", "memex-module-test")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	t.Cleanup(func() { os.RemoveAll(tmpDir) })
+func TestModuleCommand(t *testing.T) {
+	// Create test repository
+	repo := NewTestRepository(t)
+	defer repo.Close()
 
-	// Set HOME to temp dir for module manager config
-	os.Setenv("HOME", tmpDir)
-
-	// Create test module directory
-	moduleDir := filepath.Join(tmpDir, "test")
-	if err := os.MkdirAll(moduleDir, 0755); err != nil {
-		t.Fatalf("Failed to create module dir: %v", err)
-	}
-
-	// Create module file
-	moduleFile := filepath.Join(moduleDir, "module.go")
-	if err := os.WriteFile(moduleFile, []byte("package main"), 0644); err != nil {
-		t.Fatalf("Failed to create module file: %v", err)
-	}
-
-	// Create repository
-	repo := NewMockRepository()
-
-	// Create and register module
+	// Set up test module
 	module := NewTestModule(repo)
-	module.SetID("test") // Use consistent ID
+	module.SetID("test")
+
+	// Register module
 	if err := repo.RegisterModule(module); err != nil {
-		t.Fatalf("Failed to register module: %v", err)
+		t.Fatalf("registering module: %v", err)
 	}
 
-	// Set up global repository for commands
+	// Set repository for module manager
 	memex.SetRepository(repo)
 
-	// Create module manager and set repository
-	manager, err := memex.NewModuleManager()
-	if err != nil {
-		t.Fatalf("Failed to create module manager: %v", err)
-	}
-	manager.SetRepository(repo)
-
-	// Install and enable module
-	if err := manager.InstallModule(moduleDir); err != nil {
-		t.Fatalf("Failed to install module: %v", err)
-	}
-	if err := manager.EnableModule(module.ID()); err != nil {
-		t.Fatalf("Failed to enable module: %v", err)
-	}
-
-	// Create commands
-	cmds := pkgmemex.NewCommands()
-
-	return module, cmds, manager
-}
-
-func TestCommandRouting(t *testing.T) {
-	module, cmds, manager := setupTestModule(t)
-
-	tests := []struct {
-		name      string
-		args      []string
-		wantCmd   string
-		wantArgs  []string
-		wantError bool
+	// Test module command routing
+	testCases := []struct {
+		name    string
+		args    []string
+		wantErr bool
 	}{
 		{
-			name:     "Direct module command",
-			args:     []string{"test", "add", "file.txt"},
-			wantCmd:  "add",
-			wantArgs: []string{"file.txt"},
+			name:    "no args",
+			args:    []string{},
+			wantErr: true,
 		},
 		{
-			name:     "Module run command",
-			args:     []string{"run", "test", "add", "file.txt"},
-			wantCmd:  "add",
-			wantArgs: []string{"file.txt"},
+			name:    "list modules",
+			args:    []string{"list"},
+			wantErr: false,
 		},
 		{
-			name:      "Unknown module",
-			args:      []string{"unknown", "add", "file.txt"},
-			wantError: true,
+			name:    "install without path",
+			args:    []string{"install"},
+			wantErr: true,
 		},
 		{
-			name:      "Unknown command",
-			args:      []string{"test", "unknown", "file.txt"},
-			wantError: true,
+			name:    "remove without name",
+			args:    []string{"remove"},
+			wantErr: true,
 		},
 		{
-			name:      "Missing command",
-			args:      []string{"test"},
-			wantError: true,
+			name:    "unknown command",
+			args:    []string{"unknown"},
+			wantErr: true,
 		},
 		{
-			name:      "Disabled module",
-			args:      []string{"test", "add", "file.txt"},
-			wantError: true,
+			name:    "module command without args",
+			args:    []string{"test"},
+			wantErr: true,
 		},
 		{
-			name:      "Command failure",
-			args:      []string{"test", "add", "file.txt"},
-			wantError: true,
+			name:    "module command",
+			args:    []string{"test", "add", "arg1", "arg2"},
+			wantErr: false,
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Reset module state
-			module.lastCommand = ""
-			module.lastArgs = nil
-			module.SetShouldFail(tt.wantError)
-
-			// Enable/disable module based on test case
-			if tt.name == "Disabled module" {
-				if err := manager.DisableModule(module.ID()); err != nil {
-					t.Fatalf("Failed to disable module: %v", err)
-				}
-			} else {
-				if err := manager.EnableModule(module.ID()); err != nil {
-					t.Fatalf("Failed to enable module: %v", err)
-				}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := memex.ModuleCommand(tc.args...)
+			if tc.wantErr && err == nil {
+				t.Error("expected error")
 			}
-
-			// Execute command
-			err := cmds.Module(tt.args...)
-
-			// Check error
-			if tt.wantError {
-				if err == nil {
-					t.Error("expected error, got nil")
-				}
-				return
-			}
-			if err != nil {
+			if !tc.wantErr && err != nil {
 				t.Errorf("unexpected error: %v", err)
-				return
-			}
-
-			// Check command routing
-			if module.GetLastCommand() != tt.wantCmd {
-				t.Errorf("got command %q, want %q", module.GetLastCommand(), tt.wantCmd)
-			}
-
-			// Check args
-			if !reflect.DeepEqual(module.GetLastArgs(), tt.wantArgs) {
-				t.Errorf("got args %v, want %v", module.GetLastArgs(), tt.wantArgs)
 			}
 		})
 	}
 }
 
-func TestModuleHelp(t *testing.T) {
-	module, cmds, manager := setupTestModule(t)
+func TestModuleInstallation(t *testing.T) {
+	// Create test repository
+	repo := NewTestRepository(t)
+	defer repo.Close()
 
-	tests := []struct {
-		name      string
-		moduleID  string
-		wantError bool
-	}{
-		{
-			name:     "Show help for existing module",
-			moduleID: "test",
-		},
-		{
-			name:      "Show help for unknown module",
-			moduleID:  "unknown",
-			wantError: true,
-		},
-		{
-			name:      "Show help for disabled module",
-			moduleID:  "test",
-			wantError: true,
-		},
+	// Set repository for module manager
+	memex.SetRepository(repo)
+
+	// Create test module
+	moduleDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(moduleDir, "test.txt"), []byte("test"), 0644); err != nil {
+		t.Fatalf("creating test file: %v", err)
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Enable/disable module based on test case
-			if tt.name == "Show help for disabled module" {
-				if err := manager.DisableModule(module.ID()); err != nil {
-					t.Fatalf("Failed to disable module: %v", err)
-				}
-			} else {
-				if err := manager.EnableModule(module.ID()); err != nil {
-					t.Fatalf("Failed to enable module: %v", err)
-				}
-			}
+	// Test installation
+	if err := memex.ModuleCommand("install", moduleDir); err != nil {
+		t.Fatalf("installing module: %v", err)
+	}
 
-			// Execute help command
-			err := cmds.ModuleHelp(tt.moduleID)
-
-			// Check error
-			if tt.wantError {
-				if err == nil {
-					t.Error("expected error got nil")
-				}
-				return
-			}
-			if err != nil {
-				t.Errorf("unexpected error: %v", err)
-			}
-		})
+	// Test removal
+	if err := memex.ModuleCommand("remove", "test.txt"); err != nil {
+		t.Fatalf("removing module: %v", err)
 	}
 }

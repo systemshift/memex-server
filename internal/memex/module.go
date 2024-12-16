@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"plugin"
 	"strings"
 
 	"memex/internal/memex/core"
@@ -82,20 +83,42 @@ func (m *ModuleManager) SetGitSystem(git GitSystem) {
 // SetRepository sets the repository for module operations
 func (m *ModuleManager) SetRepository(repo core.Repository) {
 	m.repo = repo
-	// Sync config with repository state
+	// Load and register all installed modules
 	if repo != nil {
-		for _, module := range repo.ListModules() {
-			moduleID := module.ID()
-			if _, exists := m.config.GetModule(moduleID); !exists {
-				m.config.AddModule(moduleID, core.ModuleConfig{
-					Path:     moduleID,
-					Type:     "package",
-					Enabled:  true,
-					Settings: make(map[string]interface{}),
-				})
+		for moduleID, config := range m.config.Modules {
+			if config.Type == "git" {
+				pluginPath := filepath.Join(m.modulesDir, moduleID, "module.so")
+				if _, err := os.Stat(pluginPath); err == nil {
+					// Load the plugin
+					plug, err := plugin.Open(pluginPath)
+					if err != nil {
+						fmt.Fprintf(os.Stderr, "Warning: failed to load plugin %s: %v\n", moduleID, err)
+						continue
+					}
+
+					// Look up the NewModule symbol
+					newModuleSym, err := plug.Lookup("NewModule")
+					if err != nil {
+						fmt.Fprintf(os.Stderr, "Warning: failed to lookup NewModule in %s: %v\n", moduleID, err)
+						continue
+					}
+
+					// Cast to the correct type
+					newModule, ok := newModuleSym.(func(core.Repository) core.Module)
+					if !ok {
+						fmt.Fprintf(os.Stderr, "Warning: invalid module constructor type in %s\n", moduleID)
+						continue
+					}
+
+					// Create and register the module
+					module := newModule(repo)
+					if err := repo.RegisterModule(module); err != nil {
+						fmt.Fprintf(os.Stderr, "Warning: failed to register module %s: %v\n", moduleID, err)
+						continue
+					}
+				}
 			}
 		}
-		m.saveConfig()
 	}
 }
 
@@ -110,10 +133,6 @@ func (m *ModuleManager) GetModuleCommands(moduleID string) ([]core.ModuleCommand
 		return nil, fmt.Errorf("module not found: %s", moduleID)
 	}
 
-	if !m.IsModuleEnabled(moduleID) {
-		return nil, fmt.Errorf("module not enabled: %s", moduleID)
-	}
-
 	return module.Commands(), nil
 }
 
@@ -126,10 +145,6 @@ func (m *ModuleManager) HandleCommand(moduleID string, cmd string, args []string
 	module, exists := m.repo.GetModule(moduleID)
 	if !exists {
 		return fmt.Errorf("module not found: %s", moduleID)
-	}
-
-	if !m.IsModuleEnabled(moduleID) {
-		return fmt.Errorf("module not enabled: %s", moduleID)
 	}
 
 	return module.HandleCommand(cmd, args)
@@ -218,6 +233,44 @@ func (m *ModuleManager) InstallModule(path string) error {
 		}
 
 		modulePath = moduleDir
+
+		// Build module if it's a Go module
+		if _, err := os.Stat(filepath.Join(moduleDir, "go.mod")); err == nil {
+			// Build as a plugin
+			pluginPath := filepath.Join(moduleDir, "module.so")
+			cmd := exec.Command("go", "build", "-buildmode=plugin", "-o", pluginPath, "./ast")
+			cmd.Dir = moduleDir
+			if output, err := cmd.CombinedOutput(); err != nil {
+				return fmt.Errorf("building module: %w\nOutput: %s", err, output)
+			}
+
+			// Load and register module if repository is connected
+			if m.repo != nil {
+				// Load the plugin
+				plug, err := plugin.Open(pluginPath)
+				if err != nil {
+					return fmt.Errorf("loading module plugin: %w", err)
+				}
+
+				// Look up the NewModule symbol
+				newModuleSym, err := plug.Lookup("NewModule")
+				if err != nil {
+					return fmt.Errorf("looking up NewModule: %w", err)
+				}
+
+				// Cast to the correct type
+				newModule, ok := newModuleSym.(func(core.Repository) core.Module)
+				if !ok {
+					return fmt.Errorf("invalid module constructor type")
+				}
+
+				// Create and register the module
+				module := newModule(m.repo)
+				if err := m.repo.RegisterModule(module); err != nil {
+					return fmt.Errorf("registering module: %w", err)
+				}
+			}
+		}
 	} else {
 		// Handle local installation
 		// Validate module path
@@ -252,7 +305,6 @@ func (m *ModuleManager) InstallModule(path string) error {
 	m.config.AddModule(moduleID, core.ModuleConfig{
 		Path:     modulePath,
 		Type:     moduleType,
-		Enabled:  true,
 		Settings: make(map[string]interface{}),
 	})
 
@@ -300,65 +352,6 @@ func (m *ModuleManager) ListModules() []string {
 		result[i] = module.ID()
 	}
 	return result
-}
-
-// EnableModule enables a module
-func (m *ModuleManager) EnableModule(moduleID string) error {
-	if m.repo == nil {
-		return fmt.Errorf("no repository connected")
-	}
-
-	if _, exists := m.repo.GetModule(moduleID); !exists {
-		return fmt.Errorf("module not found: %s", moduleID)
-	}
-
-	if !m.config.EnableModule(moduleID) {
-		// Add module to config if it doesn't exist
-		m.config.AddModule(moduleID, core.ModuleConfig{
-			Path:     moduleID,
-			Type:     "package",
-			Enabled:  true,
-			Settings: make(map[string]interface{}),
-		})
-	}
-
-	return m.saveConfig()
-}
-
-// DisableModule disables a module
-func (m *ModuleManager) DisableModule(moduleID string) error {
-	if m.repo == nil {
-		return fmt.Errorf("no repository connected")
-	}
-
-	if _, exists := m.repo.GetModule(moduleID); !exists {
-		return fmt.Errorf("module not found: %s", moduleID)
-	}
-
-	if !m.config.DisableModule(moduleID) {
-		// Add module to config if it doesn't exist
-		m.config.AddModule(moduleID, core.ModuleConfig{
-			Path:     moduleID,
-			Type:     "package",
-			Enabled:  false,
-			Settings: make(map[string]interface{}),
-		})
-	}
-
-	return m.saveConfig()
-}
-
-// IsModuleEnabled checks if a module is enabled
-func (m *ModuleManager) IsModuleEnabled(moduleID string) bool {
-	if m.repo == nil {
-		return false
-	}
-
-	if _, exists := m.repo.GetModule(moduleID); !exists {
-		return false
-	}
-
-	return m.config.IsModuleEnabled(moduleID)
 }
 
 // GetModuleConfig returns configuration for a module
