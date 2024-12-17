@@ -1,6 +1,7 @@
 package module
 
 import (
+	"fmt"
 	"memex/pkg/sdk/types"
 )
 
@@ -9,6 +10,7 @@ type BaseModule struct {
 	id          string
 	name        string
 	description string
+	commands    map[string]types.ModuleCommand
 }
 
 // NewBaseModule creates a new base module
@@ -17,6 +19,7 @@ func NewBaseModule(id, name, description string) *BaseModule {
 		id:          id,
 		name:        name,
 		description: description,
+		commands:    make(map[string]types.ModuleCommand),
 	}
 }
 
@@ -33,6 +36,25 @@ func (m *BaseModule) Name() string {
 // Description returns the module description
 func (m *BaseModule) Description() string {
 	return m.description
+}
+
+// Commands returns the list of available commands
+func (m *BaseModule) Commands() []types.ModuleCommand {
+	cmds := make([]types.ModuleCommand, 0, len(m.commands))
+	for _, cmd := range m.commands {
+		cmds = append(cmds, cmd)
+	}
+	return cmds
+}
+
+// HandleCommand handles a module command
+func (m *BaseModule) HandleCommand(cmd string, args []string) error {
+	return fmt.Errorf("command not implemented: %s", cmd)
+}
+
+// RegisterCommand registers a command
+func (m *BaseModule) RegisterCommand(cmd types.ModuleCommand) {
+	m.commands[cmd.Name] = cmd
 }
 
 // Capabilities returns an empty list of capabilities by default

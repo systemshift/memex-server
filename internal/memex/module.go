@@ -86,37 +86,38 @@ func (m *ModuleManager) SetRepository(repo core.Repository) {
 	// Load and register all installed modules
 	if repo != nil {
 		for moduleID, config := range m.config.Modules {
-			if config.Type == "git" {
-				pluginPath := filepath.Join(m.modulesDir, moduleID, "module.so")
-				if _, err := os.Stat(pluginPath); err == nil {
-					// Load the plugin
-					plug, err := plugin.Open(pluginPath)
-					if err != nil {
-						fmt.Fprintf(os.Stderr, "Warning: failed to load plugin %s: %v\n", moduleID, err)
-						continue
-					}
-
-					// Look up the NewModule symbol
-					newModuleSym, err := plug.Lookup("NewModule")
-					if err != nil {
-						fmt.Fprintf(os.Stderr, "Warning: failed to lookup NewModule in %s: %v\n", moduleID, err)
-						continue
-					}
-
-					// Cast to the correct type
-					newModule, ok := newModuleSym.(func(core.Repository) core.Module)
-					if !ok {
-						fmt.Fprintf(os.Stderr, "Warning: invalid module constructor type in %s\n", moduleID)
-						continue
-					}
-
-					// Create and register the module
-					module := newModule(repo)
-					if err := repo.RegisterModule(module); err != nil {
-						fmt.Fprintf(os.Stderr, "Warning: failed to register module %s: %v\n", moduleID, err)
-						continue
-					}
+			pluginPath := filepath.Join(m.modulesDir, moduleID, "module.so")
+			if _, err := os.Stat(pluginPath); err == nil {
+				// Load the plugin
+				plug, err := plugin.Open(pluginPath)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: failed to load plugin %s: %v\n", moduleID, err)
+					continue
 				}
+
+				// Look up the NewModule symbol
+				newModuleSym, err := plug.Lookup("NewModule")
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: failed to lookup NewModule in %s: %v\n", moduleID, err)
+					continue
+				}
+
+				// Cast to the correct type
+				newModule, ok := newModuleSym.(func(core.Repository) core.Module)
+				if !ok {
+					fmt.Fprintf(os.Stderr, "Warning: invalid module constructor type in %s\n", moduleID)
+					continue
+				}
+
+				// Create and register the module
+				module := newModule(repo)
+				if err := repo.RegisterModule(module); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: failed to register module %s: %v\n", moduleID, err)
+					continue
+				}
+				fmt.Fprintf(os.Stderr, "Debug: Successfully loaded and registered module %s\n", moduleID)
+			} else {
+				fmt.Fprintf(os.Stderr, "Warning: plugin not found at %s\n", pluginPath)
 			}
 		}
 	}
@@ -162,12 +163,11 @@ func (m *ModuleManager) loadConfig() error {
 		return fmt.Errorf("reading config: %w", err)
 	}
 
-	var config core.ModulesConfig
-	if err := json.Unmarshal(data, &config); err != nil {
+	m.config = core.DefaultModulesConfig()
+	if err := json.Unmarshal(data, m.config); err != nil {
 		return fmt.Errorf("parsing config: %w", err)
 	}
 
-	m.config = &config
 	return nil
 }
 
@@ -299,12 +299,23 @@ func (m *ModuleManager) InstallModule(path string) error {
 		if err := os.MkdirAll(moduleDir, 0755); err != nil {
 			return fmt.Errorf("creating module directory: %w", err)
 		}
+
+		// Copy module.so if it exists
+		if _, err := os.Stat(filepath.Join(absPath, "module.so")); err == nil {
+			if err := os.MkdirAll(moduleDir, 0755); err != nil {
+				return fmt.Errorf("creating module directory: %w", err)
+			}
+			if err := copyFile(filepath.Join(absPath, "module.so"), filepath.Join(moduleDir, "module.so")); err != nil {
+				return fmt.Errorf("copying module.so: %w", err)
+			}
+		}
 	}
 
 	// Add module configuration
 	m.config.AddModule(moduleID, core.ModuleConfig{
 		Path:     modulePath,
 		Type:     moduleType,
+		Enabled:  true, // Set enabled to true by default
 		Settings: make(map[string]interface{}),
 	})
 
@@ -357,4 +368,18 @@ func (m *ModuleManager) ListModules() []string {
 // GetModuleConfig returns configuration for a module
 func (m *ModuleManager) GetModuleConfig(moduleID string) (core.ModuleConfig, bool) {
 	return m.config.GetModule(moduleID)
+}
+
+// copyFile copies a file from src to dst
+func copyFile(src, dst string) error {
+	input, err := os.ReadFile(src)
+	if err != nil {
+		return fmt.Errorf("reading source file: %w", err)
+	}
+
+	if err := os.WriteFile(dst, input, 0644); err != nil {
+		return fmt.Errorf("writing destination file: %w", err)
+	}
+
+	return nil
 }

@@ -3,26 +3,27 @@ package types
 // ModuleCapability represents a specific capability a module provides
 type ModuleCapability string
 
+// ModuleCommand represents a command provided by a module
+type ModuleCommand struct {
+	Name        string   // Command name (e.g., "add", "remove")
+	Description string   // Command description
+	Usage       string   // Command usage (e.g., "ast add <file>")
+	Args        []string // Expected arguments
+}
+
 // Module defines the interface that all memex modules must implement
 type Module interface {
-	// ID returns the unique identifier for this module
+	// Identity
 	ID() string
-
-	// Name returns the human-readable name of this module
 	Name() string
-
-	// Description returns a description of what this module does
 	Description() string
 
-	// Capabilities returns the list of capabilities this module provides
-	Capabilities() []ModuleCapability
+	// Commands
+	Commands() []ModuleCommand                     // List of commands provided by this module
+	HandleCommand(cmd string, args []string) error // Handle a command
 
-	// ValidateNodeType checks if a node type is valid for this module
+	// Validation
 	ValidateNodeType(nodeType string) bool
-
-	// ValidateLinkType checks if a link type is valid for this module
 	ValidateLinkType(linkType string) bool
-
-	// ValidateMetadata validates module-specific metadata
 	ValidateMetadata(meta map[string]interface{}) error
 }

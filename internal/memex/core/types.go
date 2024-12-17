@@ -1,30 +1,28 @@
 package core
 
-import (
-	"time"
-)
+import "time"
 
 // Node represents a node in the graph
 type Node struct {
-	ID       string                 // Node identifier
-	Type     string                 // Node type
-	Content  []byte                 // Node content
-	Meta     map[string]interface{} // Node metadata
-	Created  time.Time              // Creation timestamp
-	Modified time.Time              // Last modification timestamp
+	ID       string
+	Type     string
+	Content  []byte
+	Meta     map[string]interface{}
+	Created  time.Time
+	Modified time.Time
 }
 
 // Link represents a relationship between nodes
 type Link struct {
-	Source   string                 // Source node ID
-	Target   string                 // Target node ID
-	Type     string                 // Link type
-	Meta     map[string]interface{} // Link metadata
-	Created  time.Time              // Creation timestamp
-	Modified time.Time              // Last modification timestamp
+	Source   string
+	Target   string
+	Type     string
+	Meta     map[string]interface{}
+	Created  time.Time
+	Modified time.Time
 }
 
-// Repository represents a content repository
+// Repository defines the interface for repository operations
 type Repository interface {
 	// Node operations
 	AddNode(content []byte, nodeType string, meta map[string]interface{}) (string, error)
@@ -32,28 +30,22 @@ type Repository interface {
 	GetNode(id string) (*Node, error)
 	DeleteNode(id string) error
 	ListNodes() ([]string, error)
+	GetContent(id string) ([]byte, error)
 
 	// Link operations
 	AddLink(source, target, linkType string, meta map[string]interface{}) error
 	GetLinks(nodeID string) ([]*Link, error)
 	DeleteLink(source, target, linkType string) error
 
-	// Content operations
-	GetContent(id string) ([]byte, error)
-
 	// Module operations
-	RegisterModule(module Module) error
-	GetModule(id string) (Module, bool)
 	ListModules() []Module
+	GetModule(id string) (Module, bool)
+	RegisterModule(module Module) error
+
+	// Query operations
 	QueryNodesByModule(moduleID string) ([]*Node, error)
 	QueryLinksByModule(moduleID string) ([]*Link, error)
 
-	// Repository operations
+	// Close closes the repository
 	Close() error
-}
-
-// ModuleAwareRepository represents a repository that supports module operations
-type ModuleAwareRepository interface {
-	Repository
-	ModuleRegistry() *ModuleRegistry
 }
