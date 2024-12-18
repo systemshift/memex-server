@@ -2,8 +2,9 @@ package memex
 
 import (
 	"fmt"
-
 	"memex/internal/memex"
+	"memex/internal/memex/core"
+	"memex/pkg/sdk/module"
 )
 
 // Commands provides command functions for the CLI
@@ -138,24 +139,22 @@ func (c *Commands) Module(args ...string) error {
 
 // ModuleHelp shows help for a module
 func (c *Commands) ModuleHelp(moduleID string) error {
-	// Get module manager
-	manager, err := memex.NewModuleManager()
+	manager, err := module.NewModuleManager()
 	if err != nil {
 		return fmt.Errorf("creating module manager: %w", err)
 	}
 
-	// Set repository
 	repo, err := memex.GetRepository()
 	if err != nil {
 		return fmt.Errorf("getting repository: %w", err)
 	}
-	manager.SetRepository(repo)
+	manager.SetRepository(core.NewRepositoryAdapter(repo))
 
-	// Get module commands
-	commands, err := manager.GetModuleCommands(moduleID)
-	if err != nil {
-		return fmt.Errorf("getting module commands: %w", err)
+	mod, ok := manager.Get(moduleID)
+	if !ok {
+		return fmt.Errorf("module not found: %s", moduleID)
 	}
+	commands := mod.Commands()
 
 	fmt.Printf("Module: %s\n\n", moduleID)
 	fmt.Println("Commands:")

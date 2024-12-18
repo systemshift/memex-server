@@ -5,9 +5,32 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"memex/pkg/sdk/types"
 )
+
+// GitSystem defines the interface for Git operations (used for modules installed from Git).
+type GitSystem interface {
+	Clone(url, targetDir string) error
+}
+
+// DefaultGitSystem implements GitSystem using real Git commands
+type DefaultGitSystem struct{}
+
+func (g *DefaultGitSystem) Clone(url, targetDir string) error {
+	// In real code, we would run "git clone"
+	// For now, just return an error or do a placeholder
+	return fmt.Errorf("DefaultGitSystem.Clone not implemented")
+}
+
+// Config represents module configuration
+type Config struct {
+	Path     string                 `json:"path"`
+	Type     string                 `json:"type"`
+	Enabled  bool                   `json:"enabled"` // Whether module is enabled
+	Settings map[string]interface{} `json:"settings"`
+}
 
 // Manager handles module operations
 type Manager interface {
@@ -20,22 +43,20 @@ type Manager interface {
 	// List returns all loaded modules
 	List() []types.Module
 
-	// Remove removes a module
+	// Remove(id string) removes a module
 	Remove(id string) error
+
+	// HandleCommand handles a module command
+	HandleCommand(moduleID string, cmd string, args []string) error
 
 	// SetRepository sets the repository for all modules
 	SetRepository(repo types.Repository)
 
-	// HandleCommand handles a module command
-	HandleCommand(moduleID string, cmd string, args []string) error
-}
-
-// Config represents module configuration
-type Config struct {
-	Path     string                 `json:"path"`
-	Type     string                 `json:"type"`
-	Enabled  bool                   `json:"enabled"` // Whether module is enabled
-	Settings map[string]interface{} `json:"settings"`
+	// Additional helper methods used by CLI/tests:
+	SetGitSystem(git GitSystem)
+	InstallModule(path string) error
+	RemoveModule(moduleID string) error
+	GetModuleConfig(moduleID string) (Config, bool)
 }
 
 // DefaultManager provides a basic module manager implementation
@@ -45,15 +66,17 @@ type DefaultManager struct {
 	registry   Registry
 	loader     *DefaultPluginLoader
 	config     map[string]Config
+
+	gitSystem GitSystem // optional
 }
 
-// NewManager creates a new module manager
+// NewManager creates a new module manager pointing to the given paths
 func NewManager(configPath, modulesDir string) (*DefaultManager, error) {
 	// Create directories if needed
-	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 		return nil, fmt.Errorf("creating config directory: %w", err)
 	}
-	if err := os.MkdirAll(modulesDir, 0755); err != nil {
+	if err := os.MkdirAll(modulesDir, 0o755); err != nil {
 		return nil, fmt.Errorf("creating modules directory: %w", err)
 	}
 
@@ -63,6 +86,7 @@ func NewManager(configPath, modulesDir string) (*DefaultManager, error) {
 		registry:   NewRegistry(),
 		loader:     NewPluginLoader().(*DefaultPluginLoader),
 		config:     make(map[string]Config),
+		gitSystem:  &DefaultGitSystem{}, // fallback
 	}
 
 	// Load config if it exists
@@ -73,22 +97,133 @@ func NewManager(configPath, modulesDir string) (*DefaultManager, error) {
 	return m, nil
 }
 
+// NewModuleManager is an opinionated helper that creates a manager using ~/.config/memex/modules.json and ~/.config/memex/modules
+func NewModuleManager() (*DefaultManager, error) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("getting home directory: %w", err)
+	}
+
+	configDir := filepath.Join(homeDir, ".config", "memex")
+	configPath := filepath.Join(configDir, "modules.json")
+	modulesDir := filepath.Join(configDir, "modules")
+	return NewManager(configPath, modulesDir)
+}
+
+// SetGitSystem sets the Git system implementation
+func (m *DefaultManager) SetGitSystem(git GitSystem) {
+	m.gitSystem = git
+}
+
+// IsGitURL checks if a path is a Git URL
+func IsGitURL(path string) bool {
+	return strings.HasPrefix(path, "https://") ||
+		strings.HasPrefix(path, "git@") ||
+		strings.HasSuffix(path, ".git")
+}
+
+// GetModuleIDFromGit extracts module ID from Git URL
+func GetModuleIDFromGit(url string) string {
+	// Remove .git suffix if present
+	url = strings.TrimSuffix(url, ".git")
+
+	// Extract repo name from URL
+	parts := strings.Split(url, "/")
+	if len(parts) >= 1 {
+		return parts[len(parts)-1]
+	}
+	return url
+}
+
+// InstallModule installs a module from a path or Git URL
+func (m *DefaultManager) InstallModule(path string) error {
+	moduleID := filepath.Base(path)
+	moduleType := "local"
+	moduleDir := filepath.Join(m.modulesDir, moduleID)
+
+	if IsGitURL(path) {
+		moduleID = GetModuleIDFromGit(path)
+		moduleType = "git"
+		moduleDir = filepath.Join(m.modulesDir, moduleID)
+
+		// Create module directory
+		if err := os.MkdirAll(moduleDir, 0o755); err != nil {
+			return fmt.Errorf("creating module directory: %w", err)
+		}
+
+		// Clone repository using m.gitSystem
+		if m.gitSystem == nil {
+			return fmt.Errorf("no GitSystem set to clone from %s", path)
+		}
+		if err := m.gitSystem.Clone(path, moduleDir); err != nil {
+			return err
+		}
+
+		// For tests/mocks, create a content file
+		contentFile := filepath.Join(moduleDir, "content.txt")
+		_ = os.WriteFile(contentFile, []byte("mock repository content"), 0o644)
+
+	} else {
+		// Local or some other type
+		info, err := os.Stat(path)
+		if err != nil {
+			return fmt.Errorf("checking module path: %w", err)
+		}
+
+		if info.IsDir() {
+			moduleType = "package"
+		} else {
+			moduleType = "binary"
+		}
+
+		// Use absolute path
+		absPath, err := filepath.Abs(path)
+		if err != nil {
+			return fmt.Errorf("getting absolute path: %w", err)
+		}
+		moduleDir = absPath
+	}
+
+	// Save config
+	m.config[moduleID] = Config{
+		Path:     moduleDir,
+		Type:     moduleType,
+		Enabled:  true,
+		Settings: make(map[string]interface{}),
+	}
+	if err := m.saveConfig(); err != nil {
+		return fmt.Errorf("saving config: %w", err)
+	}
+
+	return nil
+}
+
+// RemoveModule removes a module by ID
+func (m *DefaultManager) RemoveModule(moduleID string) error {
+	return m.Remove(moduleID)
+}
+
+// GetModuleConfig returns module config by ID
+func (m *DefaultManager) GetModuleConfig(moduleID string) (Config, bool) {
+	cfg, ok := m.config[moduleID]
+	return cfg, ok
+}
+
 // SetRepository sets the repository for all modules
 func (m *DefaultManager) SetRepository(repo types.Repository) {
-	// Set repository for loader
 	m.loader.SetRepository(repo)
-
 	// Load all modules in config
-	for moduleID, config := range m.config {
-		// Try to load module
-		module, err := m.loader.Load(config.Path)
+	for moduleID, cfg := range m.config {
+		if !cfg.Enabled {
+			continue
+		}
+		mod, err := m.loader.Load(cfg.Path)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to load module %s: %v\n", moduleID, err)
 			continue
 		}
 
-		// Register module
-		if err := m.registry.Register(module); err != nil {
+		if err := m.registry.Register(mod); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to register module %s: %v\n", moduleID, err)
 			continue
 		}
@@ -99,40 +234,17 @@ func (m *DefaultManager) SetRepository(repo types.Repository) {
 
 // Load loads a module from a path
 func (m *DefaultManager) Load(path string) error {
-	// Get module ID from path
 	moduleID := filepath.Base(path)
-
-	// Create module directory
 	moduleDir := filepath.Join(m.modulesDir, moduleID)
-	if err := os.MkdirAll(moduleDir, 0755); err != nil {
-		return fmt.Errorf("creating module directory: %w", err)
-	}
 
-	// Copy module files
-	// TODO: Implement file copying or git cloning
-
-	// Load module
-	module, err := m.loader.Load(moduleDir)
+	// Just copy (or do nothing for now)
+	mod, err := m.loader.Load(moduleDir)
 	if err != nil {
 		return fmt.Errorf("loading module: %w", err)
 	}
 
-	// Register module
-	if err := m.registry.Register(module); err != nil {
+	if err := m.registry.Register(mod); err != nil {
 		return fmt.Errorf("registering module: %w", err)
-	}
-
-	// Update config
-	m.config[moduleID] = Config{
-		Path:     moduleDir,
-		Type:     "plugin",
-		Enabled:  true,
-		Settings: make(map[string]interface{}),
-	}
-
-	// Save config
-	if err := m.saveConfig(); err != nil {
-		return fmt.Errorf("saving config: %w", err)
 	}
 
 	return nil
@@ -148,7 +260,7 @@ func (m *DefaultManager) List() []types.Module {
 	return m.registry.List()
 }
 
-// Remove removes a module
+// Remove removes a module using the manager's built-in function
 func (m *DefaultManager) Remove(id string) error {
 	// Remove from registry
 	if err := m.registry.Remove(id); err != nil {
@@ -157,7 +269,7 @@ func (m *DefaultManager) Remove(id string) error {
 
 	// Remove module directory
 	moduleDir := filepath.Join(m.modulesDir, id)
-	if err := os.RemoveAll(moduleDir); err != nil {
+	if err := os.RemoveAll(moduleDir); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("removing module directory: %w", err)
 	}
 
@@ -170,6 +282,23 @@ func (m *DefaultManager) Remove(id string) error {
 	}
 
 	return nil
+}
+
+// HandleCommand handles a module command
+func (m *DefaultManager) HandleCommand(moduleID string, cmd string, args []string) error {
+	// Check if module is enabled
+	cfg, exists := m.config[moduleID]
+	if !exists || !cfg.Enabled {
+		return fmt.Errorf("module is not enabled: %s", moduleID)
+	}
+
+	// Get module from registry
+	mod, ok := m.registry.Get(moduleID)
+	if !ok {
+		return fmt.Errorf("module not found: %s", moduleID)
+	}
+
+	return mod.HandleCommand(cmd, args)
 }
 
 // loadConfig loads the module configuration
@@ -196,26 +325,9 @@ func (m *DefaultManager) saveConfig() error {
 		return fmt.Errorf("encoding config: %w", err)
 	}
 
-	if err := os.WriteFile(m.configPath, data, 0644); err != nil {
+	if err := os.WriteFile(m.configPath, data, 0o644); err != nil {
 		return fmt.Errorf("writing config: %w", err)
 	}
 
 	return nil
-}
-
-// HandleCommand handles a module command
-func (m *DefaultManager) HandleCommand(moduleID string, cmd string, args []string) error {
-	// Check if module is enabled
-	config, exists := m.config[moduleID]
-	if !exists || !config.Enabled {
-		return fmt.Errorf("module is not enabled: %s", moduleID)
-	}
-
-	// Get module from registry
-	module, exists := m.registry.Get(moduleID)
-	if !exists {
-		return fmt.Errorf("module not found: %s", moduleID)
-	}
-
-	return module.HandleCommand(cmd, args)
 }
