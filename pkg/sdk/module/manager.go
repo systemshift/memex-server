@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -18,10 +19,14 @@ type GitSystem interface {
 // DefaultGitSystem implements GitSystem using real Git commands
 type DefaultGitSystem struct{}
 
+// Clone runs "git clone" in a subprocess
 func (g *DefaultGitSystem) Clone(url, targetDir string) error {
-	// In real code, we would run "git clone"
-	// For now, just return an error or do a placeholder
-	return fmt.Errorf("DefaultGitSystem.Clone not implemented")
+	cmd := exec.Command("git", "clone", url, targetDir)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git clone failed: %w\nOutput: %s", err, output)
+	}
+	return nil
 }
 
 // Config represents module configuration
@@ -158,11 +163,6 @@ func (m *DefaultManager) InstallModule(path string) error {
 		if err := m.gitSystem.Clone(path, moduleDir); err != nil {
 			return err
 		}
-
-		// For tests/mocks, create a content file
-		contentFile := filepath.Join(moduleDir, "content.txt")
-		_ = os.WriteFile(contentFile, []byte("mock repository content"), 0o644)
-
 	} else {
 		// Local or some other type
 		info, err := os.Stat(path)
@@ -237,7 +237,7 @@ func (m *DefaultManager) Load(path string) error {
 	moduleID := filepath.Base(path)
 	moduleDir := filepath.Join(m.modulesDir, moduleID)
 
-	// Just copy (or do nothing for now)
+	// Attempt to load the plugin
 	mod, err := m.loader.Load(moduleDir)
 	if err != nil {
 		return fmt.Errorf("loading module: %w", err)
