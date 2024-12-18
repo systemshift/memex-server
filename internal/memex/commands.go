@@ -121,15 +121,10 @@ func ModuleCommand(args ...string) error {
 			return fmt.Errorf("module command required")
 		}
 
-		module, exists := moduleManager.Get(moduleID)
-		if !exists {
-			return fmt.Errorf("module not found: %s", moduleID)
-		}
-
 		cmd := args[1]
 		cmdArgs := args[2:]
 
-		return module.HandleCommand(cmd, cmdArgs)
+		return moduleManager.HandleCommand(moduleID, cmd, cmdArgs)
 	}
 }
 

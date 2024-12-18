@@ -25,12 +25,16 @@ type Manager interface {
 
 	// SetRepository sets the repository for all modules
 	SetRepository(repo types.Repository)
+
+	// HandleCommand handles a module command
+	HandleCommand(moduleID string, cmd string, args []string) error
 }
 
 // Config represents module configuration
 type Config struct {
 	Path     string                 `json:"path"`
 	Type     string                 `json:"type"`
+	Enabled  bool                   `json:"enabled"` // Whether module is enabled
 	Settings map[string]interface{} `json:"settings"`
 }
 
@@ -122,6 +126,7 @@ func (m *DefaultManager) Load(path string) error {
 	m.config[moduleID] = Config{
 		Path:     moduleDir,
 		Type:     "plugin",
+		Enabled:  true,
 		Settings: make(map[string]interface{}),
 	}
 
@@ -196,4 +201,21 @@ func (m *DefaultManager) saveConfig() error {
 	}
 
 	return nil
+}
+
+// HandleCommand handles a module command
+func (m *DefaultManager) HandleCommand(moduleID string, cmd string, args []string) error {
+	// Check if module is enabled
+	config, exists := m.config[moduleID]
+	if !exists || !config.Enabled {
+		return fmt.Errorf("module is not enabled: %s", moduleID)
+	}
+
+	// Get module from registry
+	module, exists := m.registry.Get(moduleID)
+	if !exists {
+		return fmt.Errorf("module not found: %s", moduleID)
+	}
+
+	return module.HandleCommand(cmd, args)
 }
