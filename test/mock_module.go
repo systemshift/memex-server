@@ -1,67 +1,103 @@
 package test
 
 import (
-	"fmt"
-
 	"memex/internal/memex/core"
+	"memex/pkg/sdk/types"
 )
 
-// TestModule implements core.Module for testing
+// TestModule is a mock module implementation for testing.
 type TestModule struct {
-	*core.BaseModule
-	moduleID        string
-	lastCommand     string
-	lastArgs        []string
-	shouldFail      bool
-	enabledCommands []string
+	id          string
+	repo        types.Repository
+	lastCommand string
 }
 
-func NewTestModule(repo core.Repository) *TestModule {
-	m := &TestModule{
-		moduleID:        fmt.Sprintf("test-%d", len(repo.ListModules())),
-		enabledCommands: []string{"add", "remove", "list"},
+// NewTestModule creates a new test module with the given repository.
+func NewTestModule(repo types.Repository) *TestModule {
+	return &TestModule{
+		repo: repo,
 	}
-	m.BaseModule = core.NewBaseModule(m.moduleID, "Test Module", "A test module", repo)
-	return m
 }
 
+// ID returns the module's identifier.
 func (m *TestModule) ID() string {
-	return m.moduleID
+	return m.id
 }
 
+// Name returns the module's name.
+func (m *TestModule) Name() string {
+	return "Test Module"
+}
+
+// SetID sets the module's identifier.
 func (m *TestModule) SetID(id string) {
-	m.moduleID = id
+	m.id = id
 }
 
-func (m *TestModule) Commands() []core.ModuleCommand {
-	var cmds []core.ModuleCommand
-	for _, name := range m.enabledCommands {
-		cmds = append(cmds, core.ModuleCommand{
-			Name:        name,
-			Description: "Test command " + name,
-			Usage:       m.moduleID + " " + name + " [args]",
-		})
-	}
-	return cmds
+// Description returns the module's description.
+func (m *TestModule) Description() string {
+	return "A test module for testing purposes"
 }
 
-func (m *TestModule) HandleCommand(cmd string, args []string) error {
-	m.lastCommand = cmd
-	m.lastArgs = args
-	if m.shouldFail {
-		return fmt.Errorf("command failed")
-	}
+// ValidateLinkType validates a link type.
+func (m *TestModule) ValidateLinkType(linkType string) bool {
+	// For testing purposes, accept any link type
+	return true
+}
+
+// ValidateNodeType validates a node type.
+func (m *TestModule) ValidateNodeType(nodeType string) bool {
+	// For testing purposes, accept any node type
+	return true
+}
+
+// ValidateMetadata validates metadata for nodes and links.
+func (m *TestModule) ValidateMetadata(meta map[string]interface{}) error {
+	// For testing purposes, accept any metadata
 	return nil
 }
 
+// Commands returns the module's available commands.
+func (m *TestModule) Commands() []core.ModuleCommand {
+	return []core.ModuleCommand{
+		{
+			Name:        "add",
+			Description: "Add something",
+			Usage:       "add <arg>",
+			Args:        []string{"<arg>"},
+		},
+		{
+			Name:        "remove",
+			Description: "Remove something",
+			Usage:       "remove <arg>",
+			Args:        []string{"<arg>"},
+		},
+		{
+			Name:        "list",
+			Description: "List things",
+			Usage:       "list",
+			Args:        []string{},
+		},
+	}
+}
+
+// GetCommands returns the module's available command names.
+func (m *TestModule) GetCommands() []string {
+	return []string{"add", "remove", "list"}
+}
+
+// HandleCommand processes a command with the given arguments.
+func (m *TestModule) HandleCommand(command string, args []string) error {
+	m.lastCommand = command
+	return nil
+}
+
+// GetLastCommand returns the last command that was handled.
 func (m *TestModule) GetLastCommand() string {
 	return m.lastCommand
 }
 
-func (m *TestModule) GetLastArgs() []string {
-	return m.lastArgs
-}
-
-func (m *TestModule) SetShouldFail(fail bool) {
-	m.shouldFail = fail
+// Repository returns the module's repository.
+func (m *TestModule) Repository() types.Repository {
+	return m.repo
 }
