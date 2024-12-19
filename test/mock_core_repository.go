@@ -1,18 +1,10 @@
-// This version of MockCoreRepository is carefully aligned with what the migration test code expects
-// from the core.Repository interface. Based on the error messages, we see references to:
-//
-//   1) AddNode(content []byte, nodeType string, meta map[string]interface{}) (string, error)
-//   2) AddNodeWithID(id string, content []byte, nodeType string, meta map[string]interface{}) (string, error)
-//   3) DeleteNode(id string) error
-//
-// The migration tests apparently do things like:
-//   id, err := repo.AddNode(...)
-//   id2, err := repo.AddNodeWithID(...)
-//   err := repo.DeleteNode(id)
-//
-// This file now provides those methods, returning the correct type signatures so the migration test
-// can compile without interface mismatches. It also includes the other methods (GetNode, AddLink, etc.)
-// used by the migration code.
+// MockCoreRepository implements core.Repository for migration tests, storing nodes & links in memory.
+// The migration code expects:
+// - AddNode to return (string, error)
+// - AddNodeWithID to return error
+// - GetLinks to return []*core.Link
+// - GetModule to return (core.Module, bool)
+// - ListNodes to return ([]string, error)
 
 package test
 
@@ -23,29 +15,25 @@ import (
 )
 
 // MockCoreRepository is a test double implementing core.Repository for migration tests.
-// It matches the signature the test code expects, with AddNode/AddNodeWithID returning (string, error),
-// as well as a DeleteNode method returning error.
 type MockCoreRepository struct {
-	nodes map[string]*core.Node
-	links map[string][]*core.Link
+	nodes          map[string]*core.Node
+	links          map[string][]*core.Link
+	modules        map[string]core.Module
+	enabledModules map[string]bool
 }
 
 // NewMockCoreRepository builds a fresh in-memory repository that satisfies core.Repository.
 func NewMockCoreRepository() *MockCoreRepository {
 	return &MockCoreRepository{
-		nodes: make(map[string]*core.Node),
-		links: make(map[string][]*core.Link),
+		nodes:          make(map[string]*core.Node),
+		links:          make(map[string][]*core.Link),
+		modules:        make(map[string]core.Module),
+		enabledModules: make(map[string]bool),
 	}
 }
 
-// AddNode returns (string, error). The migration tests do:
-//
-//	id, err := repo.AddNode(...)
-func (r *MockCoreRepository) AddNode(
-	content []byte,
-	nodeType string,
-	meta map[string]interface{},
-) (string, error) {
+// AddNode returns (string, error) as expected by core.Repository.
+func (r *MockCoreRepository) AddNode(content []byte, nodeType string, meta map[string]interface{}) (string, error) {
 	id := fmt.Sprintf("node-%d", len(r.nodes)+1)
 	if _, exists := r.nodes[id]; exists {
 		return "", fmt.Errorf("node already exists: %s", id)
@@ -59,17 +47,10 @@ func (r *MockCoreRepository) AddNode(
 	return id, nil
 }
 
-// AddNodeWithID returns (string, error). The migration tests do:
-//
-//	id, err := repo.AddNodeWithID(...)
-func (r *MockCoreRepository) AddNodeWithID(
-	id string,
-	content []byte,
-	nodeType string,
-	meta map[string]interface{},
-) (string, error) {
+// AddNodeWithID returns only error as expected by core.Repository.
+func (r *MockCoreRepository) AddNodeWithID(id string, content []byte, nodeType string, meta map[string]interface{}) error {
 	if _, exists := r.nodes[id]; exists {
-		return "", fmt.Errorf("node already exists: %s", id)
+		return fmt.Errorf("node already exists: %s", id)
 	}
 	r.nodes[id] = &core.Node{
 		ID:      id,
@@ -77,24 +58,10 @@ func (r *MockCoreRepository) AddNodeWithID(
 		Content: content,
 		Meta:    meta,
 	}
-	return id, nil
-}
-
-// DeleteNode appears to be called by migration code with:
-//
-//	err := repo.DeleteNode(id)
-func (r *MockCoreRepository) DeleteNode(id string) error {
-	if _, exists := r.nodes[id]; !exists {
-		return fmt.Errorf("node not found: %s", id)
-	}
-	// remove the node
-	delete(r.nodes, id)
-	// remove all links from this node
-	delete(r.links, id)
 	return nil
 }
 
-// GetNode fetches a node by ID, returning (*core.Node, error).
+// GetNode fetches a node by ID.
 func (r *MockCoreRepository) GetNode(id string) (*core.Node, error) {
 	n, ok := r.nodes[id]
 	if !ok {
@@ -103,11 +70,27 @@ func (r *MockCoreRepository) GetNode(id string) (*core.Node, error) {
 	return n, nil
 }
 
+// ListNodes returns all node IDs in the repository.
+func (r *MockCoreRepository) ListNodes() ([]string, error) {
+	var ids []string
+	for id := range r.nodes {
+		ids = append(ids, id)
+	}
+	return ids, nil
+}
+
+// DeleteNode removes a node and its links.
+func (r *MockCoreRepository) DeleteNode(id string) error {
+	if _, exists := r.nodes[id]; !exists {
+		return fmt.Errorf("node not found: %s", id)
+	}
+	delete(r.nodes, id)
+	delete(r.links, id)
+	return nil
+}
+
 // AddLink creates a link between two nodes.
-func (r *MockCoreRepository) AddLink(
-	source, target, linkType string,
-	meta map[string]interface{},
-) error {
+func (r *MockCoreRepository) AddLink(source, target, linkType string, meta map[string]interface{}) error {
 	if _, ok := r.nodes[source]; !ok {
 		return fmt.Errorf("source node not found: %s", source)
 	}
@@ -125,9 +108,7 @@ func (r *MockCoreRepository) AddLink(
 }
 
 // DeleteLink removes a link between two nodes.
-func (r *MockCoreRepository) DeleteLink(
-	source, target, linkType string,
-) error {
+func (r *MockCoreRepository) DeleteLink(source, target, linkType string) error {
 	existing := r.links[source]
 	for i, l := range existing {
 		if l.Target == target && l.Type == linkType {
@@ -138,9 +119,49 @@ func (r *MockCoreRepository) DeleteLink(
 	return fmt.Errorf("link not found")
 }
 
+// GetLinks returns all links for a given node ID.
+func (r *MockCoreRepository) GetLinks(nodeID string) ([]*core.Link, error) {
+	return r.links[nodeID], nil
+}
+
 // QueryLinks retrieves all links for a given node.
 func (r *MockCoreRepository) QueryLinks(nodeID string) ([]*core.Link, error) {
 	return r.links[nodeID], nil
+}
+
+// GetModule returns a module by ID.
+func (r *MockCoreRepository) GetModule(id string) (core.Module, bool) {
+	m, ok := r.modules[id]
+	return m, ok
+}
+
+// RegisterModule registers a new module.
+func (r *MockCoreRepository) RegisterModule(mod core.Module) error {
+	if _, exists := r.modules[mod.ID()]; exists {
+		return fmt.Errorf("module already registered: %s", mod.ID())
+	}
+	r.modules[mod.ID()] = mod
+	r.enabledModules[mod.ID()] = true
+	return nil
+}
+
+// UnregisterModule removes a module.
+func (r *MockCoreRepository) UnregisterModule(moduleID string) error {
+	if _, exists := r.modules[moduleID]; !exists {
+		return fmt.Errorf("module not found: %s", moduleID)
+	}
+	delete(r.modules, moduleID)
+	delete(r.enabledModules, moduleID)
+	return nil
+}
+
+// ListModules returns all registered modules.
+func (r *MockCoreRepository) ListModules() []core.Module {
+	var out []core.Module
+	for _, mod := range r.modules {
+		out = append(out, mod)
+	}
+	return out
 }
 
 // QueryNodesByModule filters nodes by "module" field in metadata.

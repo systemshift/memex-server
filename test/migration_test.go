@@ -14,7 +14,7 @@ import (
 
 func TestMigration(t *testing.T) {
 	t.Run("Export Empty Repository", func(t *testing.T) {
-		repo := NewMockRepository()
+		repo := NewMockCoreRepository()
 		var buf bytes.Buffer
 		exporter := migration.NewExporter(repo, &buf)
 
@@ -57,24 +57,22 @@ func TestMigration(t *testing.T) {
 	})
 
 	t.Run("Export With Content", func(t *testing.T) {
-		repo := NewMockRepository()
+		repo := NewMockCoreRepository()
 
 		// Add some nodes and links
-		id1, err := repo.AddNode([]byte("node1"), "test", map[string]interface{}{
+		if err := repo.AddNodeWithID("node-1", []byte("node1"), "test", map[string]interface{}{
 			"title": "Node 1",
-		})
-		if err != nil {
+		}); err != nil {
 			t.Fatalf("adding node 1: %v", err)
 		}
 
-		id2, err := repo.AddNode([]byte("node2"), "test", map[string]interface{}{
+		if err := repo.AddNodeWithID("node-2", []byte("node2"), "test", map[string]interface{}{
 			"title": "Node 2",
-		})
-		if err != nil {
+		}); err != nil {
 			t.Fatalf("adding node 2: %v", err)
 		}
 
-		if err := repo.AddLink(id1, id2, "test", map[string]interface{}{
+		if err := repo.AddLink("node-1", "node-2", "test", map[string]interface{}{
 			"weight": 1.0,
 		}); err != nil {
 			t.Fatalf("adding link: %v", err)
@@ -159,18 +157,26 @@ func TestMigration(t *testing.T) {
 
 	t.Run("Import Export Roundtrip", func(t *testing.T) {
 		// Create source repository with content
-		sourceRepo := NewMockRepository()
-		id1, _ := sourceRepo.AddNode([]byte("node1"), "test", map[string]interface{}{
+		sourceRepo := NewMockCoreRepository()
+		id1 := "node-1"
+		id2 := "node-2"
+		if err := sourceRepo.AddNodeWithID(id1, []byte("node1"), "test", map[string]interface{}{
 			"title": "Node 1",
 			"tags":  []string{"test", "import"},
-		})
-		id2, _ := sourceRepo.AddNode([]byte("node2"), "test", map[string]interface{}{
+		}); err != nil {
+			t.Fatalf("adding node1: %v", err)
+		}
+		if err := sourceRepo.AddNodeWithID(id2, []byte("node2"), "test", map[string]interface{}{
 			"title":  "Node 2",
 			"weight": 42.0,
-		})
-		sourceRepo.AddLink(id1, id2, "test", map[string]interface{}{
+		}); err != nil {
+			t.Fatalf("adding node2: %v", err)
+		}
+		if err := sourceRepo.AddLink(id1, id2, "test", map[string]interface{}{
 			"weight": 1.0,
-		})
+		}); err != nil {
+			t.Fatalf("adding link: %v", err)
+		}
 
 		// Export to buffer
 		var buf bytes.Buffer
@@ -180,7 +186,7 @@ func TestMigration(t *testing.T) {
 		}
 
 		// Create destination repository
-		destRepo := NewMockRepository()
+		destRepo := NewMockCoreRepository()
 
 		// Import from buffer
 		importer := migration.NewImporter(destRepo, &buf, migration.ImportOptions{
@@ -192,38 +198,38 @@ func TestMigration(t *testing.T) {
 		}
 
 		// Verify nodes were imported
-		for id, sourceNode := range sourceRepo.nodes {
-			destNode, err := destRepo.GetNode(id)
+		for sourceID, sourceNode := range sourceRepo.nodes {
+			destNode, err := destRepo.GetNode(sourceID)
 			if err != nil {
-				t.Errorf("getting imported node %s: %v", id, err)
+				t.Errorf("getting imported node %s: %v", sourceID, err)
 				continue
 			}
 
 			if !bytes.Equal(destNode.Content, sourceNode.Content) {
-				t.Errorf("node %s content mismatch", id)
+				t.Errorf("node %s content mismatch", sourceID)
 			}
 			if destNode.Type != sourceNode.Type {
-				t.Errorf("node %s type mismatch: got %s, want %s", id, destNode.Type, sourceNode.Type)
+				t.Errorf("node %s type mismatch: got %s, want %s", sourceID, destNode.Type, sourceNode.Type)
 			}
 
 			// Compare metadata
 			sourceJSON, _ := json.Marshal(sourceNode.Meta)
 			destJSON, _ := json.Marshal(destNode.Meta)
 			if !bytes.Equal(sourceJSON, destJSON) {
-				t.Errorf("node %s metadata mismatch:\ngot: %s\nwant: %s", id, destJSON, sourceJSON)
+				t.Errorf("node %s metadata mismatch:\ngot: %s\nwant: %s", sourceID, destJSON, sourceJSON)
 			}
 		}
 
 		// Verify links were imported
-		for id, sourceLinks := range sourceRepo.links {
-			destLinks, err := destRepo.GetLinks(id)
+		for sourceID, sourceLinks := range sourceRepo.links {
+			destLinks, err := destRepo.QueryLinks(sourceID)
 			if err != nil {
-				t.Errorf("getting imported links for %s: %v", id, err)
+				t.Errorf("getting imported links for %s: %v", sourceID, err)
 				continue
 			}
 
 			if len(destLinks) != len(sourceLinks) {
-				t.Errorf("wrong number of links for node %s: got %d, want %d", id, len(destLinks), len(sourceLinks))
+				t.Errorf("wrong number of links for node %s: got %d, want %d", sourceID, len(destLinks), len(sourceLinks))
 				continue
 			}
 
@@ -251,10 +257,16 @@ func TestMigration(t *testing.T) {
 
 	t.Run("Import With Prefix", func(t *testing.T) {
 		// Create source repository
-		sourceRepo := NewMockRepository()
-		id1, _ := sourceRepo.AddNode([]byte("node1"), "test", nil)
-		id2, _ := sourceRepo.AddNode([]byte("node2"), "test", nil)
-		sourceRepo.AddLink(id1, id2, "test", nil)
+		sourceRepo := NewMockCoreRepository()
+		if err := sourceRepo.AddNodeWithID("node-1", []byte("node1"), "test", nil); err != nil {
+			t.Fatalf("adding node-1: %v", err)
+		}
+		if err := sourceRepo.AddNodeWithID("node-2", []byte("node2"), "test", nil); err != nil {
+			t.Fatalf("adding node-2: %v", err)
+		}
+		if err := sourceRepo.AddLink("node-1", "node-2", "test", nil); err != nil {
+			t.Fatalf("adding link: %v", err)
+		}
 
 		// Export to buffer
 		var buf bytes.Buffer
@@ -264,7 +276,7 @@ func TestMigration(t *testing.T) {
 		}
 
 		// Import with prefix
-		destRepo := NewMockRepository()
+		destRepo := NewMockCoreRepository()
 		importer := migration.NewImporter(destRepo, &buf, migration.ImportOptions{
 			Prefix: "imported-",
 		})
@@ -283,7 +295,7 @@ func TestMigration(t *testing.T) {
 		// Verify link IDs have prefix
 		for sourceID, sourceLinks := range sourceRepo.links {
 			destID := "imported-" + sourceID
-			destLinks, err := destRepo.GetLinks(destID)
+			destLinks, err := destRepo.QueryLinks(destID)
 			if err != nil {
 				t.Errorf("getting links for %s: %v", destID, err)
 				continue
