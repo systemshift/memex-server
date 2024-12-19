@@ -5,27 +5,15 @@ import (
 	"path/filepath"
 	"testing"
 
-	"memex/internal/memex"
-	"memex/internal/memex/core"
-	"memex/internal/memex/repository"
+	"memex/pkg/sdk/module"
 )
-
-func NewTestRepository(t *testing.T) core.Repository {
-	dir := t.TempDir()
-	repo, err := repository.Create(filepath.Join(dir, "test.mx"))
-	if err != nil {
-		t.Fatalf("creating repository: %v", err)
-	}
-	return repo
-}
 
 func TestModuleManager(t *testing.T) {
 	// Create test repository
-	repo := NewTestRepository(t)
-	defer repo.Close()
+	repo := NewMockSDKRepository()
 
 	// Create module manager
-	manager, err := memex.NewModuleManager()
+	manager, err := module.NewModuleManager()
 	if err != nil {
 		t.Fatalf("creating module manager: %v", err)
 	}
@@ -34,12 +22,15 @@ func TestModuleManager(t *testing.T) {
 	manager.SetRepository(repo)
 
 	// Create test module
-	module := NewTestModule(repo)
-	module.SetID("test")
+	testMod := NewTestModule(repo)
+	testMod.SetID("test")
 
-	// Register module
-	if err := repo.RegisterModule(module); err != nil {
+	// Register and enable module
+	if err := repo.RegisterModule(testMod); err != nil {
 		t.Fatalf("registering module: %v", err)
+	}
+	if err := repo.EnableModule("test"); err != nil {
+		t.Fatalf("enabling module: %v", err)
 	}
 
 	// Test module installation
@@ -59,23 +50,22 @@ func TestModuleManager(t *testing.T) {
 	}
 
 	// Test module removal
-	if err := manager.RemoveModule("test.txt"); err != nil {
+	if err := manager.RemoveModule("test"); err != nil {
 		t.Fatalf("removing module: %v", err)
 	}
 
 	modules = manager.ListModules()
-	if len(modules) != 1 {
-		t.Errorf("expected 1 module, got %d", len(modules))
+	if len(modules) != 0 {
+		t.Errorf("expected 0 modules, got %d", len(modules))
 	}
 }
 
 func TestModuleCommands(t *testing.T) {
 	// Create test repository
-	repo := NewTestRepository(t)
-	defer repo.Close()
+	repo := NewMockSDKRepository()
 
 	// Create module manager
-	manager, err := memex.NewModuleManager()
+	manager, err := module.NewModuleManager()
 	if err != nil {
 		t.Fatalf("creating module manager: %v", err)
 	}
@@ -84,12 +74,15 @@ func TestModuleCommands(t *testing.T) {
 	manager.SetRepository(repo)
 
 	// Create test module
-	module := NewTestModule(repo)
-	module.SetID("test")
+	testMod := NewTestModule(repo)
+	testMod.SetID("test")
 
-	// Register module
-	if err := repo.RegisterModule(module); err != nil {
+	// Register and enable module
+	if err := repo.RegisterModule(testMod); err != nil {
 		t.Fatalf("registering module: %v", err)
+	}
+	if err := repo.EnableModule("test"); err != nil {
+		t.Fatalf("enabling module: %v", err)
 	}
 
 	// Test getting commands
@@ -107,7 +100,7 @@ func TestModuleCommands(t *testing.T) {
 		t.Errorf("handling command: %v", err)
 	}
 
-	if module.GetLastCommand() != "add" {
-		t.Errorf("expected command 'add', got '%s'", module.GetLastCommand())
+	if testMod.GetLastCommand() != "add" {
+		t.Errorf("expected command 'add', got '%s'", testMod.GetLastCommand())
 	}
 }

@@ -48,7 +48,7 @@ func (m *StrictMockModule) ValidateLinkType(linkType string) bool {
 }
 
 func TestModuleRegistration(t *testing.T) {
-	repo := NewMockRepository()
+	repo := NewMockSDKRepository()
 
 	// Create test module
 	module := &MockModule{
@@ -77,7 +77,7 @@ func TestModuleRegistration(t *testing.T) {
 }
 
 func TestModuleNodeOperations(t *testing.T) {
-	repo := NewMockRepository()
+	repo := NewMockSDKRepository()
 	module := &MockModule{id: "test-module"}
 	repo.RegisterModule(module)
 
@@ -93,7 +93,7 @@ func TestModuleNodeOperations(t *testing.T) {
 		t.Errorf("Failed to add node: %v", err)
 	}
 
-	// Query nodes by module
+	// Query nodes by module (extra method in MockSDKRepository)
 	nodes, err := repo.QueryNodesByModule("test-module")
 	if err != nil {
 		t.Errorf("Failed to query nodes: %v", err)
@@ -107,7 +107,7 @@ func TestModuleNodeOperations(t *testing.T) {
 }
 
 func TestModuleLinkOperations(t *testing.T) {
-	repo := NewMockRepository()
+	repo := NewMockSDKRepository()
 	module := &MockModule{id: "test-module"}
 	repo.RegisterModule(module)
 
@@ -125,7 +125,7 @@ func TestModuleLinkOperations(t *testing.T) {
 		t.Errorf("Failed to add link: %v", err)
 	}
 
-	// Query links by module
+	// Query links by module (extra method in MockSDKRepository)
 	links, err := repo.QueryLinksByModule("test-module")
 	if err != nil {
 		t.Errorf("Failed to query links: %v", err)

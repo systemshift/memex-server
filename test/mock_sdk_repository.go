@@ -1,8 +1,3 @@
-// MockSDKRepository implements the pkg/sdk/types.Repository interface for SDK-based tests.
-// It uses core.Node and core.Link internally for storage, but only exposes them through the
-// shapes required by types.Repository. This ensures the manager and similar SDK-level code
-// can interact with a minimal in-memory repository.
-
 package test
 
 import (
@@ -14,8 +9,7 @@ import (
 
 // MockSDKRepository is a test double that implements types.Repository using
 // in-memory maps for nodes and links. It intentionally ignores any core-specific
-// logic not needed by the SDK. If you need to test migration (core.Repository),
-// use MockCoreRepository instead.
+// logic not needed by the SDK.
 type MockSDKRepository struct {
 	nodes          map[string]*core.Node
 	links          map[string][]*core.Link
@@ -32,10 +26,6 @@ func NewMockSDKRepository() *MockSDKRepository {
 		enabledModules: make(map[string]bool),
 	}
 }
-
-//========================
-// types.Repository methods
-//========================
 
 // AddNode stores a new node in memory and returns its generated ID.
 func (r *MockSDKRepository) AddNode(content []byte, nodeType string, meta map[string]interface{}) (string, error) {
@@ -121,8 +111,23 @@ func (r *MockSDKRepository) DeleteLink(source, target, linkType string) error {
 	return fmt.Errorf("link not found")
 }
 
-// QueryLinks handles a types.Query, but here we simply return all links;
-// ignoring any filter logic for demonstration purposes.
+// QueryNodes handles a types.Query, returning matching nodes.
+func (r *MockSDKRepository) QueryNodes(q types.Query) ([]*types.Node, error) {
+	var results []*types.Node
+	for _, n := range r.nodes {
+		// In this mock, we'll just return all nodes
+		// A real implementation would filter based on the query
+		results = append(results, &types.Node{
+			ID:      n.ID,
+			Type:    n.Type,
+			Content: n.Content,
+			Meta:    n.Meta,
+		})
+	}
+	return results, nil
+}
+
+// QueryLinks handles a types.Query, returning matching links.
 func (r *MockSDKRepository) QueryLinks(q types.Query) ([]*types.Link, error) {
 	var all []*types.Link
 	for _, group := range r.links {
@@ -138,24 +143,47 @@ func (r *MockSDKRepository) QueryLinks(q types.Query) ([]*types.Link, error) {
 	return all, nil
 }
 
+// QueryNodesByModule filters nodes by "module" field in metadata.
+func (r *MockSDKRepository) QueryNodesByModule(moduleID string) ([]*core.Node, error) {
+	var results []*core.Node
+	for _, nd := range r.nodes {
+		if nd.Meta != nil {
+			if modID, ok := nd.Meta["module"].(string); ok && modID == moduleID {
+				results = append(results, nd)
+			}
+		}
+	}
+	return results, nil
+}
+
+// QueryLinksByModule filters links by "module" field in metadata.
+func (r *MockSDKRepository) QueryLinksByModule(moduleID string) ([]*core.Link, error) {
+	var results []*core.Link
+	for _, bucket := range r.links {
+		for _, l := range bucket {
+			if l.Meta != nil {
+				if modID, ok := l.Meta["module"].(string); ok && modID == moduleID {
+					results = append(results, l)
+				}
+			}
+		}
+	}
+	return results, nil
+}
+
 // Close is a no-op for this in-memory mock.
 func (r *MockSDKRepository) Close() error {
 	return nil
 }
 
-//========================
-// Extra module usage
-//========================
-
-// RegisterModule, UnregisterModule, etc. are not standard in types.Repository,
-// but some tests may rely on them to simulate module management. We'll keep them
-// for convenience.
+// Extra module management methods that some tests might expect
 
 func (r *MockSDKRepository) RegisterModule(mod core.Module) error {
 	if _, exists := r.modules[mod.ID()]; exists {
 		return fmt.Errorf("module already registered: %s", mod.ID())
 	}
 	r.modules[mod.ID()] = mod
+	// Auto-enable modules in test environment
 	r.enabledModules[mod.ID()] = true
 	return nil
 }
@@ -201,32 +229,4 @@ func (r *MockSDKRepository) DisableModule(moduleID string) error {
 func (r *MockSDKRepository) IsModuleEnabled(moduleID string) bool {
 	val, ok := r.enabledModules[moduleID]
 	return ok && val
-}
-
-//========================
-// Additional methods to satisfy use cases in module_test.go
-//========================
-
-// QueryNodesByModule fetches nodes where Meta["module"] = moduleID
-func (r *MockSDKRepository) QueryNodesByModule(moduleID string) ([]*core.Node, error) {
-	var found []*core.Node
-	for _, node := range r.nodes {
-		if node.Meta != nil && node.Meta["module"] == moduleID {
-			found = append(found, node)
-		}
-	}
-	return found, nil
-}
-
-// QueryLinksByModule fetches links where Meta["module"] = moduleID
-func (r *MockSDKRepository) QueryLinksByModule(moduleID string) ([]*core.Link, error) {
-	var found []*core.Link
-	for _, bucket := range r.links {
-		for _, link := range bucket {
-			if link.Meta != nil && link.Meta["module"] == moduleID {
-				found = append(found, link)
-			}
-		}
-	}
-	return found, nil
 }
