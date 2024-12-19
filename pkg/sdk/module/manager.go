@@ -48,7 +48,7 @@ type Manager interface {
 	// List returns all loaded modules
 	List() []types.Module
 
-	// Remove(id string) removes a module
+	// Remove removes a module by ID
 	Remove(id string) error
 
 	// HandleCommand handles a module command
@@ -62,6 +62,12 @@ type Manager interface {
 	InstallModule(path string) error
 	RemoveModule(moduleID string) error
 	GetModuleConfig(moduleID string) (Config, bool)
+
+	// Provide a convenience method for listing module IDs
+	ListModules() []string
+
+	// Provide a convenience method for retrieving a module's commands
+	GetModuleCommands(moduleID string) ([]types.ModuleCommand, error)
 }
 
 // DefaultManager provides a basic module manager implementation
@@ -299,6 +305,25 @@ func (m *DefaultManager) HandleCommand(moduleID string, cmd string, args []strin
 	}
 
 	return mod.HandleCommand(cmd, args)
+}
+
+// ListModules returns a list of module IDs, as convenience for older tests
+func (m *DefaultManager) ListModules() []string {
+	all := m.List()
+	ids := make([]string, 0, len(all))
+	for _, mod := range all {
+		ids = append(ids, mod.ID())
+	}
+	return ids
+}
+
+// GetModuleCommands returns all commands from a module by ID
+func (m *DefaultManager) GetModuleCommands(moduleID string) ([]types.ModuleCommand, error) {
+	mod, exists := m.Get(moduleID)
+	if !exists {
+		return nil, fmt.Errorf("module not found: %s", moduleID)
+	}
+	return mod.Commands(), nil
 }
 
 // loadConfig loads the module configuration
