@@ -32,16 +32,17 @@ func (g *DefaultGitSystem) Clone(url, targetDir string) error {
 type Config struct {
 	Path     string                 `json:"path"`     // Path to module
 	Type     string                 `json:"type"`     // Type of module (git, local, etc)
+	Dev      bool                   `json:"dev"`      // Whether module is in development mode
 	Settings map[string]interface{} `json:"settings"` // Module-specific settings
 }
 
 // Manager handles module operations
 type Manager interface {
 	// Core operations
-	InstallModule(path string) error    // Install a module from path or URL
-	RemoveModule(moduleID string) error // Remove an installed module
+	InstallModule(path string, dev bool) error // Install a module from path or URL
+	RemoveModule(moduleID string) error        // Remove an installed module
 	GetModule(id string) (types.Module, bool)
-	ListModules() []string
+	List() []string // List installed modules
 
 	// Command handling
 	HandleCommand(moduleID string, cmd string, args []string) error
@@ -128,7 +129,7 @@ func (m *DefaultManager) SetRepository(repo types.Repository) {
 	}
 }
 
-func (m *DefaultManager) InstallModule(path string) error {
+func (m *DefaultManager) InstallModule(path string, dev bool) error {
 	moduleID := filepath.Base(path)
 	moduleType := "local"
 	moduleDir := filepath.Join(m.modulesDir, moduleID)
@@ -172,6 +173,7 @@ func (m *DefaultManager) InstallModule(path string) error {
 		m.config[moduleID] = Config{
 			Path:     moduleDir,
 			Type:     moduleType,
+			Dev:      false,
 			Settings: make(map[string]interface{}),
 		}
 		return m.saveConfig()
@@ -191,6 +193,7 @@ func (m *DefaultManager) InstallModule(path string) error {
 	m.config[moduleID] = Config{
 		Path:     moduleDir,
 		Type:     moduleType,
+		Dev:      dev,
 		Settings: make(map[string]interface{}),
 	}
 	if err := m.saveConfig(); err != nil {
@@ -226,7 +229,7 @@ func (m *DefaultManager) GetModule(id string) (types.Module, bool) {
 	return m.registry.Get(id)
 }
 
-func (m *DefaultManager) ListModules() []string {
+func (m *DefaultManager) List() []string {
 	var ids []string
 	for id := range m.config {
 		ids = append(ids, id)

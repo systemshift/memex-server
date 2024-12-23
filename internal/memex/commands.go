@@ -79,16 +79,18 @@ func ModuleCommand(args ...string) error {
 		}
 
 		fmt.Println("Installed modules:")
-		for _, module := range modules {
-			fmt.Printf("  %s - %s\n", module.ID(), module.Name())
-			fmt.Printf("    Description: %s\n", module.Description())
+		for _, moduleID := range modules {
+			if module, ok := moduleManager.GetModule(moduleID); ok {
+				fmt.Printf("  %s - %s\n", module.ID(), module.Name())
+				fmt.Printf("    Description: %s\n", module.Description())
 
-			// Show available commands
-			commands := module.Commands()
-			if len(commands) > 0 {
-				fmt.Println("    Commands:")
-				for _, cmd := range commands {
-					fmt.Printf("      %s - %s\n", cmd.Name, cmd.Description)
+				// Show available commands
+				commands := module.Commands()
+				if len(commands) > 0 {
+					fmt.Println("    Commands:")
+					for _, cmd := range commands {
+						fmt.Printf("      %s - %s\n", cmd.Name, cmd.Description)
+					}
 				}
 			}
 		}
@@ -98,17 +100,29 @@ func ModuleCommand(args ...string) error {
 		if len(args) < 2 {
 			return fmt.Errorf("install requires module path")
 		}
-		if err := moduleManager.Load(args[1]); err != nil {
+
+		// Check for --dev flag
+		dev := false
+		path := args[1]
+		if args[1] == "--dev" {
+			if len(args) < 3 {
+				return fmt.Errorf("--dev requires module path")
+			}
+			dev = true
+			path = args[2]
+		}
+
+		if err := moduleManager.InstallModule(path, dev); err != nil {
 			return fmt.Errorf("installing module: %w", err)
 		}
-		fmt.Printf("Module installed: %s\n", filepath.Base(args[1]))
+		fmt.Printf("Module installed: %s\n", filepath.Base(path))
 		return nil
 
 	case "remove":
 		if len(args) < 2 {
 			return fmt.Errorf("remove requires module name")
 		}
-		if err := moduleManager.Remove(args[1]); err != nil {
+		if err := moduleManager.RemoveModule(args[1]); err != nil {
 			return fmt.Errorf("removing module: %w", err)
 		}
 		fmt.Printf("Module removed: %s\n", args[1])

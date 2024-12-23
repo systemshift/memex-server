@@ -11,19 +11,17 @@ import (
 // in-memory maps for nodes and links. It intentionally ignores any core-specific
 // logic not needed by the SDK.
 type MockSDKRepository struct {
-	nodes          map[string]*core.Node
-	links          map[string][]*core.Link
-	modules        map[string]core.Module
-	enabledModules map[string]bool
+	nodes   map[string]*core.Node
+	links   map[string][]*core.Link
+	modules map[string]core.Module
 }
 
 // NewMockSDKRepository constructs a fresh mock repository that satisfies types.Repository.
 func NewMockSDKRepository() *MockSDKRepository {
 	return &MockSDKRepository{
-		nodes:          make(map[string]*core.Node),
-		links:          make(map[string][]*core.Link),
-		modules:        make(map[string]core.Module),
-		enabledModules: make(map[string]bool),
+		nodes:   make(map[string]*core.Node),
+		links:   make(map[string][]*core.Link),
+		modules: make(map[string]core.Module),
 	}
 }
 
@@ -183,8 +181,6 @@ func (r *MockSDKRepository) RegisterModule(mod core.Module) error {
 		return fmt.Errorf("module already registered: %s", mod.ID())
 	}
 	r.modules[mod.ID()] = mod
-	// Auto-enable modules in test environment
-	r.enabledModules[mod.ID()] = true
 	return nil
 }
 
@@ -193,7 +189,6 @@ func (r *MockSDKRepository) UnregisterModule(moduleID string) error {
 		return fmt.Errorf("module not found: %s", moduleID)
 	}
 	delete(r.modules, moduleID)
-	delete(r.enabledModules, moduleID)
 	return nil
 }
 
@@ -208,25 +203,4 @@ func (r *MockSDKRepository) ListModules() []core.Module {
 		out = append(out, mod)
 	}
 	return out
-}
-
-func (r *MockSDKRepository) EnableModule(moduleID string) error {
-	if _, exists := r.modules[moduleID]; !exists {
-		return fmt.Errorf("module not found: %s", moduleID)
-	}
-	r.enabledModules[moduleID] = true
-	return nil
-}
-
-func (r *MockSDKRepository) DisableModule(moduleID string) error {
-	if _, exists := r.modules[moduleID]; !exists {
-		return fmt.Errorf("module not found: %s", moduleID)
-	}
-	r.enabledModules[moduleID] = false
-	return nil
-}
-
-func (r *MockSDKRepository) IsModuleEnabled(moduleID string) bool {
-	val, ok := r.enabledModules[moduleID]
-	return ok && val
 }

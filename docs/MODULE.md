@@ -110,7 +110,6 @@ Modules are configured through the memex configuration system:
         "module-name": {
             "path": "/path/to/module",
             "type": "package|binary",
-            "enabled": true,
             "dev": false,           // true for development modules
             "settings": {
                 // Module-specific settings

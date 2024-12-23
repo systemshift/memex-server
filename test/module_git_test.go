@@ -78,7 +78,7 @@ func TestGitModuleInstallation(t *testing.T) {
 			repo := NewMockSDKRepository()
 			manager.SetRepository(repo)
 
-			err = manager.InstallModule(tt.url)
+			err = manager.InstallModule(tt.url, false)
 			if tt.shouldError {
 				if err == nil {
 					t.Error("expected error, got nil")
@@ -203,18 +203,13 @@ func TestGitModuleRemoval(t *testing.T) {
 	manager.SetRepository(repo)
 
 	moduleURL := "https://github.com/user/test-repo.git"
-	if err := manager.InstallModule(moduleURL); err != nil {
+	if err := manager.InstallModule(moduleURL, false); err != nil {
 		t.Fatalf("Failed to install module: %v", err)
 	}
 
 	moduleDir := filepath.Join(tmpDir, ".config", "memex", "modules", "test-repo")
 	if _, err := os.Stat(moduleDir); os.IsNotExist(err) {
 		t.Fatal("module directory not created")
-	}
-
-	// Enable the module before trying to remove it
-	if err := repo.EnableModule("test-repo"); err != nil {
-		t.Fatalf("Failed to enable module: %v", err)
 	}
 
 	if err := manager.RemoveModule("test-repo"); err != nil {
