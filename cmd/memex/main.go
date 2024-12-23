@@ -28,9 +28,8 @@ Built-in Commands:
 Module Management:
   module list              List installed modules
   module install <path>    Install module from path
+  module install --dev <path> Install module in development mode
   module remove <name>     Remove installed module
-  module enable <name>     Enable module
-  module disable <name>    Disable module
 
 Module Commands:
   <module> <command> [args] Run module command (e.g., ast add main.go)
