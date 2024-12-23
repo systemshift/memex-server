@@ -31,7 +31,7 @@ func SetRepository(repo core.Repository) {
 // ModuleCommand handles module operations
 func ModuleCommand(args ...string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("module command requires subcommand (list, install, remove)")
+		return fmt.Errorf("module command requires subcommand (list, install, remove, run)")
 	}
 
 	fmt.Fprintf(os.Stderr, "Debug: Initializing module manager...\n")
