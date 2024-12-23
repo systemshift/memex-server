@@ -117,7 +117,7 @@ func (c *Commands) Module(args ...string) error {
 
 	// Handle built-in module commands directly
 	switch args[0] {
-	case "list", "install", "remove", "enable", "disable":
+	case "list", "install", "remove":
 		return memex.ModuleCommand(args...)
 	case "run":
 		if len(args) < 2 {
@@ -150,7 +150,7 @@ func (c *Commands) ModuleHelp(moduleID string) error {
 	}
 	manager.SetRepository(core.NewRepositoryAdapter(repo))
 
-	mod, ok := manager.Get(moduleID)
+	mod, ok := manager.GetModule(moduleID)
 	if !ok {
 		return fmt.Errorf("module not found: %s", moduleID)
 	}
