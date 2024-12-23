@@ -132,7 +132,7 @@ func (m *DefaultManager) SetRepository(repo types.Repository) {
 func (m *DefaultManager) InstallModule(path string, dev bool) error {
 	moduleID := filepath.Base(path)
 	moduleType := "local"
-	moduleDir := filepath.Join(m.modulesDir, moduleID)
+	var moduleDir string
 
 	if IsGitURL(path) {
 		moduleID = GetModuleIDFromGit(path)

@@ -78,7 +78,9 @@ Commands:
 	}
 }
 
-func (h *BaseHandler) handleRun(cmd types.Command) types.Response {
+// handleRun is a placeholder implementation that should be overridden by specific modules.
+// The cmd parameter is unused in the base implementation but will be used by modules.
+func (h *BaseHandler) handleRun(_ types.Command) types.Response {
 	return types.Response{
 		Status: types.StatusUnsupported,
 		Error:  "run command not implemented",
