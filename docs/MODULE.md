@@ -33,53 +33,30 @@ Standalone executables that communicate with Memex through standard protocols:
 - Output: Structured data through stdout
 - Must implement module interface commands
 
-## Module Discovery
-
-Memex looks for modules in the following locations:
-1. Global modules: ~/.config/memex/modules/
-2. Project modules: ./modules/
-3. Custom paths specified in configuration
-
-## Module Configuration
-
-Modules are configured through the memex configuration system:
-
-```json
-{
-    "modules": {
-        "module-name": {
-            "path": "/path/to/module",
-            "type": "package|binary",
-            "enabled": true,
-            "settings": {
-                // Module-specific settings
-            }
-        }
-    }
-}
-```
-
-## CLI Integration
-
-Modules can be managed through the memex CLI:
-
-```bash
-# List installed modules
-memex module list
-
-# Install a module
-memex module install <path>
-
-# Remove a module
-memex module remove <name>
-
-# Run module-specific command
-memex module run <name> [args...]
-```
-
 ## Module Development
 
-### 1. Package Module Example
+### Development Workflow
+
+Modules can be installed in two modes:
+
+1. Production Install
+```bash
+memex module install <module-name>
+```
+- Installs to global modules directory
+- Used for stable, released modules
+- Modules are copied to ~/.config/memex/modules/
+
+2. Development Install
+```bash
+memex module install --dev <path>
+```
+- Uses module directly from source location
+- No files are copied
+- Ideal for module development
+- Supports unreleased code and dependencies
+
+### Package Module Example
 
 ```go
 package mymodule
@@ -96,7 +73,7 @@ func (m *MyModule) Capabilities() []core.ModuleCapability { return nil }
 // Implement other interface methods...
 ```
 
-### 2. Binary Module Example
+### Binary Module Example
 
 ```bash
 #!/usr/bin/env bash
@@ -115,6 +92,53 @@ case "$1" in
         # Handle module-specific commands
         ;;
 esac
+```
+
+## Module Discovery
+
+Memex looks for modules in:
+1. Development modules: Modules being developed locally with --dev flag
+2. Global modules: ~/.config/memex/modules/
+
+## Module Configuration
+
+Modules are configured through the memex configuration system:
+
+```json
+{
+    "modules": {
+        "module-name": {
+            "path": "/path/to/module",
+            "type": "package|binary",
+            "enabled": true,
+            "dev": false,           // true for development modules
+            "settings": {
+                // Module-specific settings
+            }
+        }
+    }
+}
+```
+
+## CLI Integration
+
+Modules can be managed through the memex CLI:
+
+```bash
+# List installed modules
+memex module list
+
+# Install a module (production)
+memex module install <module-name>
+
+# Install a module (development)
+memex module install --dev <path>
+
+# Remove a module
+memex module remove <name>
+
+# Run module-specific command
+memex module run <name> [args...]
 ```
 
 ## Module Capabilities
@@ -158,22 +182,23 @@ Modules can provide various capabilities:
 - CPU usage limits
 - Storage quotas
 
-## Future Considerations
+## Implementation Roadmap
 
-1. Module Repository
-- Central module registry
+1. Phase 1: Core Module System (Current)
+- Module interface
+- Development workflow
+- Basic discovery
+- Package modules
+
+2. Phase 2: Module Repository
+- Registry design
 - Version management
-- Dependency resolution
+- Distribution system
 
-2. Enhanced Integration
-- Web interface integration
+3. Phase 3: Enhanced Features
 - Event system
-- Plugin architecture
-
-3. Module Communication
 - Inter-module communication
-- Shared data formats
-- Standard protocols
+- Web integration
 
 ## Example Use Cases
 
@@ -191,25 +216,3 @@ Modules can provide various capabilities:
 - Documentation parsing
 - Knowledge extraction
 - Cross-referencing
-
-## Implementation Roadmap
-
-1. Phase 1: Core Module System
-- Module interface
-- Basic discovery
-- Package modules
-
-2. Phase 2: Binary Modules
-- Protocol design
-- Command handling
-- Resource management
-
-3. Phase 3: Module Repository
-- Registry design
-- Version management
-- Distribution system
-
-4. Phase 4: Enhanced Features
-- Event system
-- Inter-module communication
-- Web integration
