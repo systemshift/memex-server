@@ -17,12 +17,13 @@ type Module interface {
 
 // Command represents a module command
 type Command struct {
-	Name    string      // Command name
-	Args    []string    // Command arguments
-	Input   io.Reader   // Command input
-	Output  io.Writer   // Command output
-	Error   io.Writer   // Error output
-	Context interface{} // Command context
+	Name        string      // Command name
+	Description string      // Command description
+	Args        []string    // Command arguments
+	Input       io.Reader   // Command input
+	Output      io.Writer   // Command output
+	Error       io.Writer   // Error output
+	Context     interface{} // Command context
 }
 
 // Command types
