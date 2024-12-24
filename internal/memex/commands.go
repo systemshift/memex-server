@@ -10,119 +10,55 @@ import (
 	"memex/internal/memex/core"
 	"memex/internal/memex/migration"
 	"memex/internal/memex/repository"
-	"memex/pkg/sdk/module"
 )
 
 var (
-	currentRepo   core.Repository
-	repoPath      string
-	moduleManager module.Manager
+	currentRepo core.Repository
+	repoPath    string
 )
 
 // SetRepository sets the current repository (used for testing)
 func SetRepository(repo core.Repository) {
 	currentRepo = repo
 	repoPath = "test.mx"
-	if moduleManager != nil {
-		moduleManager.SetRepository(core.NewRepositoryAdapter(repo))
-	}
 }
 
 // ModuleCommand handles module operations
 func ModuleCommand(args ...string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("module command requires subcommand (list, install, remove, run)")
+		return fmt.Errorf("module command requires subcommand (list, run)")
 	}
 
-	fmt.Fprintf(os.Stderr, "Debug: Initializing module manager...\n")
-	// Initialize module manager if needed
-	if moduleManager == nil {
-		repoDir := filepath.Dir(repoPath)
-		configDir := filepath.Join(repoDir, ".memex")
-		configPath := filepath.Join(configDir, "modules.json")
-		modulesDir := filepath.Join(configDir, "modules")
-
-		var err error
-		moduleManager, err = module.NewManager(configPath, modulesDir)
-		if err != nil {
-			return fmt.Errorf("initializing module manager: %w", err)
-		}
-		fmt.Fprintf(os.Stderr, "Debug: Module manager initialized\n")
-	} else {
-		fmt.Fprintf(os.Stderr, "Debug: Module manager already initialized\n")
-	}
-
-	fmt.Fprintf(os.Stderr, "Debug: Getting repository...\n")
 	// Get current repository
 	repo, err := GetRepository()
 	if err != nil {
 		return fmt.Errorf("getting repository: %w", err)
 	}
-	fmt.Fprintf(os.Stderr, "Debug: Got repository\n")
-
-	fmt.Fprintf(os.Stderr, "Debug: Setting repository for module manager...\n")
-	// Set repository for module manager
-	moduleManager.SetRepository(core.NewRepositoryAdapter(repo))
-	fmt.Fprintf(os.Stderr, "Debug: Repository set for module manager\n")
 
 	cmd := args[0]
 	switch cmd {
 	case "list":
 		// List installed modules
-		modules := moduleManager.List()
+		modules := repo.ListModules()
 		if len(modules) == 0 {
 			fmt.Println("No modules installed")
 			return nil
 		}
 
 		fmt.Println("Installed modules:")
-		for _, moduleID := range modules {
-			if module, ok := moduleManager.GetModule(moduleID); ok {
-				fmt.Printf("  %s - %s\n", module.ID(), module.Name())
-				fmt.Printf("    Description: %s\n", module.Description())
+		for _, module := range modules {
+			fmt.Printf("  %s - %s\n", module.ID(), module.Name())
+			fmt.Printf("    Description: %s\n", module.Description())
 
-				// Show available commands
-				commands := module.Commands()
-				if len(commands) > 0 {
-					fmt.Println("    Commands:")
-					for _, cmd := range commands {
-						fmt.Printf("      %s - %s\n", cmd.Name, cmd.Description)
-					}
+			// Show available commands
+			commands := module.Commands()
+			if len(commands) > 0 {
+				fmt.Println("    Commands:")
+				for _, cmd := range commands {
+					fmt.Printf("      %s - %s\n", cmd.Name, cmd.Description)
 				}
 			}
 		}
-		return nil
-
-	case "install":
-		if len(args) < 2 {
-			return fmt.Errorf("install requires module path")
-		}
-
-		// Check for --dev flag
-		dev := false
-		path := args[1]
-		if args[1] == "--dev" {
-			if len(args) < 3 {
-				return fmt.Errorf("--dev requires module path")
-			}
-			dev = true
-			path = args[2]
-		}
-
-		if err := moduleManager.InstallModule(path, dev); err != nil {
-			return fmt.Errorf("installing module: %w", err)
-		}
-		fmt.Printf("Module installed: %s\n", filepath.Base(path))
-		return nil
-
-	case "remove":
-		if len(args) < 2 {
-			return fmt.Errorf("remove requires module name")
-		}
-		if err := moduleManager.RemoveModule(args[1]); err != nil {
-			return fmt.Errorf("removing module: %w", err)
-		}
-		fmt.Printf("Module removed: %s\n", args[1])
 		return nil
 
 	default:
@@ -132,10 +68,15 @@ func ModuleCommand(args ...string) error {
 			return fmt.Errorf("module command required")
 		}
 
+		module, exists := repo.GetModule(moduleID)
+		if !exists {
+			return fmt.Errorf("module not found: %s", moduleID)
+		}
+
 		cmd := args[1]
 		cmdArgs := args[2:]
 
-		return moduleManager.HandleCommand(moduleID, cmd, cmdArgs)
+		return module.HandleCommand(cmd, cmdArgs)
 	}
 }
 

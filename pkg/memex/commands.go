@@ -3,8 +3,6 @@ package memex
 import (
 	"fmt"
 	"memex/internal/memex"
-	"memex/internal/memex/core"
-	"memex/pkg/sdk/module"
 )
 
 // Commands provides command functions for the CLI
@@ -111,54 +109,24 @@ func (c *Commands) Module(args ...string) error {
 		return fmt.Errorf("connecting to repository: %w", err)
 	}
 
-	if len(args) == 0 {
-		return fmt.Errorf("module command required")
-	}
-
-	// Handle built-in module commands directly
-	switch args[0] {
-	case "list", "install", "remove":
-		return memex.ModuleCommand(args...)
-	case "run":
-		if len(args) < 2 {
-			return fmt.Errorf("run requires module name")
-		}
-		return memex.ModuleCommand(args...)
-	default:
-		// Convert to run command format for direct module commands
-		moduleID := args[0]
-		if len(args) < 2 {
-			return fmt.Errorf("module command required")
-		}
-		cmd := args[1]
-		cmdArgs := args[2:]
-		newArgs := append([]string{"run", moduleID, cmd}, cmdArgs...)
-		return memex.ModuleCommand(newArgs...)
-	}
+	return memex.ModuleCommand(args...)
 }
 
 // ModuleHelp shows help for a module
 func (c *Commands) ModuleHelp(moduleID string) error {
-	manager, err := module.NewModuleManager()
-	if err != nil {
-		return fmt.Errorf("creating module manager: %w", err)
-	}
-
 	repo, err := memex.GetRepository()
 	if err != nil {
 		return fmt.Errorf("getting repository: %w", err)
 	}
-	manager.SetRepository(core.NewRepositoryAdapter(repo))
 
-	mod, ok := manager.GetModule(moduleID)
-	if !ok {
+	mod, exists := repo.GetModule(moduleID)
+	if !exists {
 		return fmt.Errorf("module not found: %s", moduleID)
 	}
-	commands := mod.Commands()
 
 	fmt.Printf("Module: %s\n\n", moduleID)
 	fmt.Println("Commands:")
-	for _, cmd := range commands {
+	for _, cmd := range mod.Commands() {
 		fmt.Printf("  %-20s %s\n", cmd.Name, cmd.Description)
 		if cmd.Usage != "" {
 			fmt.Printf("    Usage: %s\n", cmd.Usage)

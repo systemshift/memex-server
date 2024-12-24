@@ -1,22 +1,23 @@
 package memex
 
-import (
-	"time"
-)
+import "time"
 
-// Node represents a node in the graph
+// Node represents a node in the repository
 type Node struct {
 	ID       string
 	Type     string
-	Meta     map[string]any
 	Content  []byte
+	Meta     map[string]interface{}
 	Created  time.Time
 	Modified time.Time
 }
 
-// Link represents a relationship between nodes
+// Link represents a link between nodes
 type Link struct {
-	Target string
-	Type   string
-	Meta   map[string]any
+	Source   string
+	Target   string
+	Type     string
+	Meta     map[string]interface{}
+	Created  time.Time
+	Modified time.Time
 }

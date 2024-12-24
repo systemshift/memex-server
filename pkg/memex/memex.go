@@ -7,14 +7,6 @@ import (
 	"memex/internal/memex/repository"
 )
 
-// Module represents a module that can be installed and used
-type Module interface {
-	ID() string
-	Name() string
-	Description() string
-	Run(args []string) error
-}
-
 // Memex represents a memex instance
 type Memex struct {
 	repo core.Repository

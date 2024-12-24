@@ -40,7 +40,7 @@ type Repository struct {
 	store   *store.ChunkStore
 	txStore *transaction.ActionStore
 	lockMgr sync.Mutex
-	modules *core.ModuleRegistry
+	modules map[string]core.Module
 }
 
 // Ensure Repository implements required interfaces
@@ -79,7 +79,7 @@ func Create(path string) (*Repository, error) {
 		path:    path,
 		file:    file,
 		header:  header,
-		modules: core.NewModuleRegistry(),
+		modules: make(map[string]core.Module),
 	}
 
 	// Create transaction store
@@ -130,7 +130,7 @@ func Open(path string) (*Repository, error) {
 		path:    path,
 		file:    file,
 		header:  header,
-		modules: core.NewModuleRegistry(),
+		modules: make(map[string]core.Module),
 	}
 
 	// Create transaction store
@@ -173,15 +173,24 @@ func (r *Repository) GetLockManager() interface{} {
 // Module operations
 
 func (r *Repository) RegisterModule(module core.Module) error {
-	return r.modules.RegisterModule(module)
+	if _, exists := r.modules[module.ID()]; exists {
+		return fmt.Errorf("module already registered: %s", module.ID())
+	}
+	r.modules[module.ID()] = module
+	return nil
 }
 
 func (r *Repository) GetModule(id string) (core.Module, bool) {
-	return r.modules.GetModule(id)
+	module, exists := r.modules[id]
+	return module, exists
 }
 
 func (r *Repository) ListModules() []core.Module {
-	return r.modules.ListModules()
+	modules := make([]core.Module, 0, len(r.modules))
+	for _, module := range r.modules {
+		modules = append(modules, module)
+	}
+	return modules
 }
 
 func (r *Repository) QueryNodesByModule(moduleID string) ([]*core.Node, error) {
