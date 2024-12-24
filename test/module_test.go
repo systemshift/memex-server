@@ -11,41 +11,15 @@ type MockModule struct {
 	id          string
 	name        string
 	description string
+	repo        core.Repository
 }
 
-func (m *MockModule) ID() string                                         { return m.id }
-func (m *MockModule) Name() string                                       { return m.name }
-func (m *MockModule) Description() string                                { return m.description }
-func (m *MockModule) Commands() []core.ModuleCommand                     { return nil }
-func (m *MockModule) HandleCommand(cmd string, args []string) error      { return nil }
-func (m *MockModule) ValidateNodeType(nodeType string) bool              { return true }
-func (m *MockModule) ValidateLinkType(linkType string) bool              { return true }
-func (m *MockModule) ValidateMetadata(meta map[string]interface{}) error { return nil }
-
-// StrictMockModule implements core.Module with strict type validation
-type StrictMockModule struct {
-	MockModule
-	validNodeTypes []string
-	validLinkTypes []string
-}
-
-func (m *StrictMockModule) ValidateNodeType(nodeType string) bool {
-	for _, valid := range m.validNodeTypes {
-		if valid == nodeType {
-			return true
-		}
-	}
-	return false
-}
-
-func (m *StrictMockModule) ValidateLinkType(linkType string) bool {
-	for _, valid := range m.validLinkTypes {
-		if valid == linkType {
-			return true
-		}
-	}
-	return false
-}
+func (m *MockModule) ID() string                                    { return m.id }
+func (m *MockModule) Name() string                                  { return m.name }
+func (m *MockModule) Description() string                           { return m.description }
+func (m *MockModule) Init(repo core.Repository) error               { m.repo = repo; return nil }
+func (m *MockModule) Commands() []core.Command                      { return nil }
+func (m *MockModule) HandleCommand(cmd string, args []string) error { return nil }
 
 func TestModuleRegistration(t *testing.T) {
 	repo := NewMockSDKRepository()
@@ -140,39 +114,5 @@ func TestModuleLinkOperations(t *testing.T) {
 		if links[0].Target != targetID {
 			t.Errorf("Got wrong target ID, expected %s, got %s", targetID, links[0].Target)
 		}
-	}
-}
-
-func TestModuleValidation(t *testing.T) {
-	registry := core.NewModuleRegistry()
-
-	// Create test module that only accepts specific types
-	module := &StrictMockModule{
-		MockModule: MockModule{
-			id: "test-module",
-		},
-		validNodeTypes: []string{"test.doc"},
-		validLinkTypes: []string{"test-link"},
-	}
-
-	// Register module
-	if err := registry.RegisterModule(module); err != nil {
-		t.Errorf("Failed to register module: %v", err)
-	}
-
-	// Test node type validation
-	if !registry.ValidateNodeType("test.doc") {
-		t.Error("Valid node type rejected")
-	}
-	if registry.ValidateNodeType("invalid.type") {
-		t.Error("Invalid node type accepted")
-	}
-
-	// Test link type validation
-	if !registry.ValidateLinkType("test-link") {
-		t.Error("Valid link type rejected")
-	}
-	if registry.ValidateLinkType("invalid-link") {
-		t.Error("Invalid link type accepted")
 	}
 }

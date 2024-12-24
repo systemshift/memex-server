@@ -2,35 +2,25 @@ package core
 
 import "fmt"
 
-// ModuleCapability represents a specific capability a module provides
-type ModuleCapability string
-
-// ModuleCommand represents a command provided by a module
-type ModuleCommand struct {
-	Name        string   // Command name (e.g., "add", "remove")
+// Command represents a module command
+type Command struct {
+	Name        string   // Command name (e.g., "add", "status")
 	Description string   // Command description
-	Usage       string   // Command usage (e.g., "ast add <file>")
+	Usage       string   // Usage example (e.g., "git add <file>")
 	Args        []string // Expected arguments
 }
-
-// ModuleCommandHandler handles execution of a module command
-type ModuleCommandHandler func(repo Repository, args []string) error
 
 // Module defines the interface that all memex modules must implement
 type Module interface {
 	// Identity
-	ID() string
-	Name() string
-	Description() string
+	ID() string          // Unique identifier (e.g., "git", "ast")
+	Name() string        // Human-readable name
+	Description() string // Module description
 
-	// Commands
-	Commands() []ModuleCommand                     // List of commands provided by this module
-	HandleCommand(cmd string, args []string) error // Handle a command
-
-	// Validation
-	ValidateNodeType(nodeType string) bool
-	ValidateLinkType(linkType string) bool
-	ValidateMetadata(meta map[string]interface{}) error
+	// Core functionality
+	Init(repo Repository) error                    // Initialize module with repository
+	Commands() []Command                           // Available commands
+	HandleCommand(cmd string, args []string) error // Execute a command
 }
 
 // BaseModule provides a basic implementation of the Module interface
@@ -39,17 +29,16 @@ type BaseModule struct {
 	name        string
 	description string
 	repo        Repository
-	commands    map[string]ModuleCommandHandler
+	commands    []Command
 }
 
 // NewBaseModule creates a new base module
-func NewBaseModule(id, name, description string, repo Repository) *BaseModule {
+func NewBaseModule(id, name, description string) *BaseModule {
 	return &BaseModule{
 		id:          id,
 		name:        name,
 		description: description,
-		repo:        repo,
-		commands:    make(map[string]ModuleCommandHandler),
+		commands:    make([]Command, 0),
 	}
 }
 
@@ -68,45 +57,25 @@ func (m *BaseModule) Description() string {
 	return m.description
 }
 
+// Init initializes the module with a repository
+func (m *BaseModule) Init(repo Repository) error {
+	m.repo = repo
+	return nil
+}
+
 // Commands returns the list of available commands
-func (m *BaseModule) Commands() []ModuleCommand {
-	cmds := make([]ModuleCommand, 0, len(m.commands))
-	for name := range m.commands {
-		cmds = append(cmds, ModuleCommand{
-			Name: name,
-			// Description and usage would be set by implementing module
-		})
-	}
-	return cmds
+func (m *BaseModule) Commands() []Command {
+	return m.commands
 }
 
 // HandleCommand handles a module command
 func (m *BaseModule) HandleCommand(cmd string, args []string) error {
-	handler, ok := m.commands[cmd]
-	if !ok {
-		return fmt.Errorf("unknown command: %s", cmd)
-	}
-	return handler(m.repo, args)
+	return fmt.Errorf("command not implemented: %s", cmd)
 }
 
-// RegisterCommand registers a command handler
-func (m *BaseModule) RegisterCommand(name string, handler ModuleCommandHandler) {
-	m.commands[name] = handler
-}
-
-// ValidateNodeType returns true by default
-func (m *BaseModule) ValidateNodeType(nodeType string) bool {
-	return true
-}
-
-// ValidateLinkType returns true by default
-func (m *BaseModule) ValidateLinkType(linkType string) bool {
-	return true
-}
-
-// ValidateMetadata returns nil by default
-func (m *BaseModule) ValidateMetadata(meta map[string]interface{}) error {
-	return nil
+// AddCommand adds a command to the module
+func (m *BaseModule) AddCommand(cmd Command) {
+	m.commands = append(m.commands, cmd)
 }
 
 // ModuleRegistry manages module registration and lookup
@@ -143,24 +112,4 @@ func (r *ModuleRegistry) ListModules() []Module {
 		modules = append(modules, module)
 	}
 	return modules
-}
-
-// ValidateNodeType checks if any module accepts this node type
-func (r *ModuleRegistry) ValidateNodeType(nodeType string) bool {
-	for _, module := range r.modules {
-		if module.ValidateNodeType(nodeType) {
-			return true
-		}
-	}
-	return false
-}
-
-// ValidateLinkType checks if any module accepts this link type
-func (r *ModuleRegistry) ValidateLinkType(linkType string) bool {
-	for _, module := range r.modules {
-		if module.ValidateLinkType(linkType) {
-			return true
-		}
-	}
-	return false
 }

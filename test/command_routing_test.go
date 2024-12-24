@@ -8,11 +8,14 @@ import (
 
 func TestCommandRouting(t *testing.T) {
 	// Create test repository
-	repo := NewMockSDKRepository()
+	repo := NewMockCoreRepository()
 
-	// Create test module
-	testMod := NewTestModule(repo)
+	// Create and initialize test module
+	testMod := NewTestModule()
 	testMod.SetID("test")
+	if err := testMod.Init(repo); err != nil {
+		t.Fatalf("initializing module: %v", err)
+	}
 
 	// Register module
 	if err := repo.RegisterModule(testMod); err != nil {

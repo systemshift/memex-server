@@ -22,7 +22,7 @@ func TestModuleManager(t *testing.T) {
 	manager.SetRepository(repo)
 
 	// Create test module
-	testMod := NewTestModule(repo)
+	testMod := NewTestModule()
 	testMod.SetID("test")
 
 	// Register module
@@ -71,7 +71,7 @@ func TestModuleCommands(t *testing.T) {
 	manager.SetRepository(repo)
 
 	// Create test module
-	testMod := NewTestModule(repo)
+	testMod := NewTestModule()
 	testMod.SetID("test")
 
 	// Register module
