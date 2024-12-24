@@ -4,214 +4,217 @@ This document describes the module system for extending Memex functionality.
 
 ## Overview
 
-The Memex module system allows extending core functionality through modules that can:
-- Add new node and link types
-- Provide custom data analysis
-- Integrate with external tools and services
+The Memex module system allows extending core functionality through Go modules that can:
 - Add new commands to the CLI
+- Define custom node and link types
+- Provide data analysis and transformations
+- Integrate with external tools and services
 
-## Module Types
-
-### 1. Package Modules
-Go packages that implement the Module interface and can be imported directly:
+## Module Interface
 
 ```go
+// Module defines the interface that all memex modules must implement
 type Module interface {
-    ID() string
-    Name() string
-    Description() string
-    Capabilities() []ModuleCapability
-    ValidateNodeType(nodeType string) bool
-    ValidateLinkType(linkType string) bool
-    ValidateMetadata(meta map[string]interface{}) error
+    // Identity
+    ID() string          // Unique identifier (e.g., "git", "ast")
+    Name() string        // Human-readable name
+    Description() string // Module description
+
+    // Core functionality
+    Init(repo Repository) error                    // Initialize module with repository
+    Commands() []Command                           // Available commands
+    HandleCommand(cmd string, args []string) error // Execute a command
+
+    // Optional capabilities
+    ValidateNodeType(nodeType string) bool                  // Validate node types
+    ValidateLinkType(linkType string) bool                  // Validate link types
+    ValidateMetadata(meta map[string]interface{}) error     // Validate metadata
+}
+
+// Command represents a module command
+type Command struct {
+    Name        string   // Command name (e.g., "add", "status")
+    Description string   // Command description
+    Usage       string   // Usage example (e.g., "git add <file>")
+    Args        []string // Expected arguments
 }
 ```
 
-### 2. Binary Modules
-Standalone executables that communicate with Memex through standard protocols:
-- Input: Command-line arguments and stdin
-- Output: Structured data through stdout
-- Must implement module interface commands
+## Installing Modules
 
-## Module Development
+Modules are distributed as Go packages and can be installed using standard Go tools:
 
-### Development Workflow
-
-Modules can be installed in two modes:
-
-1. Production Install
 ```bash
-memex module install <module-name>
-```
-- Installs to global modules directory
-- Used for stable, released modules
-- Modules are copied to ~/.config/memex/modules/
+# Install latest version
+go install github.com/username/memex-git@latest
 
-2. Development Install
+# Install specific version
+go install github.com/username/memex-git@v1.0.0
+```
+
+## Using Modules
+
+Once installed, modules are automatically available in memex:
+
 ```bash
-memex module install --dev <path>
-```
-- Uses module directly from source location
-- No files are copied
-- Ideal for module development
-- Supports unreleased code and dependencies
+# List available modules
+memex module list
 
-### Package Module Example
+# Use module commands
+memex git init
+memex git status
+memex ast analyze main.go
+```
+
+## Creating Modules
+
+1. Create a new repository following the module interface:
 
 ```go
-package mymodule
+package git
 
-type MyModule struct {
-    repo core.Repository
+type GitModule struct {
+    repo Repository
 }
 
-func (m *MyModule) ID() string { return "mymodule" }
-func (m *MyModule) Name() string { return "My Module" }
-func (m *MyModule) Description() string { return "Does something useful" }
-func (m *MyModule) Capabilities() []core.ModuleCapability { return nil }
+func (m *GitModule) ID() string { return "git" }
+func (m *GitModule) Name() string { return "Git Integration" }
+func (m *GitModule) Description() string { return "Git version control integration" }
 
-// Implement other interface methods...
-```
+func (m *GitModule) Init(repo Repository) error {
+    m.repo = repo
+    return nil
+}
 
-### Binary Module Example
+func (m *GitModule) Commands() []Command {
+    return []Command{
+        {
+            Name:        "init",
+            Description: "Initialize git repository",
+            Usage:       "git init",
+        },
+        {
+            Name:        "status",
+            Description: "Show working tree status",
+            Usage:       "git status",
+        },
+    }
+}
 
-```bash
-#!/usr/bin/env bash
-
-case "$1" in
-    "id")
-        echo "mymodule"
-        ;;
-    "name")
-        echo "My Module"
-        ;;
-    "describe")
-        echo "Does something useful"
-        ;;
-    "run")
-        # Handle module-specific commands
-        ;;
-esac
-```
-
-## Module Discovery
-
-Memex looks for modules in:
-1. Development modules: Modules being developed locally with --dev flag
-2. Global modules: ~/.config/memex/modules/
-
-## Module Configuration
-
-Modules are configured through the memex configuration system:
-
-```json
-{
-    "modules": {
-        "module-name": {
-            "path": "/path/to/module",
-            "type": "package|binary",
-            "dev": false,           // true for development modules
-            "settings": {
-                // Module-specific settings
-            }
-        }
+func (m *GitModule) HandleCommand(cmd string, args []string) error {
+    switch cmd {
+    case "init":
+        return m.initRepo()
+    case "status":
+        return m.showStatus()
+    default:
+        return fmt.Errorf("unknown command: %s", cmd)
     }
 }
 ```
 
-## CLI Integration
+2. Register your module:
 
-Modules can be managed through the memex CLI:
+```go
+package main
 
+import (
+    "github.com/username/memex-git/git"
+    "github.com/username/memex/pkg/sdk"
+)
+
+func init() {
+    sdk.RegisterModule(git.NewGitModule())
+}
+```
+
+## Module Development
+
+1. Create a new module:
 ```bash
-# List installed modules
+# Create module directory
+mkdir memex-git
+cd memex-git
+
+# Initialize Go module
+go mod init github.com/username/memex-git
+
+# Add memex as dependency
+go get github.com/username/memex
+```
+
+2. Implement the Module interface:
+- Create your module package (e.g., git/module.go)
+- Implement required methods
+- Add your module's commands
+- Register the module
+
+3. Test locally:
+```bash
+# Build and install
+go install .
+
+# Test with memex
 memex module list
-
-# Install a module (production)
-memex module install <module-name>
-
-# Install a module (development)
-memex module install --dev <path>
-
-# Remove a module
-memex module remove <name>
-
-# Run module-specific command
-memex module run <name> [args...]
+memex git --help
 ```
 
 ## Module Capabilities
 
 Modules can provide various capabilities:
 
-1. Node Types
-- Define custom node types
-- Provide node type validation
-- Handle node content processing
-
-2. Link Types
-- Define custom link types
-- Provide link validation
-- Handle relationship semantics
-
-3. Commands
+1. Commands
 - Add new CLI commands
-- Extend existing commands
-- Provide custom subcommands
+- Extend existing functionality
+- Process repository data
+
+2. Node Types
+- Define custom node types
+- Validate node content
+- Process node data
+
+3. Link Types
+- Define relationship types
+- Validate link metadata
+- Handle link operations
 
 4. Data Processing
-- Content analysis
-- Data transformation
-- External integrations
+- Analyze repository content
+- Transform data
+- Integrate external tools
 
-## Security Considerations
+## Example Modules
 
-1. Module Verification
-- Verify module authenticity
-- Check module signatures
-- Validate module capabilities
+1. Git Module
+- Version control integration
+- Track repository changes
+- Link commits to nodes
 
-2. Permissions
-- Modules run with limited permissions
-- Access only through repository interface
-- No direct file system access
-
-3. Resource Limits
-- Memory usage limits
-- CPU usage limits
-- Storage quotas
-
-## Implementation Roadmap
-
-1. Phase 1: Core Module System (Current)
-- Module interface
-- Development workflow
-- Basic discovery
-- Package modules
-
-2. Phase 2: Module Repository
-- Registry design
-- Version management
-- Distribution system
-
-3. Phase 3: Enhanced Features
-- Event system
-- Inter-module communication
-- Web integration
-
-## Example Use Cases
-
-1. AST Module
+2. AST Module
 - Parse source code
 - Build code graphs
 - Track dependencies
 
-2. Git Module
-- Version control integration
-- Commit tracking
-- Development context
-
 3. Doc Module
-- Documentation parsing
-- Knowledge extraction
-- Cross-referencing
+- Parse documentation
+- Extract knowledge
+- Build documentation graphs
+
+## Best Practices
+
+1. Module Design
+- Keep modules focused and single-purpose
+- Use clear, descriptive command names
+- Provide helpful command descriptions
+- Include usage examples
+
+2. Error Handling
+- Return clear error messages
+- Validate input early
+- Handle edge cases gracefully
+
+3. Documentation
+- Document module capabilities
+- Include example usage
+- Explain command arguments
+- Provide setup instructions
