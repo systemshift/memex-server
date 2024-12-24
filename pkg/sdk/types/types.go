@@ -1,7 +1,5 @@
 package types
 
-import "io"
-
 // Module defines the interface that all memex modules must implement
 type Module interface {
 	// Identity
@@ -17,13 +15,10 @@ type Module interface {
 
 // Command represents a module command
 type Command struct {
-	Name        string      // Command name
-	Description string      // Command description
-	Args        []string    // Command arguments
-	Input       io.Reader   // Command input
-	Output      io.Writer   // Command output
-	Error       io.Writer   // Error output
-	Context     interface{} // Command context
+	Name        string   // Command name (e.g., "add", "status")
+	Description string   // Command description
+	Usage       string   // Usage example (e.g., "git add <file>")
+	Args        []string // Expected arguments
 }
 
 // Command types

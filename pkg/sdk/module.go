@@ -13,6 +13,7 @@ type BaseModule struct {
 	description string
 	repo        types.Repository
 	handler     types.Handler
+	commands    []types.Command
 }
 
 // NewBaseModule creates a new base module
@@ -21,9 +22,15 @@ func NewBaseModule(id, name, description string) *BaseModule {
 		id:          id,
 		name:        name,
 		description: description,
+		commands:    make([]types.Command, 0),
 	}
 	m.handler = NewBaseHandler(m)
 	return m
+}
+
+// AddCommand adds a command to the module
+func (m *BaseModule) AddCommand(cmd types.Command) {
+	m.commands = append(m.commands, cmd)
 }
 
 // ID returns the module identifier
@@ -49,7 +56,7 @@ func (m *BaseModule) Init(repo types.Repository) error {
 
 // Commands returns the list of available commands
 func (m *BaseModule) Commands() []types.Command {
-	return []types.Command{
+	baseCommands := []types.Command{
 		{
 			Name:        types.CmdID,
 			Description: "Get module ID",
@@ -67,6 +74,7 @@ func (m *BaseModule) Commands() []types.Command {
 			Description: "Get command help",
 		},
 	}
+	return append(baseCommands, m.commands...)
 }
 
 // HandleCommand handles a module command
