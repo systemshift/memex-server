@@ -37,15 +37,12 @@ func ModuleCommand(args ...string) error {
 	fmt.Fprintf(os.Stderr, "Debug: Initializing module manager...\n")
 	// Initialize module manager if needed
 	if moduleManager == nil {
-		homeDir, err := os.UserHomeDir()
-		if err != nil {
-			return fmt.Errorf("getting home directory: %w", err)
-		}
-
-		configDir := filepath.Join(homeDir, ".config", "memex")
+		repoDir := filepath.Dir(repoPath)
+		configDir := filepath.Join(repoDir, ".memex")
 		configPath := filepath.Join(configDir, "modules.json")
 		modulesDir := filepath.Join(configDir, "modules")
 
+		var err error
 		moduleManager, err = module.NewManager(configPath, modulesDir)
 		if err != nil {
 			return fmt.Errorf("initializing module manager: %w", err)

@@ -33,10 +33,16 @@ func (l *DefaultPluginLoader) SetRepository(repo types.Repository) {
 
 // Load loads a module from a plugin file
 func (l *DefaultPluginLoader) Load(path string) (types.Module, error) {
-	// Find module.so in the path
-	pluginPath := filepath.Join(path, "module.so")
+	// Try direct path first (for dev mode)
+	pluginPath := path
+	fmt.Fprintf(os.Stderr, "Debug: Looking for plugin at %s\n", pluginPath)
 	if _, err := os.Stat(pluginPath); err != nil {
-		return nil, fmt.Errorf("plugin not found at %s: %w", pluginPath, err)
+		// Try module.so in directory
+		pluginPath = filepath.Join(path, "module.so")
+		fmt.Fprintf(os.Stderr, "Debug: Trying alternate path %s\n", pluginPath)
+		if _, err := os.Stat(pluginPath); err != nil {
+			return nil, fmt.Errorf("plugin not found at %s or %s: %w", path, pluginPath, err)
+		}
 	}
 
 	// Open plugin

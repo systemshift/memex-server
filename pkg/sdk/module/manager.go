@@ -165,7 +165,18 @@ func (m *DefaultManager) InstallModule(path string, dev bool) error {
 		if err != nil {
 			return fmt.Errorf("getting absolute path: %w", err)
 		}
-		moduleDir = absPath
+		if dev {
+			moduleDir = absPath
+		} else {
+			// Copy module to modules directory
+			moduleDir = filepath.Join(m.modulesDir, moduleID)
+			if err := os.MkdirAll(moduleDir, 0o755); err != nil {
+				return fmt.Errorf("creating module directory: %w", err)
+			}
+			if err := os.Link(absPath, filepath.Join(moduleDir, "module.so")); err != nil {
+				return fmt.Errorf("copying module: %w", err)
+			}
+		}
 	}
 
 	// For tests, allow registering in-memory modules without loading from disk
