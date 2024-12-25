@@ -52,6 +52,13 @@ func (d *ModuleDiscovery) discoverInPath(path string) error {
 		return fmt.Errorf("checking path %s: %w", path, err)
 	}
 
+	// Check if this is a dev path
+	for moduleID, devPath := range d.loader.devPaths {
+		if devPath == path {
+			return d.loadDevModule(moduleID, path)
+		}
+	}
+
 	// Handle single plugin file
 	if !info.IsDir() {
 		return d.loadPluginFile(path)
@@ -74,6 +81,52 @@ func (d *ModuleDiscovery) discoverInPath(path string) error {
 				return fmt.Errorf("loading plugin %s: %w", pluginPath, err)
 			}
 		}
+	}
+
+	return nil
+}
+
+// loadDevModule loads a module in development mode
+func (d *ModuleDiscovery) loadDevModule(moduleID, path string) error {
+	// Check if module is already loaded
+	if _, exists := d.loader.manager.GetModule(moduleID); exists {
+		// Unload existing module
+		if err := d.loader.UnloadModule(moduleID); err != nil {
+			return fmt.Errorf("unloading existing module: %w", err)
+		}
+	}
+
+	// Load module from dev path
+	plug, err := plugin.Open(path)
+	if err != nil {
+		return fmt.Errorf("opening dev module %s: %w", path, err)
+	}
+
+	// Look up module symbol
+	sym, err := plug.Lookup("Module")
+	if err != nil {
+		return fmt.Errorf("looking up Module symbol in %s: %w", path, err)
+	}
+
+	// Assert module type
+	mod, ok := sym.(types.Module)
+	if !ok {
+		return fmt.Errorf("Module symbol in %s does not implement types.Module", path)
+	}
+
+	// Validate module
+	if err := d.ValidateModule(mod); err != nil {
+		return fmt.Errorf("validating module from %s: %w", path, err)
+	}
+
+	// Verify module ID matches
+	if mod.ID() != moduleID {
+		return fmt.Errorf("%w: module ID mismatch: %s != %s", ErrInvalidInput, mod.ID(), moduleID)
+	}
+
+	// Load module
+	if err := d.loader.LoadModule(moduleID, mod); err != nil {
+		return fmt.Errorf("loading module from %s: %w", path, err)
 	}
 
 	return nil

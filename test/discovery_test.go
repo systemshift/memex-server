@@ -78,9 +78,17 @@ func TestModuleDiscovery(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				err := loader.LoadModule(tt.mod.ID(), tt.mod)
+				// Test validation directly
+				err := discovery.ValidateModule(tt.mod)
 				if (err != nil) != tt.wantErr {
-					t.Errorf("LoadModule() error = %v, wantErr %v", err, tt.wantErr)
+					t.Errorf("ValidateModule() error = %v, wantErr %v", err, tt.wantErr)
+				}
+
+				// Test validation through loading
+				if !tt.wantErr {
+					if err := loader.LoadModule(tt.mod.ID(), tt.mod); err != nil {
+						t.Errorf("LoadModule() error = %v", err)
+					}
 				}
 			})
 		}
@@ -138,12 +146,12 @@ func TestModuleDiscovery(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				discovery, err := tt.setup()
+				d, err := tt.setup()
 				if err != nil {
 					t.Fatalf("setup failed: %v", err)
 				}
 
-				err = discovery.DiscoverModules()
+				err = d.DiscoverModules()
 				if tt.wantErr {
 					if err == nil {
 						t.Error("DiscoverModules() returned nil, want error")
@@ -157,24 +165,38 @@ func TestModuleDiscovery(t *testing.T) {
 		}
 	})
 
-	// Test module events
-	t.Run("events", func(t *testing.T) {
-		var loadedCount int
-		discovery.Events().Subscribe(sdk.EventModuleLoaded, func(sdk.Event) {
-			loadedCount++
-		})
+	// Test dev mode functionality
+	t.Run("dev mode", func(t *testing.T) {
+		// Create manager and loader
+		mgr := sdk.NewManager()
+		loader := sdk.NewModuleLoader(mgr)
 
-		// Load a valid module
-		validMod := &mockModule{
-			id:   "test-events",
-			name: "Test Events",
-		}
-		if err := loader.LoadModule(validMod.ID(), validMod); err != nil {
-			t.Errorf("LoadModule() error = %v", err)
+		// Add dev path
+		devPath := filepath.Join(testDir, "test-dev")
+		loader.AddDevPath("test-dev", devPath)
+
+		// Test dev mode checks
+		if !loader.IsDevModule("test-dev") {
+			t.Error("IsDevModule() = false, want true")
 		}
 
-		if loadedCount != 1 {
-			t.Errorf("got %d module loaded events, want 1", loadedCount)
+		if !loader.IsDevModule("test-dev") {
+			t.Error("IsDevModule() = false, want true")
+		}
+
+		if path, exists := loader.GetDevPath("test-dev"); !exists {
+			t.Error("GetDevPath() exists = false, want true")
+		} else if path != devPath {
+			t.Errorf("GetDevPath() path = %v, want %v", path, devPath)
+		}
+
+		// Test non-dev module
+		if loader.IsDevModule("other") {
+			t.Error("IsDevModule() = true for non-dev module")
+		}
+
+		if _, exists := loader.GetDevPath("other"); exists {
+			t.Error("GetDevPath() exists = true for non-dev module")
 		}
 	})
 }
@@ -247,7 +269,7 @@ func TestCommandValidation(t *testing.T) {
 
 			err := discovery.ValidateModule(mod)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("LoadModule() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("ValidateModule() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
 	}

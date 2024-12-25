@@ -9,18 +9,37 @@ import (
 
 // ModuleLoader handles module discovery and loading
 type ModuleLoader struct {
-	manager *Manager
-	paths   []string
-	events  *EventEmitter
+	manager  *Manager
+	paths    []string
+	events   *EventEmitter
+	devPaths map[string]string // Maps module ID to dev path
 }
 
 // NewModuleLoader creates a new module loader
 func NewModuleLoader(manager *Manager) *ModuleLoader {
 	return &ModuleLoader{
-		manager: manager,
-		paths:   make([]string, 0),
-		events:  manager.Events(), // Share manager's event emitter
+		manager:  manager,
+		paths:    make([]string, 0),
+		events:   manager.Events(), // Share manager's event emitter
+		devPaths: make(map[string]string),
 	}
+}
+
+// AddDevPath adds a development path for a module
+func (l *ModuleLoader) AddDevPath(moduleID, path string) {
+	l.devPaths[moduleID] = path
+}
+
+// IsDevModule checks if a module is in development mode
+func (l *ModuleLoader) IsDevModule(moduleID string) bool {
+	_, exists := l.devPaths[moduleID]
+	return exists
+}
+
+// GetDevPath returns the development path for a module
+func (l *ModuleLoader) GetDevPath(moduleID string) (string, bool) {
+	path, exists := l.devPaths[moduleID]
+	return path, exists
 }
 
 // AddPath adds a path to search for modules
