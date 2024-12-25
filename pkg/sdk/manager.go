@@ -11,6 +11,7 @@ import (
 type Manager struct {
 	modules map[string]types.Module
 	repo    types.Repository
+	events  *EventEmitter
 	mu      sync.RWMutex
 }
 
@@ -18,7 +19,13 @@ type Manager struct {
 func NewManager() *Manager {
 	return &Manager{
 		modules: make(map[string]types.Module),
+		events:  NewEventEmitter(),
 	}
+}
+
+// Events returns the event emitter
+func (m *Manager) Events() *EventEmitter {
+	return m.events
 }
 
 // RegisterModule registers a module with the manager
@@ -47,6 +54,7 @@ func (m *Manager) RegisterModule(mod types.Module) error {
 	}
 
 	m.modules[id] = mod
+	m.events.EmitModuleLoaded(mod)
 	return nil
 }
 
@@ -101,7 +109,14 @@ func (m *Manager) HandleCommand(moduleID string, cmd string, args []string) erro
 		return fmt.Errorf("%w: module %s", ErrNotFound, moduleID)
 	}
 
-	return mod.HandleCommand(cmd, args)
+	m.events.EmitCommandStarted(mod, cmd, args)
+	err := mod.HandleCommand(cmd, args)
+	if err != nil {
+		m.events.EmitCommandError(mod, cmd, args, err)
+		return err
+	}
+	m.events.EmitCommandCompleted(mod, cmd, args)
+	return nil
 }
 
 // Shutdown shuts down all modules

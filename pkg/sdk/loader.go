@@ -11,6 +11,7 @@ import (
 type ModuleLoader struct {
 	manager *Manager
 	paths   []string
+	events  *EventEmitter
 }
 
 // NewModuleLoader creates a new module loader
@@ -18,6 +19,7 @@ func NewModuleLoader(manager *Manager) *ModuleLoader {
 	return &ModuleLoader{
 		manager: manager,
 		paths:   make([]string, 0),
+		events:  manager.Events(), // Share manager's event emitter
 	}
 }
 
@@ -70,6 +72,7 @@ func (l *ModuleLoader) UnloadModule(id string) error {
 	l.manager.modules[id] = nil
 	delete(l.manager.modules, id)
 
+	l.events.EmitModuleUnloaded(mod)
 	return nil
 }
 
@@ -82,4 +85,9 @@ func (l *ModuleLoader) UnloadAll() error {
 		}
 	}
 	return lastErr
+}
+
+// Events returns the event emitter
+func (l *ModuleLoader) Events() *EventEmitter {
+	return l.events
 }
