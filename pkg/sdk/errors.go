@@ -1,6 +1,7 @@
 package sdk
 
 import (
+	"errors"
 	"fmt"
 
 	"memex/pkg/sdk/types"
@@ -54,25 +55,25 @@ func WithMeta(resp types.Response, meta interface{}) types.Response {
 
 // IsNotFound checks if an error is a not found error
 func IsNotFound(err error) bool {
-	return err == ErrNotFound || fmt.Errorf("%w", err) == ErrNotFound
+	return errors.Is(err, ErrNotFound)
 }
 
 // IsUnauthorized checks if an error is an unauthorized error
 func IsUnauthorized(err error) bool {
-	return err == ErrUnauthorized || fmt.Errorf("%w", err) == ErrUnauthorized
+	return errors.Is(err, ErrUnauthorized)
 }
 
 // IsInvalidInput checks if an error is an invalid input error
 func IsInvalidInput(err error) bool {
-	return err == ErrInvalidInput || fmt.Errorf("%w", err) == ErrInvalidInput
+	return errors.Is(err, ErrInvalidInput)
 }
 
 // IsNotSupported checks if an error is a not supported error
 func IsNotSupported(err error) bool {
-	return err == ErrNotSupported || fmt.Errorf("%w", err) == ErrNotSupported
+	return errors.Is(err, ErrNotSupported)
 }
 
 // IsNotInitialized checks if an error is a not initialized error
 func IsNotInitialized(err error) bool {
-	return err == ErrNotInitalized || fmt.Errorf("%w", err) == ErrNotInitalized
+	return errors.Is(err, ErrNotInitalized)
 }
