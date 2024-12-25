@@ -1,9 +1,10 @@
-package sdk
+package test
 
 import (
 	"fmt"
 	"testing"
 
+	"memex/pkg/sdk"
 	"memex/pkg/sdk/types"
 )
 
@@ -18,7 +19,7 @@ func TestErrorResponses(t *testing.T) {
 		{
 			name: "error response",
 			makeResp: func() types.Response {
-				return ErrorResponse(fmt.Errorf("test error"))
+				return sdk.ErrorResponse(fmt.Errorf("test error"))
 			},
 			wantStatus:  types.StatusError,
 			wantError:   "test error",
@@ -27,7 +28,7 @@ func TestErrorResponses(t *testing.T) {
 		{
 			name: "success response",
 			makeResp: func() types.Response {
-				return SuccessResponse("test data")
+				return sdk.SuccessResponse("test data")
 			},
 			wantStatus:  types.StatusSuccess,
 			wantError:   "",
@@ -36,7 +37,7 @@ func TestErrorResponses(t *testing.T) {
 		{
 			name: "not found response",
 			makeResp: func() types.Response {
-				return NotFoundResponse("test item")
+				return sdk.NotFoundResponse("test item")
 			},
 			wantStatus:  types.StatusError,
 			wantError:   "not found: test item",
@@ -45,7 +46,7 @@ func TestErrorResponses(t *testing.T) {
 		{
 			name: "invalid input response",
 			makeResp: func() types.Response {
-				return InvalidInputResponse("missing field")
+				return sdk.InvalidInputResponse("missing field")
 			},
 			wantStatus:  types.StatusError,
 			wantError:   "invalid input: missing field",
@@ -54,7 +55,7 @@ func TestErrorResponses(t *testing.T) {
 		{
 			name: "not supported response",
 			makeResp: func() types.Response {
-				return NotSupportedResponse("test operation")
+				return sdk.NotSupportedResponse("test operation")
 			},
 			wantStatus:  types.StatusError,
 			wantError:   "not supported: test operation",
@@ -88,38 +89,38 @@ func TestErrorChecking(t *testing.T) {
 	}{
 		{
 			name:      "not found error",
-			err:       fmt.Errorf("%w: test", ErrNotFound),
-			check:     IsNotFound,
+			err:       fmt.Errorf("%w: test", sdk.ErrNotFound),
+			check:     sdk.IsNotFound,
 			wantMatch: true,
 		},
 		{
 			name:      "unauthorized error",
-			err:       fmt.Errorf("%w: test", ErrUnauthorized),
-			check:     IsUnauthorized,
+			err:       fmt.Errorf("%w: test", sdk.ErrUnauthorized),
+			check:     sdk.IsUnauthorized,
 			wantMatch: true,
 		},
 		{
 			name:      "invalid input error",
-			err:       fmt.Errorf("%w: test", ErrInvalidInput),
-			check:     IsInvalidInput,
+			err:       fmt.Errorf("%w: test", sdk.ErrInvalidInput),
+			check:     sdk.IsInvalidInput,
 			wantMatch: true,
 		},
 		{
 			name:      "not supported error",
-			err:       fmt.Errorf("%w: test", ErrNotSupported),
-			check:     IsNotSupported,
+			err:       fmt.Errorf("%w: test", sdk.ErrNotSupported),
+			check:     sdk.IsNotSupported,
 			wantMatch: true,
 		},
 		{
 			name:      "not initialized error",
-			err:       fmt.Errorf("%w: test", ErrNotInitalized),
-			check:     IsNotInitialized,
+			err:       fmt.Errorf("%w: test", sdk.ErrNotInitalized),
+			check:     sdk.IsNotInitialized,
 			wantMatch: true,
 		},
 		{
 			name:      "different error",
 			err:       fmt.Errorf("some other error"),
-			check:     IsNotFound,
+			check:     sdk.IsNotFound,
 			wantMatch: false,
 		},
 	}

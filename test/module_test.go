@@ -1,8 +1,9 @@
-package sdk
+package test
 
 import (
 	"testing"
 
+	"memex/pkg/sdk"
 	"memex/pkg/sdk/types"
 )
 
@@ -29,7 +30,7 @@ func TestNewBaseModule(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			m := NewBaseModule(tt.id, tt.moduleName, tt.description)
+			m := sdk.NewBaseModule(tt.id, tt.moduleName, tt.description)
 
 			if m.ID() != tt.id {
 				t.Errorf("ID() = %v, want %v", m.ID(), tt.id)
@@ -57,16 +58,16 @@ func TestModuleHooks(t *testing.T) {
 		shutdownCalled bool
 	)
 
-	m := NewBaseModule("test", "Test", "Test Module",
-		WithInitHook(func(r types.Repository) error {
+	m := sdk.NewBaseModule("test", "Test", "Test Module",
+		sdk.WithInitHook(func(r types.Repository) error {
 			initCalled = true
 			return nil
 		}),
-		WithCommandHook(func(cmd string, args []string) error {
+		sdk.WithCommandHook(func(cmd string, args []string) error {
 			commandCalled = true
 			return nil
 		}),
-		WithShutdownHook(func() error {
+		sdk.WithShutdownHook(func() error {
 			shutdownCalled = true
 			return nil
 		}),
@@ -98,7 +99,7 @@ func TestModuleHooks(t *testing.T) {
 }
 
 func TestHandleCommand(t *testing.T) {
-	m := NewBaseModule("test", "Test", "Test Module")
+	m := sdk.NewBaseModule("test", "Test", "Test Module")
 
 	tests := []struct {
 		name      string
