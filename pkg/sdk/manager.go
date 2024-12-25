@@ -7,11 +7,11 @@ import (
 	"memex/pkg/sdk/types"
 )
 
-// Manager handles module operations
+// Manager handles module registration and lifecycle
 type Manager struct {
-	mu      sync.RWMutex
 	modules map[string]types.Module
 	repo    types.Repository
+	mu      sync.RWMutex
 }
 
 // NewManager creates a new module manager
@@ -22,35 +22,31 @@ func NewManager() *Manager {
 }
 
 // RegisterModule registers a module with the manager
-func (m *Manager) RegisterModule(module types.Module) error {
+func (m *Manager) RegisterModule(mod types.Module) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if _, exists := m.modules[module.ID()]; exists {
-		return fmt.Errorf("module already registered: %s", module.ID())
+	if mod == nil {
+		return fmt.Errorf("%w: module is nil", ErrInvalidInput)
+	}
+
+	id := mod.ID()
+	if id == "" {
+		return fmt.Errorf("%w: module ID is required", ErrInvalidInput)
+	}
+
+	if _, exists := m.modules[id]; exists {
+		return fmt.Errorf("%w: module %s already registered", ErrInvalidInput, id)
 	}
 
 	// Initialize module if repository is set
 	if m.repo != nil {
-		if err := module.Init(m.repo); err != nil {
-			return fmt.Errorf("initializing module: %w", err)
+		if err := mod.Init(m.repo); err != nil {
+			return fmt.Errorf("initializing module %s: %w", id, err)
 		}
 	}
 
-	m.modules[module.ID()] = module
-	return nil
-}
-
-// UnregisterModule removes a module from the manager
-func (m *Manager) UnregisterModule(moduleID string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if _, exists := m.modules[moduleID]; !exists {
-		return fmt.Errorf("module not found: %s", moduleID)
-	}
-
-	delete(m.modules, moduleID)
+	m.modules[id] = mod
 	return nil
 }
 
@@ -59,8 +55,8 @@ func (m *Manager) GetModule(id string) (types.Module, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	module, exists := m.modules[id]
-	return module, exists
+	mod, exists := m.modules[id]
+	return mod, exists
 }
 
 // ListModules returns all registered modules
@@ -68,11 +64,11 @@ func (m *Manager) ListModules() []types.Module {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	modules := make([]types.Module, 0, len(m.modules))
-	for _, module := range m.modules {
-		modules = append(modules, module)
+	mods := make([]types.Module, 0, len(m.modules))
+	for _, mod := range m.modules {
+		mods = append(mods, mod)
 	}
-	return modules
+	return mods
 }
 
 // SetRepository sets the repository for all modules
@@ -80,34 +76,47 @@ func (m *Manager) SetRepository(repo types.Repository) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	m.repo = repo
+	if repo == nil {
+		return fmt.Errorf("%w: repository is nil", ErrInvalidInput)
+	}
 
 	// Initialize all modules with repository
-	for _, module := range m.modules {
-		if err := module.Init(repo); err != nil {
-			return fmt.Errorf("initializing module %s: %w", module.ID(), err)
+	for id, mod := range m.modules {
+		if err := mod.Init(repo); err != nil {
+			return fmt.Errorf("initializing module %s: %w", id, err)
 		}
 	}
 
+	m.repo = repo
 	return nil
 }
 
-// HandleCommand handles a module command
+// HandleCommand routes a command to the appropriate module
 func (m *Manager) HandleCommand(moduleID string, cmd string, args []string) error {
-	module, exists := m.GetModule(moduleID)
+	m.mu.RLock()
+	mod, exists := m.modules[moduleID]
+	m.mu.RUnlock()
+
 	if !exists {
-		return fmt.Errorf("module not found: %s", moduleID)
+		return fmt.Errorf("%w: module %s", ErrNotFound, moduleID)
 	}
 
-	return module.HandleCommand(cmd, args)
+	return mod.HandleCommand(cmd, args)
 }
 
-// GetModuleCommands returns available commands for a module
-func (m *Manager) GetModuleCommands(moduleID string) ([]types.Command, error) {
-	module, exists := m.GetModule(moduleID)
-	if !exists {
-		return nil, fmt.Errorf("module not found: %s", moduleID)
+// Shutdown shuts down all modules
+func (m *Manager) Shutdown() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	var lastErr error
+	for id, mod := range m.modules {
+		if shutdowner, ok := mod.(interface{ Shutdown() error }); ok {
+			if err := shutdowner.Shutdown(); err != nil {
+				lastErr = fmt.Errorf("shutting down module %s: %w", id, err)
+			}
+		}
 	}
 
-	return module.Commands(), nil
+	return lastErr
 }
