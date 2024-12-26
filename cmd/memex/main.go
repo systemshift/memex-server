@@ -55,6 +55,10 @@ func main() {
 	merge := importFlags.Bool("merge", false, "Merge with existing content")
 	prefix := importFlags.String("prefix", "", "Add prefix to imported node IDs")
 
+	// Module install flags
+	moduleInstallFlags := flag.NewFlagSet("module install", flag.ExitOnError)
+	devMode := moduleInstallFlags.Bool("dev", false, "Install module in development mode")
+
 	flag.Usage = usage
 	flag.Parse()
 
@@ -179,13 +183,33 @@ func main() {
 		err = cmds.Import(args[0], opts)
 
 	case "module":
-		if len(args) > 0 && args[0] == "help" {
+		if len(args) < 1 {
+			usage()
+		}
+
+		switch args[0] {
+		case "help":
 			if len(args) < 2 {
 				usage()
 			}
 			// Show module help
 			err = cmds.ModuleHelp(args[1])
-		} else {
+
+		case "install":
+			if len(args) < 2 {
+				usage()
+			}
+			// Parse install flags
+			moduleInstallFlags.Parse(args[1:])
+			remainingArgs := moduleInstallFlags.Args()
+			if len(remainingArgs) < 1 {
+				usage()
+			}
+
+			// Install module
+			err = cmds.Module(append([]string{"install", "--dev=" + fmt.Sprint(*devMode)}, remainingArgs...)...)
+
+		default:
 			// Handle other module commands
 			err = cmds.Module(args...)
 		}
