@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"memex/pkg/sdk"
-	"memex/pkg/sdk/types"
+	"memex/pkg/types"
 )
 
 func TestNewBaseModule(t *testing.T) {
@@ -109,13 +109,13 @@ func TestHandleCommand(t *testing.T) {
 	}{
 		{
 			name:      "built-in id command",
-			cmd:       "id",
+			cmd:       types.CmdID,
 			args:      nil,
 			wantError: false,
 		},
 		{
 			name:      "built-in help command",
-			cmd:       "help",
+			cmd:       types.CmdHelp,
 			args:      nil,
 			wantError: false,
 		},

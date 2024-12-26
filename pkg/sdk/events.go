@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"memex/pkg/sdk/types"
+	"memex/pkg/types"
 )
 
 // EventType represents different types of module events

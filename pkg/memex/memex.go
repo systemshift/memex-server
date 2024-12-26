@@ -5,6 +5,7 @@ import (
 
 	"memex/internal/memex/core"
 	"memex/internal/memex/repository"
+	"memex/pkg/types"
 )
 
 // Memex represents a memex instance
@@ -107,18 +108,39 @@ func (m *Memex) GetContent(id string) ([]byte, error) {
 // Module operations
 
 // RegisterModule registers a new module
-func (m *Memex) RegisterModule(module core.Module) error {
-	return m.repo.RegisterModule(module)
+func (m *Memex) RegisterModule(module types.Module) error {
+	if r, ok := m.repo.(*repository.Repository); ok {
+		moduleRepo := r.AsModuleRepository()
+		return moduleRepo.RegisterModule(module)
+	}
+	return m.repo.RegisterModule(repository.NewReverseModuleAdapter(module))
 }
 
 // GetModule returns a module by ID
-func (m *Memex) GetModule(id string) (core.Module, bool) {
-	return m.repo.GetModule(id)
+func (m *Memex) GetModule(id string) (types.Module, bool) {
+	if r, ok := m.repo.(*repository.Repository); ok {
+		moduleRepo := r.AsModuleRepository()
+		return moduleRepo.GetModule(id)
+	}
+	mod, exists := m.repo.GetModule(id)
+	if !exists {
+		return nil, false
+	}
+	return repository.NewModuleAdapter(mod), true
 }
 
 // ListModules returns all registered modules
-func (m *Memex) ListModules() []core.Module {
-	return m.repo.ListModules()
+func (m *Memex) ListModules() []types.Module {
+	if r, ok := m.repo.(*repository.Repository); ok {
+		moduleRepo := r.AsModuleRepository()
+		return moduleRepo.ListModules()
+	}
+	coreMods := m.repo.ListModules()
+	typeMods := make([]types.Module, len(coreMods))
+	for i, mod := range coreMods {
+		typeMods[i] = repository.NewModuleAdapter(mod)
+	}
+	return typeMods
 }
 
 // QueryNodesByModule returns all nodes created by a module

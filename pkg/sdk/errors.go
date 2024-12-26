@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 
-	"memex/pkg/sdk/types"
+	"memex/pkg/types"
 )
 
 // Common error types

@@ -1,6 +1,6 @@
 package sdk
 
-import "memex/pkg/sdk/types"
+import "memex/pkg/types"
 
 // CommandBuilder helps build commands with a fluent interface
 type CommandBuilder struct {

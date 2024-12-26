@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"io"
 
-	"memex/pkg/sdk/types"
+	"memex/pkg/types"
 )
 
 // ReadInput reads and parses input from a reader

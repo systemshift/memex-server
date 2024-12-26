@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sync"
 
-	"memex/pkg/sdk/types"
+	"memex/pkg/types"
 )
 
 // Manager handles module registration and lifecycle

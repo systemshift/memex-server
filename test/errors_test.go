@@ -5,14 +5,14 @@ import (
 	"testing"
 
 	"memex/pkg/sdk"
-	"memex/pkg/sdk/types"
+	"memex/pkg/types"
 )
 
 func TestErrorResponses(t *testing.T) {
 	tests := []struct {
 		name        string
 		makeResp    func() types.Response
-		wantStatus  types.Status
+		wantStatus  types.ResponseStatus
 		wantError   string
 		wantSuccess bool
 	}{

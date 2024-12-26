@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"memex/pkg/sdk"
-	"memex/pkg/sdk/types"
+	"memex/pkg/types"
 )
 
 func TestModuleDiscovery(t *testing.T) {

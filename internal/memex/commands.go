@@ -10,6 +10,7 @@ import (
 	"memex/internal/memex/core"
 	"memex/internal/memex/migration"
 	"memex/internal/memex/repository"
+	"memex/pkg/types"
 )
 
 var (
@@ -59,6 +60,54 @@ func ModuleCommand(args ...string) error {
 				}
 			}
 		}
+		return nil
+
+	case "install":
+		if len(args) < 2 {
+			return fmt.Errorf("install requires module path")
+		}
+
+		// Check for --dev flag
+		var devMode bool
+		var modulePath string
+		if strings.HasPrefix(args[1], "--dev=") {
+			devValue := strings.TrimPrefix(args[1], "--dev=")
+			devMode = devValue == "true"
+			if len(args) < 3 {
+				return fmt.Errorf("install requires module path")
+			}
+			modulePath = args[2]
+		} else {
+			modulePath = args[1]
+		}
+
+		// Get module ID from path
+		moduleID := filepath.Base(modulePath)
+		moduleID = strings.TrimSuffix(moduleID, filepath.Ext(moduleID))
+
+		// Convert to module repository
+		var moduleRepo types.ModuleRepository
+		if r, ok := repo.(*repository.Repository); ok {
+			moduleRepo = r.AsModuleRepository()
+		} else if mr, ok := repo.(types.ModuleRepository); ok {
+			moduleRepo = mr
+		} else {
+			return fmt.Errorf("repository does not support module operations")
+		}
+
+		// Add module path
+		if devMode {
+			moduleRepo.GetLoader().AddDevPath(moduleID, modulePath)
+		} else {
+			moduleRepo.GetLoader().AddPath(modulePath)
+		}
+
+		// Discover and load modules
+		if err := moduleRepo.GetDiscovery().DiscoverModules(); err != nil {
+			return fmt.Errorf("discovering modules: %w", err)
+		}
+
+		fmt.Printf("Module %s installed successfully\n", moduleID)
 		return nil
 
 	default:

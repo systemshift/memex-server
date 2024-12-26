@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"memex/pkg/sdk"
-	"memex/pkg/sdk/types"
+	"memex/pkg/types"
 )
 
 func TestCommandBuilder(t *testing.T) {

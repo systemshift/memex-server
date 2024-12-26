@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"memex/pkg/sdk"
-	"memex/pkg/sdk/types"
+	"memex/pkg/types"
 )
 
 func TestModuleLoader(t *testing.T) {
@@ -71,6 +71,10 @@ func TestModuleLoader(t *testing.T) {
 
 	// Test unloading all
 	t.Run("unload all", func(t *testing.T) {
+		// Create new manager and loader for this test
+		mgr := sdk.NewManager()
+		loader := sdk.NewModuleLoader(mgr)
+
 		// Load multiple modules
 		if err := loader.LoadModules(mods); err != nil {
 			t.Errorf("LoadModules() error = %v", err)
@@ -98,17 +102,6 @@ func TestModuleLoader(t *testing.T) {
 		// Add duplicate path
 		loader.AddPath("test/modules")
 	})
-}
-
-// Test shutdown handling
-type mockShutdownModule struct {
-	mockModule
-	shutdownCalled bool
-}
-
-func (m *mockShutdownModule) Shutdown() error {
-	m.shutdownCalled = true
-	return nil
 }
 
 func TestModuleShutdown(t *testing.T) {

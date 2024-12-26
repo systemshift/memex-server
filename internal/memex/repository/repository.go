@@ -14,6 +14,8 @@ import (
 	"memex/internal/memex/storage/rabin"
 	"memex/internal/memex/storage/store"
 	"memex/internal/memex/transaction"
+	"memex/pkg/sdk"
+	"memex/pkg/types"
 )
 
 // Magic number for .mx files
@@ -34,13 +36,15 @@ type Header struct {
 
 // Repository represents a content repository
 type Repository struct {
-	path    string
-	file    *os.File
-	header  Header
-	store   *store.ChunkStore
-	txStore *transaction.ActionStore
-	lockMgr sync.Mutex
-	modules map[string]core.Module
+	path      string
+	file      *os.File
+	header    Header
+	store     *store.ChunkStore
+	txStore   *transaction.ActionStore
+	lockMgr   sync.Mutex
+	modules   map[string]core.Module
+	loader    *sdk.ModuleLoader
+	discovery *sdk.ModuleDiscovery
 }
 
 // Ensure Repository implements required interfaces
@@ -48,6 +52,11 @@ var (
 	_ transaction.Storage = (*Repository)(nil)
 	_ core.Repository     = (*Repository)(nil)
 )
+
+// AsModuleRepository returns the repository as a types.ModuleRepository
+func (r *Repository) AsModuleRepository() types.ModuleRepository {
+	return NewRepositoryAdapter(r)
+}
 
 // Create creates a new repository at the given path
 func Create(path string) (*Repository, error) {
@@ -81,6 +90,11 @@ func Create(path string) (*Repository, error) {
 		header:  header,
 		modules: make(map[string]core.Module),
 	}
+
+	// Create module manager
+	mgr := sdk.NewManager()
+	repo.loader = sdk.NewModuleLoader(mgr)
+	repo.discovery = sdk.NewModuleDiscovery(repo.loader)
 
 	// Create transaction store
 	txStore, err := transaction.NewActionStore(repo)
@@ -133,6 +147,11 @@ func Open(path string) (*Repository, error) {
 		modules: make(map[string]core.Module),
 	}
 
+	// Create module manager
+	mgr := sdk.NewManager()
+	repo.loader = sdk.NewModuleLoader(mgr)
+	repo.discovery = sdk.NewModuleDiscovery(repo.loader)
+
 	// Create transaction store
 	txStore, err := transaction.NewActionStore(repo)
 	if err != nil {
@@ -172,17 +191,17 @@ func (r *Repository) GetLockManager() interface{} {
 
 // Module operations
 
+func (r *Repository) GetModule(id string) (core.Module, bool) {
+	module, exists := r.modules[id]
+	return module, exists
+}
+
 func (r *Repository) RegisterModule(module core.Module) error {
 	if _, exists := r.modules[module.ID()]; exists {
 		return fmt.Errorf("module already registered: %s", module.ID())
 	}
 	r.modules[module.ID()] = module
 	return nil
-}
-
-func (r *Repository) GetModule(id string) (core.Module, bool) {
-	module, exists := r.modules[id]
-	return module, exists
 }
 
 func (r *Repository) ListModules() []core.Module {

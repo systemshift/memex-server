@@ -3,7 +3,7 @@ package sdk
 import (
 	"fmt"
 
-	"memex/pkg/sdk/types"
+	"memex/pkg/types"
 )
 
 // ModuleOption is a function that configures a BaseModule

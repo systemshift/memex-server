@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"memex/pkg/sdk/types"
+	"memex/pkg/types"
 )
 
 // ModuleLoader handles module discovery and loading

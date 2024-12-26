@@ -1,36 +1,10 @@
 package test
 
 import (
-	"fmt"
 	"testing"
 
 	"memex/pkg/sdk"
-	"memex/pkg/sdk/types"
 )
-
-type mockModule struct {
-	id          string
-	name        string
-	description string
-	initCalled  bool
-	commands    []types.Command
-	lastCommand string
-	lastArgs    []string
-}
-
-func (m *mockModule) ID() string                { return m.id }
-func (m *mockModule) Name() string              { return m.name }
-func (m *mockModule) Description() string       { return m.description }
-func (m *mockModule) Commands() []types.Command { return m.commands }
-func (m *mockModule) Init(repo types.Repository) error {
-	m.initCalled = true
-	return nil
-}
-func (m *mockModule) HandleCommand(cmd string, args []string) error {
-	m.lastCommand = cmd
-	m.lastArgs = args
-	return nil
-}
 
 func TestModuleManager(t *testing.T) {
 	// Create test modules
@@ -108,7 +82,7 @@ func TestModuleManager(t *testing.T) {
 	// Test repository integration
 	t.Run("repository", func(t *testing.T) {
 		// Set repository
-		mockRepo := &mockRepository{}
+		mockRepo := newMockRepository()
 		if err := mgr.SetRepository(mockRepo); err != nil {
 			t.Errorf("SetRepository() error = %v", err)
 		}
@@ -126,39 +100,4 @@ func TestModuleManager(t *testing.T) {
 			t.Error("SetRepository() should error on nil repository")
 		}
 	})
-}
-
-// Mock repository for testing
-type mockRepository struct{}
-
-func (r *mockRepository) AddNode(content []byte, nodeType string, meta map[string]interface{}) (string, error) {
-	return "test-id", nil
-}
-
-func (r *mockRepository) GetNode(id string) (*types.Node, error) {
-	return nil, fmt.Errorf("not found")
-}
-
-func (r *mockRepository) DeleteNode(id string) error {
-	return nil
-}
-
-func (r *mockRepository) AddLink(source, target, linkType string, meta map[string]interface{}) error {
-	return nil
-}
-
-func (r *mockRepository) GetLinks(nodeID string) ([]*types.Link, error) {
-	return nil, nil
-}
-
-func (r *mockRepository) DeleteLink(source, target, linkType string) error {
-	return nil
-}
-
-func (r *mockRepository) QueryNodes(query types.Query) ([]*types.Node, error) {
-	return nil, nil
-}
-
-func (r *mockRepository) QueryLinks(query types.Query) ([]*types.Link, error) {
-	return nil, nil
 }

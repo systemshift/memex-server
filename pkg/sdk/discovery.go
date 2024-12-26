@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"plugin"
 
-	"memex/pkg/sdk/types"
+	"memex/pkg/types"
 )
 
 // ModuleDiscovery handles module discovery and validation
