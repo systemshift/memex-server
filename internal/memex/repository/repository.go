@@ -14,7 +14,6 @@ import (
 	"memex/internal/memex/storage/rabin"
 	"memex/internal/memex/storage/store"
 	"memex/internal/memex/transaction"
-	"memex/pkg/sdk"
 	"memex/pkg/types"
 )
 
@@ -36,15 +35,13 @@ type Header struct {
 
 // Repository represents a content repository
 type Repository struct {
-	path      string
-	file      *os.File
-	header    Header
-	store     *store.ChunkStore
-	txStore   *transaction.ActionStore
-	lockMgr   sync.Mutex
-	modules   map[string]core.Module
-	loader    *sdk.ModuleLoader
-	discovery *sdk.ModuleDiscovery
+	path    string
+	file    *os.File
+	header  Header
+	store   *store.ChunkStore
+	txStore *transaction.ActionStore
+	lockMgr sync.Mutex
+	modules map[string]core.Module
 }
 
 // Ensure Repository implements required interfaces
@@ -90,11 +87,6 @@ func Create(path string) (*Repository, error) {
 		header:  header,
 		modules: make(map[string]core.Module),
 	}
-
-	// Create module manager
-	mgr := sdk.NewManager()
-	repo.loader = sdk.NewModuleLoader(mgr)
-	repo.discovery = sdk.NewModuleDiscovery(repo.loader)
 
 	// Create transaction store
 	txStore, err := transaction.NewActionStore(repo)
@@ -146,11 +138,6 @@ func Open(path string) (*Repository, error) {
 		header:  header,
 		modules: make(map[string]core.Module),
 	}
-
-	// Create module manager
-	mgr := sdk.NewManager()
-	repo.loader = sdk.NewModuleLoader(mgr)
-	repo.discovery = sdk.NewModuleDiscovery(repo.loader)
 
 	// Create transaction store
 	txStore, err := transaction.NewActionStore(repo)

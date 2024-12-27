@@ -3,6 +3,7 @@ package memex
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -10,7 +11,6 @@ import (
 	"memex/internal/memex/core"
 	"memex/internal/memex/migration"
 	"memex/internal/memex/repository"
-	"memex/pkg/types"
 )
 
 var (
@@ -62,52 +62,52 @@ func ModuleCommand(args ...string) error {
 		}
 		return nil
 
-	case "install":
+	case "add":
 		if len(args) < 2 {
-			return fmt.Errorf("install requires module path")
+			return fmt.Errorf("add requires module path")
 		}
 
-		// Check for --dev flag
-		var devMode bool
-		var modulePath string
-		if strings.HasPrefix(args[1], "--dev=") {
-			devValue := strings.TrimPrefix(args[1], "--dev=")
-			devMode = devValue == "true"
-			if len(args) < 3 {
-				return fmt.Errorf("install requires module path")
-			}
-			modulePath = args[2]
-		} else {
-			modulePath = args[1]
+		// Run go get
+		cmd := exec.Command("go", "get", args[1])
+		cmd.Dir = filepath.Dir(repoPath)
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("installing module: %w", err)
 		}
 
-		// Get module ID from path
-		moduleID := filepath.Base(modulePath)
-		moduleID = strings.TrimSuffix(moduleID, filepath.Ext(moduleID))
+		fmt.Printf("Module %s added successfully\n", args[1])
+		return nil
 
-		// Convert to module repository
-		var moduleRepo types.ModuleRepository
-		if r, ok := repo.(*repository.Repository); ok {
-			moduleRepo = r.AsModuleRepository()
-		} else if mr, ok := repo.(types.ModuleRepository); ok {
-			moduleRepo = mr
-		} else {
-			return fmt.Errorf("repository does not support module operations")
+	case "update":
+		// Run go get -u
+		cmd := exec.Command("go", "get", "-u", "./...")
+		cmd.Dir = filepath.Dir(repoPath)
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("updating modules: %w", err)
 		}
 
-		// Add module path
-		if devMode {
-			moduleRepo.GetLoader().AddDevPath(moduleID, modulePath)
-		} else {
-			moduleRepo.GetLoader().AddPath(modulePath)
+		fmt.Println("Modules updated successfully")
+		return nil
+
+	case "remove":
+		if len(args) < 2 {
+			return fmt.Errorf("remove requires module name")
 		}
 
-		// Discover and load modules
-		if err := moduleRepo.GetDiscovery().DiscoverModules(); err != nil {
-			return fmt.Errorf("discovering modules: %w", err)
+		// Run go mod edit to remove module
+		cmd := exec.Command("go", "mod", "edit", "-droprequire", args[1])
+		cmd.Dir = filepath.Dir(repoPath)
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("removing module: %w", err)
 		}
 
-		fmt.Printf("Module %s installed successfully\n", moduleID)
+		// Run go mod tidy
+		cmd = exec.Command("go", "mod", "tidy")
+		cmd.Dir = filepath.Dir(repoPath)
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("tidying modules: %w", err)
+		}
+
+		fmt.Printf("Module %s removed successfully\n", args[1])
 		return nil
 
 	default:
