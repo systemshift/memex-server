@@ -12,6 +12,7 @@ Memex is a graph-oriented data management tool.
 - **Content-Addressable**: All content stored and referenced by hash for integrity and deduplication
 - **Flexible Linking**: Create typed, directional relationships between content
 - **Transaction System**: Cryptographic verification of all graph modifications with hash chain
+- **Module System**: Extend functionality through Go packages
 - **Dual Interface**: Use either CLI tool or web interface
 - **Single File Storage**: All data contained in one .mx file for easy backup and portability
 
@@ -56,6 +57,12 @@ memex delete <id>
 
 # Verify transaction history
 memex verify
+
+# List installed modules
+memex module list
+
+# Run a module command
+memex <module-id> <command> [args...]
 ```
 
 ### Web Interface
@@ -72,6 +79,7 @@ Then visit `http://localhost:3000` to access the web interface, which provides:
 - Content search
 - Node metadata viewing
 - Transaction history viewing
+- Module management
 
 ## Project Structure
 
@@ -82,14 +90,14 @@ Then visit `http://localhost:3000` to access the web interface, which provides:
 │   └── memexd/            # Web server
 ├── internal/              # Internal packages
 │   └── memex/
-│       ├── core/          # Core types
+│       ├── core/          # Core types and interfaces
 │       ├── storage/       # Storage implementation
 │       ├── transaction/   # Transaction system
 │       ├── commands.go    # CLI commands
 │       ├── config.go      # Configuration
 │       └── editor.go      # Text editor
 ├── pkg/                   # Public API
-│   └── memex/            # Client library
+│   └── module/           # Module system
 ├── test/                  # Test files
 └── docs/                  # Documentation
 ```
@@ -121,6 +129,15 @@ Then visit `http://localhost:3000` to access the web interface, which provides:
 - Typed links (e.g., "references", "relates-to")
 - Optional metadata/notes on links
 - Maintains acyclic property
+
+### Module System
+
+- Extend functionality through Go packages
+- Standard interface for all modules
+- Built-in base implementation
+- Repository operations (nodes, links)
+- Command system integration
+- Metadata support for module data
 
 ### Content Storage
 
@@ -155,6 +172,27 @@ go build ./...
 go test ./...
 ```
 
+### Creating Modules
+
+See [Module Guide](docs/MODULE.md) for detailed instructions on creating modules.
+
+Quick example:
+```go
+package myplugin
+
+import "memex/pkg/module"
+
+type MyModule struct {
+    *module.Base
+}
+
+func New() module.Module {
+    return &MyModule{
+        Base: module.NewBase("mymodule", "My Module", "Description"),
+    }
+}
+```
+
 ### Testing
 
 ```bash
@@ -173,6 +211,7 @@ go test ./internal/memex/storage/...
 - [API Documentation](docs/API.md): HTTP API endpoints and usage
 - [Design Document](docs/DESIGN.md): Architecture and design decisions
 - [Development Guide](docs/DEVELOPMENT.md): Setup and contribution guidelines
+- [Module Guide](docs/MODULE.md): Creating and using modules
 - [Storage Implementation](docs/STORAGE.md): Detailed explanation of the storage system
 - [Transaction System](docs/TRANSACTION.md): Graph modification tracking and verification
 - [Migration Guide](docs/MIGRATION.md): Graph import/export and content migration
@@ -201,6 +240,7 @@ go test ./internal/memex/storage/...
 - Transaction branching and merging
 - Distributed verification
 - Time travel through graph history
+- Additional module types
 
 ## License
 
