@@ -1,8 +1,7 @@
-# Binaries for programs and plugins
+# Binaries for programs
 *.exe
 *.exe~
 *.dll
-*.so
 *.dylib
 /bin/
 
