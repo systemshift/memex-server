@@ -1,6 +1,9 @@
 package types
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 // Node represents a node in the graph
 type Node struct {
@@ -71,28 +74,100 @@ type Repository interface {
 	Close() error
 }
 
-// ModuleRepository extends the Repository interface with module management capabilities
-type ModuleRepository interface {
-	Repository
+// Common command names
+const (
+	CmdID          = "id"
+	CmdName        = "name"
+	CmdDescription = "description"
+	CmdHelp        = "help"
+)
 
-	// Module management
-	GetLoader() ModuleLoader
-	GetDiscovery() ModuleDiscovery
+// BaseModule provides a basic implementation of Module interface
+type BaseModule struct {
+	id          string
+	name        string
+	description string
+	repo        Repository
+	commands    []Command
 }
 
-// ModuleLoader defines the interface for module loading
-type ModuleLoader interface {
-	AddPath(path string)
-	AddDevPath(moduleID, path string)
-	LoadModule(id string, mod Module) error
-	UnloadModule(id string) error
-	UnloadAll() error
-	IsDevModule(moduleID string) bool
-	GetDevPath(moduleID string) (string, bool)
+// NewBaseModule creates a new base module
+func NewBaseModule(id, name, description string) *BaseModule {
+	return &BaseModule{
+		id:          id,
+		name:        name,
+		description: description,
+		commands:    make([]Command, 0),
+	}
 }
 
-// ModuleDiscovery defines the interface for module discovery
-type ModuleDiscovery interface {
-	DiscoverModules() error
-	ValidateModule(mod Module) error
+// ID returns the module identifier
+func (m *BaseModule) ID() string {
+	return m.id
+}
+
+// Name returns the module name
+func (m *BaseModule) Name() string {
+	return m.name
+}
+
+// Description returns the module description
+func (m *BaseModule) Description() string {
+	return m.description
+}
+
+// Init initializes the module with a repository
+func (m *BaseModule) Init(repo Repository) error {
+	m.repo = repo
+	return nil
+}
+
+// Commands returns the list of available commands
+func (m *BaseModule) Commands() []Command {
+	baseCommands := []Command{
+		{
+			Name:        CmdID,
+			Description: "Get module ID",
+		},
+		{
+			Name:        CmdName,
+			Description: "Get module name",
+		},
+		{
+			Name:        CmdDescription,
+			Description: "Get module description",
+		},
+		{
+			Name:        CmdHelp,
+			Description: "Get command help",
+		},
+	}
+	return append(baseCommands, m.commands...)
+}
+
+// AddCommand adds a command to the module
+func (m *BaseModule) AddCommand(cmd Command) {
+	m.commands = append(m.commands, cmd)
+}
+
+// Helper functions for repository operations
+func (m *BaseModule) AddNode(content []byte, nodeType string, meta map[string]interface{}) (string, error) {
+	if m.repo == nil {
+		return "", fmt.Errorf("module not initialized")
+	}
+	return m.repo.AddNode(content, nodeType, meta)
+}
+
+func (m *BaseModule) GetNode(id string) (*Node, error) {
+	if m.repo == nil {
+		return nil, fmt.Errorf("module not initialized")
+	}
+	return m.repo.GetNode(id)
+}
+
+func (m *BaseModule) AddLink(source, target, linkType string, meta map[string]interface{}) error {
+	if m.repo == nil {
+		return fmt.Errorf("module not initialized")
+	}
+	return m.repo.AddLink(source, target, linkType, meta)
 }
