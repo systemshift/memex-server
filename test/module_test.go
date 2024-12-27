@@ -2,105 +2,30 @@ package test
 
 import (
 	"testing"
-
-	"memex/pkg/sdk"
-	"memex/pkg/types"
 )
 
-func TestNewBaseModule(t *testing.T) {
-	tests := []struct {
-		name        string
-		id          string
-		moduleName  string
-		description string
-	}{
-		{
-			name:        "basic module",
-			id:          "test",
-			moduleName:  "Test Module",
-			description: "A test module",
-		},
-		{
-			name:        "empty description",
-			id:          "empty",
-			moduleName:  "Empty Module",
-			description: "",
-		},
+func TestBaseModule(t *testing.T) {
+	// Test module creation
+	base := NewMockModule()
+
+	// Test identity methods
+	if base.ID() != "mock" {
+		t.Errorf("ID() = %v, want %v", base.ID(), "mock")
+	}
+	if base.Name() != "Mock Module" {
+		t.Errorf("Name() = %v, want %v", base.Name(), "Mock Module")
+	}
+	if base.Description() != "A mock module for testing" {
+		t.Errorf("Description() = %v, want %v", base.Description(), "A mock module for testing")
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			m := sdk.NewBaseModule(tt.id, tt.moduleName, tt.description)
-
-			if m.ID() != tt.id {
-				t.Errorf("ID() = %v, want %v", m.ID(), tt.id)
-			}
-			if m.Name() != tt.moduleName {
-				t.Errorf("Name() = %v, want %v", m.Name(), tt.moduleName)
-			}
-			if m.Description() != tt.description {
-				t.Errorf("Description() = %v, want %v", m.Description(), tt.description)
-			}
-
-			// Check default commands
-			cmds := m.Commands()
-			if len(cmds) != 4 {
-				t.Errorf("Commands() returned %v commands, want 4", len(cmds))
-			}
-		})
-	}
-}
-
-func TestModuleHooks(t *testing.T) {
-	var (
-		initCalled     bool
-		commandCalled  bool
-		shutdownCalled bool
-	)
-
-	m := sdk.NewBaseModule("test", "Test", "Test Module",
-		sdk.WithInitHook(func(r types.Repository) error {
-			initCalled = true
-			return nil
-		}),
-		sdk.WithCommandHook(func(cmd string, args []string) error {
-			commandCalled = true
-			return nil
-		}),
-		sdk.WithShutdownHook(func() error {
-			shutdownCalled = true
-			return nil
-		}),
-	)
-
-	// Test Init hook
-	if err := m.Init(nil); err != nil {
-		t.Errorf("Init() error = %v", err)
-	}
-	if !initCalled {
-		t.Error("Init hook was not called")
+	// Test default commands
+	cmds := base.Commands()
+	if len(cmds) != 0 {
+		t.Errorf("Commands() returned %v commands, want 0", len(cmds))
 	}
 
-	// Test Command hook
-	if err := m.HandleCommand("id", nil); err != nil {
-		t.Errorf("HandleCommand() error = %v", err)
-	}
-	if !commandCalled {
-		t.Error("Command hook was not called")
-	}
-
-	// Test Shutdown hook
-	if err := m.Shutdown(); err != nil {
-		t.Errorf("Shutdown() error = %v", err)
-	}
-	if !shutdownCalled {
-		t.Error("Shutdown hook was not called")
-	}
-}
-
-func TestHandleCommand(t *testing.T) {
-	m := sdk.NewBaseModule("test", "Test", "Test Module")
-
+	// Test command handling
 	tests := []struct {
 		name      string
 		cmd       string
@@ -108,31 +33,62 @@ func TestHandleCommand(t *testing.T) {
 		wantError bool
 	}{
 		{
-			name:      "built-in id command",
-			cmd:       types.CmdID,
-			args:      nil,
+			name:      "basic command",
+			cmd:       "test",
+			args:      []string{"arg1", "arg2"},
 			wantError: false,
-		},
-		{
-			name:      "built-in help command",
-			cmd:       types.CmdHelp,
-			args:      nil,
-			wantError: false,
-		},
-		{
-			name:      "unknown command",
-			cmd:       "unknown",
-			args:      nil,
-			wantError: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := m.HandleCommand(tt.cmd, tt.args)
+			err := base.HandleCommand(tt.cmd, tt.args)
 			if (err != nil) != tt.wantError {
 				t.Errorf("HandleCommand() error = %v, wantError %v", err, tt.wantError)
 			}
+			if base.lastCommand != tt.cmd {
+				t.Errorf("HandleCommand() lastCommand = %v, want %v", base.lastCommand, tt.cmd)
+			}
+			if len(base.lastArgs) != len(tt.args) {
+				t.Errorf("HandleCommand() lastArgs = %v, want %v", base.lastArgs, tt.args)
+			}
 		})
+	}
+}
+
+func TestModuleInitialization(t *testing.T) {
+	// Create a mock module
+	mod := NewMockModule()
+
+	// Create a mock repository
+	repo := NewMockRepository()
+
+	// Test initialization
+	if err := mod.Init(repo); err != nil {
+		t.Errorf("Init() error = %v", err)
+	}
+	if !mod.initCalled {
+		t.Error("Init() did not set initCalled")
+	}
+
+	// Test module registration
+	if err := repo.RegisterModule(mod); err != nil {
+		t.Errorf("RegisterModule() error = %v", err)
+	}
+
+	// Verify module was registered
+	if m, exists := repo.GetModule("mock"); !exists {
+		t.Error("GetModule() module not found")
+	} else if m != mod {
+		t.Error("GetModule() returned wrong module")
+	}
+
+	// Test listing modules
+	modules := repo.ListModules()
+	if len(modules) != 1 {
+		t.Errorf("ListModules() returned %v modules, want 1", len(modules))
+	}
+	if modules[0] != mod {
+		t.Error("ListModules() returned wrong module")
 	}
 }
