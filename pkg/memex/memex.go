@@ -3,8 +3,8 @@ package memex
 import (
 	"fmt"
 
-	"memex/internal/memex/core"
-	"memex/internal/memex/repository"
+	"github.com/systemshift/memex/internal/memex/core"
+	"github.com/systemshift/memex/internal/memex/repository"
 )
 
 // Memex represents a memex instance

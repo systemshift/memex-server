@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"memex/internal/memex/core"
+	"github.com/systemshift/memex/internal/memex/core"
 )
 
 // Importer handles repository imports

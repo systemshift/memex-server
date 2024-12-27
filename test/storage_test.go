@@ -5,9 +5,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"memex/internal/memex/storage/rabin"
-	"memex/internal/memex/storage/store"
-	"memex/internal/memex/transaction"
+	"github.com/systemshift/memex/internal/memex/storage/rabin"
+	"github.com/systemshift/memex/internal/memex/storage/store"
+	"github.com/systemshift/memex/internal/memex/transaction"
 )
 
 func TestChunkStore(t *testing.T) {

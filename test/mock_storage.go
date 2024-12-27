@@ -3,8 +3,8 @@ package test
 import (
 	"os"
 
-	"memex/internal/memex/core"
-	"memex/internal/memex/storage/common"
+	"github.com/systemshift/memex/internal/memex/core"
+	"github.com/systemshift/memex/internal/memex/storage/common"
 )
 
 // MockStorage implements core/transaction.Storage for testing

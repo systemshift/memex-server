@@ -8,9 +8,9 @@ import (
 	"strconv"
 	"strings"
 
-	"memex/internal/memex/core"
-	"memex/internal/memex/migration"
-	"memex/internal/memex/repository"
+	"github.com/systemshift/memex/internal/memex/core"
+	"github.com/systemshift/memex/internal/memex/migration"
+	"github.com/systemshift/memex/internal/memex/repository"
 )
 
 var (

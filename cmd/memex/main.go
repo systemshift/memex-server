@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"memex/pkg/memex"
+	"github.com/systemshift/memex/pkg/memex"
 )
 
 func usage() {

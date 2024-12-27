@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"memex/internal/memex/core"
+	"github.com/systemshift/memex/internal/memex/core"
 )
 
 // Exporter handles repository exports

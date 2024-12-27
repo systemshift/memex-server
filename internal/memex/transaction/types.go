@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"memex/internal/memex/core"
+	"github.com/systemshift/memex/internal/memex/core"
 )
 
 // Storage defines the interface that transaction package needs from storage

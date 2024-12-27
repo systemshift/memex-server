@@ -1,4 +1,4 @@
-module memex
+module github.com/systemshift/memex
 
 go 1.20
 

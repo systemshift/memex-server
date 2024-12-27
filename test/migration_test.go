@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"memex/internal/memex/core"
-	"memex/internal/memex/migration"
+	"github.com/systemshift/memex/internal/memex/core"
+	"github.com/systemshift/memex/internal/memex/migration"
 )
 
 func TestMigration(t *testing.T) {

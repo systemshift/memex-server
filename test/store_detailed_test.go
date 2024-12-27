@@ -7,8 +7,8 @@ import (
 	"os"
 	"testing"
 
-	"memex/internal/memex/storage/rabin"
-	"memex/internal/memex/storage/store"
+	"github.com/systemshift/memex/internal/memex/storage/rabin"
+	"github.com/systemshift/memex/internal/memex/storage/store"
 )
 
 func TestChunkStoreDetailed(t *testing.T) {

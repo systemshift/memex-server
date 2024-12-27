@@ -4,7 +4,7 @@ package module
 import (
 	"fmt"
 
-	"memex/internal/memex/core"
+	"github.com/systemshift/memex/internal/memex/core"
 )
 
 // Re-export core types for module authors

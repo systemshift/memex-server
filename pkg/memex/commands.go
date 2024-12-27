@@ -2,7 +2,7 @@ package memex
 
 import (
 	"fmt"
-	"memex/internal/memex"
+	"github.com/systemshift/memex/internal/memex"
 )
 
 // Commands provides command functions for the CLI

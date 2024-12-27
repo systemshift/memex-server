@@ -10,9 +10,9 @@ import (
 	"os"
 	"sync"
 
-	"memex/internal/memex/core"
-	"memex/internal/memex/storage"
-	"memex/internal/memex/transaction"
+	"github.com/systemshift/memex/internal/memex/core"
+	"github.com/systemshift/memex/internal/memex/storage"
+	"github.com/systemshift/memex/internal/memex/transaction"
 )
 
 // ChunkStore implements basic content-addressed storage

@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"path/filepath"
 
-	"memex/internal/memex/storage"
+	"github.com/systemshift/memex/internal/memex/storage"
 )
 
 type Server struct {

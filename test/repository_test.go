@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"memex/internal/memex/repository"
+	"github.com/systemshift/memex/internal/memex/repository"
 )
 
 func TestRepository(t *testing.T) {

@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"memex/internal/memex/repository"
+	"github.com/systemshift/memex/internal/memex/repository"
 )
 
 func TestTransactions(t *testing.T) {

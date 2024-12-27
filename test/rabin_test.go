@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"memex/internal/memex/storage/rabin"
+	"github.com/systemshift/memex/internal/memex/storage/rabin"
 )
 
 func TestRabinChunker(t *testing.T) {

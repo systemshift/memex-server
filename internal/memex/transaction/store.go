@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"memex/internal/memex/storage/common"
+	"github.com/systemshift/memex/internal/memex/storage/common"
 )
 
 // ActionStore manages the history of actions in the graph

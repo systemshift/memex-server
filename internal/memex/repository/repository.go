@@ -10,10 +10,10 @@ import (
 	"sync"
 	"time"
 
-	"memex/internal/memex/core"
-	"memex/internal/memex/storage/rabin"
-	"memex/internal/memex/storage/store"
-	"memex/internal/memex/transaction"
+	"github.com/systemshift/memex/internal/memex/core"
+	"github.com/systemshift/memex/internal/memex/storage/rabin"
+	"github.com/systemshift/memex/internal/memex/storage/store"
+	"github.com/systemshift/memex/internal/memex/transaction"
 )
 
 // Magic number for .mx files

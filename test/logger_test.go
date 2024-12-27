@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	"memex/internal/memex/logger"
+	"github.com/systemshift/memex/internal/memex/logger"
 )
 
 // MockLogger implements logger.Logger for testing

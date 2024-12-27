@@ -1,7 +1,7 @@
 package test
 
 import (
-	"memex/internal/memex/core"
+	"github.com/systemshift/memex/internal/memex/core"
 )
 
 // MockModule implements core.Module for testing

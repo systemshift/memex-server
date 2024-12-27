@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"memex/internal/memex"
+	"github.com/systemshift/memex/internal/memex"
 )
 
 func TestConfig(t *testing.T) {

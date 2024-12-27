@@ -6,7 +6,7 @@ import (
 	"io"
 	"os"
 
-	"memex/internal/memex/core"
+	"github.com/systemshift/memex/internal/memex/core"
 )
 
 // VerifyRepository checks repository integrity

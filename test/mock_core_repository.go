@@ -11,7 +11,7 @@ package test
 import (
 	"fmt"
 
-	"memex/internal/memex/core"
+	"github.com/systemshift/memex/internal/memex/core"
 )
 
 // MockCoreRepository is a test double implementing core.Repository for migration tests.
