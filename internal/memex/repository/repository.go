@@ -10,11 +10,10 @@ import (
 	"sync"
 	"time"
 
-	"memex/internal/memex/core"
 	"memex/internal/memex/storage/rabin"
 	"memex/internal/memex/storage/store"
 	"memex/internal/memex/transaction"
-	"memex/pkg/types"
+	"memex/pkg/module"
 )
 
 // Magic number for .mx files
@@ -41,19 +40,14 @@ type Repository struct {
 	store   *store.ChunkStore
 	txStore *transaction.ActionStore
 	lockMgr sync.Mutex
-	modules map[string]core.Module
+	modules map[string]module.Module
 }
 
 // Ensure Repository implements required interfaces
 var (
 	_ transaction.Storage = (*Repository)(nil)
-	_ core.Repository     = (*Repository)(nil)
+	_ module.Repository   = (*Repository)(nil)
 )
-
-// AsModuleRepository returns the repository as a types.ModuleRepository
-func (r *Repository) AsModuleRepository() types.ModuleRepository {
-	return NewRepositoryAdapter(r)
-}
 
 // Create creates a new repository at the given path
 func Create(path string) (*Repository, error) {
@@ -85,7 +79,7 @@ func Create(path string) (*Repository, error) {
 		path:    path,
 		file:    file,
 		header:  header,
-		modules: make(map[string]core.Module),
+		modules: make(map[string]module.Module),
 	}
 
 	// Create transaction store
@@ -136,7 +130,7 @@ func Open(path string) (*Repository, error) {
 		path:    path,
 		file:    file,
 		header:  header,
-		modules: make(map[string]core.Module),
+		modules: make(map[string]module.Module),
 	}
 
 	// Create transaction store
@@ -178,29 +172,32 @@ func (r *Repository) GetLockManager() interface{} {
 
 // Module operations
 
-func (r *Repository) GetModule(id string) (core.Module, bool) {
+func (r *Repository) GetModule(id string) (module.Module, bool) {
 	module, exists := r.modules[id]
 	return module, exists
 }
 
-func (r *Repository) RegisterModule(module core.Module) error {
-	if _, exists := r.modules[module.ID()]; exists {
-		return fmt.Errorf("module already registered: %s", module.ID())
+func (r *Repository) RegisterModule(m module.Module) error {
+	if _, exists := r.modules[m.ID()]; exists {
+		return fmt.Errorf("module already registered: %s", m.ID())
 	}
-	r.modules[module.ID()] = module
+	if err := m.Init(r); err != nil {
+		return fmt.Errorf("initializing module: %w", err)
+	}
+	r.modules[m.ID()] = m
 	return nil
 }
 
-func (r *Repository) ListModules() []core.Module {
-	modules := make([]core.Module, 0, len(r.modules))
-	for _, module := range r.modules {
-		modules = append(modules, module)
+func (r *Repository) ListModules() []module.Module {
+	modules := make([]module.Module, 0, len(r.modules))
+	for _, m := range r.modules {
+		modules = append(modules, m)
 	}
 	return modules
 }
 
-func (r *Repository) QueryNodesByModule(moduleID string) ([]*core.Node, error) {
-	nodes := []*core.Node{}
+func (r *Repository) QueryNodesByModule(moduleID string) ([]*module.Node, error) {
+	nodes := []*module.Node{}
 	ids, err := r.ListNodes()
 	if err != nil {
 		return nil, err
@@ -218,8 +215,8 @@ func (r *Repository) QueryNodesByModule(moduleID string) ([]*core.Node, error) {
 	return nodes, nil
 }
 
-func (r *Repository) QueryLinksByModule(moduleID string) ([]*core.Link, error) {
-	links := []*core.Link{}
+func (r *Repository) QueryLinksByModule(moduleID string) ([]*module.Link, error) {
+	links := []*module.Link{}
 	chunks, err := r.store.ListChunks()
 	if err != nil {
 		return nil, err
@@ -231,7 +228,7 @@ func (r *Repository) QueryLinksByModule(moduleID string) ([]*core.Link, error) {
 			continue
 		}
 
-		var link core.Link
+		var link module.Link
 		if err := json.Unmarshal(data, &link); err != nil {
 			continue
 		}
@@ -253,7 +250,7 @@ func (r *Repository) GetContent(id string) ([]byte, error) {
 }
 
 // GetNode retrieves a node from the repository
-func (r *Repository) GetNode(id string) (*core.Node, error) {
+func (r *Repository) GetNode(id string) (*module.Node, error) {
 	var data []byte
 	var err error
 
@@ -274,10 +271,10 @@ func (r *Repository) GetNode(id string) (*core.Node, error) {
 	}
 
 	// Parse node
-	var node core.Node
+	var node module.Node
 	if err := json.Unmarshal(data, &node); err != nil {
 		// If parsing fails, try wrapping the data in a basic node structure
-		node = core.Node{
+		node = module.Node{
 			Content: data,
 			Meta:    make(map[string]interface{}),
 		}
@@ -302,7 +299,7 @@ func (r *Repository) AddNode(content []byte, nodeType string, meta map[string]in
 
 	// Create node
 	now := time.Now().UTC()
-	node := &core.Node{
+	node := &module.Node{
 		Type:     nodeType,
 		Content:  content,
 		Meta:     meta,
@@ -380,7 +377,7 @@ func (r *Repository) AddNodeWithID(id string, content []byte, nodeType string, m
 
 	// Create node
 	now := time.Now().UTC()
-	node := &core.Node{
+	node := &module.Node{
 		ID:       id,
 		Type:     nodeType,
 		Content:  content,
@@ -528,7 +525,7 @@ func (r *Repository) AddLink(source, target, linkType string, meta map[string]in
 
 	// Create link
 	now := time.Now().UTC()
-	link := &core.Link{
+	link := &module.Link{
 		Source:   source,
 		Target:   target,
 		Type:     linkType,
@@ -583,7 +580,7 @@ func (r *Repository) AddLink(source, target, linkType string, meta map[string]in
 }
 
 // GetLinks returns all links for a node
-func (r *Repository) GetLinks(nodeID string) ([]*core.Link, error) {
+func (r *Repository) GetLinks(nodeID string) ([]*module.Link, error) {
 	// List all chunks
 	chunks, err := r.store.ListChunks()
 	if err != nil {
@@ -591,7 +588,7 @@ func (r *Repository) GetLinks(nodeID string) ([]*core.Link, error) {
 	}
 
 	// Filter and parse links
-	var links []*core.Link
+	var links []*module.Link
 	for _, chunk := range chunks {
 		// Get chunk data
 		data, err := r.store.Get([][]byte{chunk})
@@ -600,7 +597,7 @@ func (r *Repository) GetLinks(nodeID string) ([]*core.Link, error) {
 		}
 
 		// Try to parse as link
-		var link core.Link
+		var link module.Link
 		if err := json.Unmarshal(data, &link); err != nil {
 			continue
 		}
@@ -643,7 +640,7 @@ func (r *Repository) DeleteLink(source, target, linkType string) error {
 		}
 
 		// Try to parse as link
-		var link core.Link
+		var link module.Link
 		if err := json.Unmarshal(data, &link); err != nil {
 			continue
 		}

@@ -1,63 +1,127 @@
+// Package module provides the public interface for creating Memex modules
 package module
 
-import "time"
+import (
+	"fmt"
+	"memex/internal/memex/core"
+)
 
-// Module defines the interface for Memex modules
-type Module interface {
-	// Identity
-	ID() string          // Unique identifier (e.g., "git", "ast")
-	Name() string        // Human-readable name
-	Description() string // Module description
+// Re-export core types that modules need
+type (
+	Node       = core.Node
+	Link       = core.Link
+	Command    = core.Command
+	Module     = core.Module
+	Repository = core.Repository
+)
 
-	// Core functionality
-	Init(repo Repository) error                    // Initialize module with repository
-	Commands() []Command                           // Available commands
-	HandleCommand(cmd string, args []string) error // Execute a command
+// Common errors
+var (
+	ErrNotInitialized = core.ErrNotInitialized
+)
+
+// Base provides common module functionality
+type Base struct {
+	id          string
+	name        string
+	description string
+	repo        Repository
+	commands    []Command
 }
 
-// Command represents a module command
-type Command struct {
-	Name        string   // Command name (e.g., "add", "status")
-	Description string   // Command description
-	Usage       string   // Usage example (e.g., "git add <file>")
-	Args        []string // Expected arguments
+// NewBase creates a new base module
+func NewBase(id, name, description string) *Base {
+	return &Base{
+		id:          id,
+		name:        name,
+		description: description,
+		commands:    make([]Command, 0),
+	}
 }
 
-// Node represents a node in the graph
-type Node struct {
-	ID       string
-	Type     string
-	Content  []byte
-	Meta     map[string]interface{}
-	Created  time.Time
-	Modified time.Time
+// ID returns the module identifier
+func (b *Base) ID() string {
+	return b.id
 }
 
-// Link represents a relationship between nodes
-type Link struct {
-	Source   string
-	Target   string
-	Type     string
-	Meta     map[string]interface{}
-	Created  time.Time
-	Modified time.Time
+// Name returns the module name
+func (b *Base) Name() string {
+	return b.name
 }
 
-// Repository defines operations modules can perform
-type Repository interface {
-	// Node operations
-	AddNode(content []byte, nodeType string, meta map[string]interface{}) (string, error)
-	GetNode(id string) (*Node, error)
-	DeleteNode(id string) error
-	ListNodes() ([]string, error)
-	GetContent(id string) ([]byte, error)
+// Description returns the module description
+func (b *Base) Description() string {
+	return b.description
+}
 
-	// Link operations
-	AddLink(source, target, linkType string, meta map[string]interface{}) error
-	GetLinks(nodeID string) ([]*Link, error)
-	DeleteLink(source, target, linkType string) error
+// Init initializes the module with a repository
+func (b *Base) Init(repo Repository) error {
+	b.repo = repo
+	return nil
+}
 
-	// Query operations
-	QueryNodesByModule(moduleID string) ([]*Node, error)
-	QueryLinksByModule(moduleID string) ([]*Link, error)
+// Commands returns the list of available commands
+func (b *Base) Commands() []Command {
+	baseCommands := []Command{
+		{
+			Name:        "help",
+			Description: "Show module help",
+		},
+		{
+			Name:        "version",
+			Description: "Show module version",
+		},
+	}
+	return append(baseCommands, b.commands...)
+}
+
+// HandleCommand handles a module command
+func (b *Base) HandleCommand(cmd string, args []string) error {
+	switch cmd {
+	case "help":
+		return nil // Let the CLI handle help
+	case "version":
+		return nil // Let the CLI handle version
+	default:
+		return fmt.Errorf("unknown command: %s", cmd)
+	}
+}
+
+// AddCommand adds a command to the module
+func (b *Base) AddCommand(cmd Command) {
+	b.commands = append(b.commands, cmd)
+}
+
+// Helper methods for repository operations
+
+// AddNode adds a node to the repository
+func (b *Base) AddNode(content []byte, nodeType string, meta map[string]interface{}) (string, error) {
+	if b.repo == nil {
+		return "", ErrNotInitialized
+	}
+	return b.repo.AddNode(content, nodeType, meta)
+}
+
+// GetNode gets a node from the repository
+func (b *Base) GetNode(id string) (*Node, error) {
+	if b.repo == nil {
+		return nil, ErrNotInitialized
+	}
+	return b.repo.GetNode(id)
+}
+
+// AddLink adds a link between nodes
+func (b *Base) AddLink(source, target, linkType string, meta map[string]interface{}) error {
+	if b.repo == nil {
+		return ErrNotInitialized
+	}
+	return b.repo.AddLink(source, target, linkType, meta)
+}
+
+// GetLinks gets links for a node
+func (b *Base) GetLinks(nodeID string) ([]*Link, error) {
+	if b.repo == nil {
+		return nil, ErrNotInitialized
+	}
+	return b.repo.GetLinks(nodeID)
 }

@@ -1,6 +1,14 @@
 package core
 
-import "time"
+import (
+	"errors"
+	"time"
+)
+
+// Common errors
+var (
+	ErrNotInitialized = errors.New("module not initialized")
+)
 
 // Node represents a node in the graph
 type Node struct {
