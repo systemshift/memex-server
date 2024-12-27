@@ -5,7 +5,6 @@ import (
 
 	"memex/internal/memex/core"
 	"memex/internal/memex/repository"
-	"memex/pkg/types"
 )
 
 // Memex represents a memex instance
@@ -82,9 +81,12 @@ func (m *Memex) GetLinks(id string) ([]*Link, error) {
 	result := make([]*Link, len(links))
 	for i, link := range links {
 		result[i] = &Link{
-			Target: link.Target,
-			Type:   link.Type,
-			Meta:   link.Meta,
+			Source:   link.Source,
+			Target:   link.Target,
+			Type:     link.Type,
+			Meta:     link.Meta,
+			Created:  link.Created,
+			Modified: link.Modified,
 		}
 	}
 	return result, nil
@@ -108,39 +110,18 @@ func (m *Memex) GetContent(id string) ([]byte, error) {
 // Module operations
 
 // RegisterModule registers a new module
-func (m *Memex) RegisterModule(module types.Module) error {
-	if r, ok := m.repo.(*repository.Repository); ok {
-		moduleRepo := r.AsModuleRepository()
-		return moduleRepo.RegisterModule(module)
-	}
-	return m.repo.RegisterModule(repository.NewReverseModuleAdapter(module))
+func (m *Memex) RegisterModule(mod core.Module) error {
+	return m.repo.RegisterModule(mod)
 }
 
 // GetModule returns a module by ID
-func (m *Memex) GetModule(id string) (types.Module, bool) {
-	if r, ok := m.repo.(*repository.Repository); ok {
-		moduleRepo := r.AsModuleRepository()
-		return moduleRepo.GetModule(id)
-	}
-	mod, exists := m.repo.GetModule(id)
-	if !exists {
-		return nil, false
-	}
-	return repository.NewModuleAdapter(mod), true
+func (m *Memex) GetModule(id string) (core.Module, bool) {
+	return m.repo.GetModule(id)
 }
 
 // ListModules returns all registered modules
-func (m *Memex) ListModules() []types.Module {
-	if r, ok := m.repo.(*repository.Repository); ok {
-		moduleRepo := r.AsModuleRepository()
-		return moduleRepo.ListModules()
-	}
-	coreMods := m.repo.ListModules()
-	typeMods := make([]types.Module, len(coreMods))
-	for i, mod := range coreMods {
-		typeMods[i] = repository.NewModuleAdapter(mod)
-	}
-	return typeMods
+func (m *Memex) ListModules() []core.Module {
+	return m.repo.ListModules()
 }
 
 // QueryNodesByModule returns all nodes created by a module
@@ -174,9 +155,12 @@ func (m *Memex) QueryLinksByModule(moduleID string) ([]*Link, error) {
 	result := make([]*Link, len(links))
 	for i, link := range links {
 		result[i] = &Link{
-			Target: link.Target,
-			Type:   link.Type,
-			Meta:   link.Meta,
+			Source:   link.Source,
+			Target:   link.Target,
+			Type:     link.Type,
+			Meta:     link.Meta,
+			Created:  link.Created,
+			Modified: link.Modified,
 		}
 	}
 	return result, nil

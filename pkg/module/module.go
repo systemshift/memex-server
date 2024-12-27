@@ -1,12 +1,13 @@
-// Package module provides the public interface for creating Memex modules
+// Package module provides helpers for creating Memex modules
 package module
 
 import (
 	"fmt"
+
 	"memex/internal/memex/core"
 )
 
-// Re-export core types that modules need
+// Re-export core types for module authors
 type (
 	Node       = core.Node
 	Link       = core.Link
@@ -20,7 +21,7 @@ var (
 	ErrNotInitialized = core.ErrNotInitialized
 )
 
-// Base provides common module functionality
+// Base provides a base implementation of Module interface
 type Base struct {
 	id          string
 	name        string
