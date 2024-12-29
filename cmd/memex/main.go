@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/systemshift/memex/pkg/memex"
 )
@@ -24,16 +23,6 @@ Built-in Commands:
   status                   Show repository status
   export <path>            Export repository to tar archive
   import <path>            Import repository from tar archive
-
-Module Management:
-  module list              List installed modules
-  module install <path>    Install module from path
-  module install --dev <path> Install module in development mode
-  module remove <name>     Remove installed module
-
-Module Commands:
-  <module> <command> [args] Run module command (e.g., ast add main.go)
-  module help <name>        Show module help
 
 Export options:
   --nodes <id1,id2,...>    Export specific nodes and their subgraph
@@ -54,10 +43,6 @@ func main() {
 	onConflict := importFlags.String("on-conflict", "skip", "How to handle ID conflicts (skip, replace, rename)")
 	merge := importFlags.Bool("merge", false, "Merge with existing content")
 	prefix := importFlags.String("prefix", "", "Add prefix to imported node IDs")
-
-	// Module install flags
-	moduleInstallFlags := flag.NewFlagSet("module install", flag.ExitOnError)
-	devMode := moduleInstallFlags.Bool("dev", false, "Install module in development mode")
 
 	flag.Usage = usage
 	flag.Parse()
@@ -182,58 +167,7 @@ func main() {
 
 		err = cmds.Import(args[0], opts)
 
-	case "module":
-		if len(args) < 1 {
-			usage()
-		}
-
-		switch args[0] {
-		case "help":
-			if len(args) < 2 {
-				usage()
-			}
-			// Show module help
-			err = cmds.ModuleHelp(args[1])
-
-		case "install":
-			if len(args) < 2 {
-				usage()
-			}
-			// Parse install flags
-			moduleInstallFlags.Parse(args[1:])
-			remainingArgs := moduleInstallFlags.Args()
-			if len(remainingArgs) < 1 {
-				usage()
-			}
-
-			// Install module
-			err = cmds.Module(append([]string{"install", "--dev=" + fmt.Sprint(*devMode)}, remainingArgs...)...)
-
-		default:
-			// Handle other module commands
-			err = cmds.Module(args...)
-		}
-
 	default:
-		// Check if it's a module command
-		if err := cmds.AutoConnect(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-
-		// Try to handle as module command (e.g., "ast add main.go")
-		if len(args) > 0 {
-			moduleArgs := append([]string{cmd, args[0]}, args[1:]...)
-			if err := cmds.Module(moduleArgs...); err != nil {
-				if strings.Contains(err.Error(), "module not found") {
-					usage()
-				}
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
-			}
-			os.Exit(0)
-		}
-
 		usage()
 	}
 

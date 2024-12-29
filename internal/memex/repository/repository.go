@@ -40,7 +40,6 @@ type Repository struct {
 	store   *store.ChunkStore
 	txStore *transaction.ActionStore
 	lockMgr sync.Mutex
-	modules map[string]core.Module
 }
 
 // Ensure Repository implements required interfaces
@@ -76,10 +75,9 @@ func Create(path string) (*Repository, error) {
 
 	// Create repository instance
 	repo := &Repository{
-		path:    path,
-		file:    file,
-		header:  header,
-		modules: make(map[string]core.Module),
+		path:   path,
+		file:   file,
+		header: header,
 	}
 
 	// Create transaction store
@@ -127,10 +125,9 @@ func Open(path string) (*Repository, error) {
 
 	// Create repository instance
 	repo := &Repository{
-		path:    path,
-		file:    file,
-		header:  header,
-		modules: make(map[string]core.Module),
+		path:   path,
+		file:   file,
+		header: header,
 	}
 
 	// Create transaction store
@@ -168,76 +165,6 @@ func (r *Repository) GetFile() interface{} {
 // GetLockManager returns the lock manager for transaction storage (implements transaction.Storage)
 func (r *Repository) GetLockManager() interface{} {
 	return &r.lockMgr
-}
-
-// Module operations
-
-func (r *Repository) GetModule(id string) (core.Module, bool) {
-	module, exists := r.modules[id]
-	return module, exists
-}
-
-func (r *Repository) RegisterModule(module core.Module) error {
-	if _, exists := r.modules[module.ID()]; exists {
-		return fmt.Errorf("module already registered: %s", module.ID())
-	}
-	if err := module.Init(r); err != nil {
-		return fmt.Errorf("initializing module: %w", err)
-	}
-	r.modules[module.ID()] = module
-	return nil
-}
-
-func (r *Repository) ListModules() []core.Module {
-	modules := make([]core.Module, 0, len(r.modules))
-	for _, module := range r.modules {
-		modules = append(modules, module)
-	}
-	return modules
-}
-
-func (r *Repository) QueryNodesByModule(moduleID string) ([]*core.Node, error) {
-	nodes := []*core.Node{}
-	ids, err := r.ListNodes()
-	if err != nil {
-		return nil, err
-	}
-
-	for _, id := range ids {
-		node, err := r.GetNode(id)
-		if err != nil {
-			continue
-		}
-		if modID, ok := node.Meta["module"].(string); ok && modID == moduleID {
-			nodes = append(nodes, node)
-		}
-	}
-	return nodes, nil
-}
-
-func (r *Repository) QueryLinksByModule(moduleID string) ([]*core.Link, error) {
-	links := []*core.Link{}
-	chunks, err := r.store.ListChunks()
-	if err != nil {
-		return nil, err
-	}
-
-	for _, chunk := range chunks {
-		data, err := r.store.Get([][]byte{chunk})
-		if err != nil {
-			continue
-		}
-
-		var link core.Link
-		if err := json.Unmarshal(data, &link); err != nil {
-			continue
-		}
-
-		if modID, ok := link.Meta["module"].(string); ok && modID == moduleID {
-			links = append(links, &link)
-		}
-	}
-	return links, nil
 }
 
 // GetContent retrieves content from the repository

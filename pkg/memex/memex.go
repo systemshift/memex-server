@@ -3,7 +3,6 @@ package memex
 import (
 	"fmt"
 
-	internalmemex "github.com/systemshift/memex/internal/memex"
 	"github.com/systemshift/memex/internal/memex/core"
 	"github.com/systemshift/memex/internal/memex/repository"
 )
@@ -106,26 +105,4 @@ func (m *Memex) ListNodes() ([]string, error) {
 // GetContent retrieves raw content by ID
 func (m *Memex) GetContent(id string) ([]byte, error) {
 	return m.repo.GetContent(id)
-}
-
-// Module operations
-
-// RegisterModule registers a new module
-func (m *Memex) RegisterModule(mod core.Module) error {
-	return internalmemex.RegisterModule(mod)
-}
-
-// GetModule returns a module by ID
-func (m *Memex) GetModule(id string) (core.Module, bool) {
-	return internalmemex.GetModule(id)
-}
-
-// ListModules returns all registered modules
-func (m *Memex) ListModules() []core.Module {
-	return internalmemex.ListModules()
-}
-
-// HandleModuleCommand executes a module command
-func (m *Memex) HandleModuleCommand(moduleID string, cmd string, args []string) error {
-	return internalmemex.HandleModuleCommand(moduleID, cmd, args, m.repo)
 }

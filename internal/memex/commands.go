@@ -3,14 +3,12 @@ package memex
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 
 	"github.com/systemshift/memex/internal/memex/core"
 	"github.com/systemshift/memex/internal/memex/migration"
-	"github.com/systemshift/memex/internal/memex/modules"
 	"github.com/systemshift/memex/internal/memex/repository"
 )
 
@@ -23,105 +21,6 @@ var (
 func SetRepository(repo core.Repository) {
 	currentRepo = repo
 	repoPath = "test.mx"
-}
-
-// ModuleCommand handles module operations
-func ModuleCommand(args ...string) error {
-	if len(args) < 1 {
-		return fmt.Errorf("module command requires subcommand (list, run)")
-	}
-
-	cmd := args[0]
-	switch cmd {
-	case "list":
-		// List installed modules
-		modules := modules.ListModules()
-		if len(modules) == 0 {
-			fmt.Println("No modules installed")
-			return nil
-		}
-
-		fmt.Println("Installed modules:")
-		for _, module := range modules {
-			fmt.Printf("  %s - %s\n", module.ID(), module.Name())
-			fmt.Printf("    Description: %s\n", module.Description())
-
-			// Show available commands
-			commands := module.Commands()
-			if len(commands) > 0 {
-				fmt.Println("    Commands:")
-				for _, cmd := range commands {
-					fmt.Printf("      %s - %s\n", cmd.Name, cmd.Description)
-				}
-			}
-		}
-		return nil
-
-	case "install":
-		if len(args) < 2 {
-			return fmt.Errorf("install requires module path")
-		}
-		modulePath := args[1]
-		fullPath := fmt.Sprintf("github.com/systemshift/%s", modulePath)
-
-		// Run go get to download the module
-		cmd := exec.Command("go", "get", fullPath)
-		cmd.Dir = "."
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("installing module: %w", err)
-		}
-
-		// Run go mod tidy
-		cmd = exec.Command("go", "mod", "tidy")
-		cmd.Dir = "."
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("tidying modules: %w", err)
-		}
-
-		fmt.Printf("Module %s installed successfully\n", modulePath)
-		return nil
-
-	case "install-dev":
-		if len(args) < 2 {
-			return fmt.Errorf("install-dev requires module path")
-		}
-		modulePath := args[1]
-
-		// Add replace directive to use local module
-		cmd := exec.Command("go", "mod", "edit", "-replace", fmt.Sprintf("github.com/systemshift/%s=./%s", modulePath, modulePath))
-		cmd.Dir = "."
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("adding replace directive: %w", err)
-		}
-
-		// Run go mod tidy
-		cmd = exec.Command("go", "mod", "tidy")
-		cmd.Dir = "."
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("tidying modules: %w", err)
-		}
-
-		fmt.Printf("Module %s installed in development mode\n", modulePath)
-		return nil
-
-	default:
-		// Try to handle as module command (e.g., ast parse main.go)
-		moduleID := args[0]
-		if len(args) < 2 {
-			return fmt.Errorf("module command required")
-		}
-
-		cmd := args[1]
-		cmdArgs := args[2:]
-
-		// Get current repository for module commands
-		repo, err := GetRepository()
-		if err != nil {
-			return fmt.Errorf("getting repository: %w", err)
-		}
-
-		return HandleModuleCommand(moduleID, cmd, cmdArgs, repo)
-	}
 }
 
 // StatusCommand shows repository status

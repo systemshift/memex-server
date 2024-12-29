@@ -102,36 +102,3 @@ func (c *Commands) Import(path string, opts ImportOptions) error {
 	}
 	return memex.ImportCommand(args...)
 }
-
-// Module handles module operations
-func (c *Commands) Module(args ...string) error {
-	// Ensure we're connected to a repository first
-	if err := c.AutoConnect(); err != nil {
-		return fmt.Errorf("connecting to repository: %w", err)
-	}
-
-	return memex.ModuleCommand(args...)
-}
-
-// ModuleHelp shows help for a module
-func (c *Commands) ModuleHelp(moduleID string) error {
-	mod, exists := memex.GetModule(moduleID)
-	if !exists {
-		return fmt.Errorf("module not found: %s", moduleID)
-	}
-
-	fmt.Printf("Module: %s\n\n", moduleID)
-	fmt.Println("Commands:")
-	for _, cmd := range mod.Commands() {
-		fmt.Printf("  %-20s %s\n", cmd.Name, cmd.Description)
-		if cmd.Usage != "" {
-			fmt.Printf("    Usage: %s\n", cmd.Usage)
-		}
-		if len(cmd.Args) > 0 {
-			fmt.Printf("    Args:  %s\n", cmd.Args)
-		}
-		fmt.Println()
-	}
-
-	return nil
-}

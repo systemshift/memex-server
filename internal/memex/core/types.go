@@ -1,13 +1,7 @@
 package core
 
 import (
-	"errors"
 	"time"
-)
-
-// Common errors
-var (
-	ErrNotInitialized = errors.New("module not initialized")
 )
 
 // Node represents a node in the graph
@@ -28,27 +22,6 @@ type Link struct {
 	Meta     map[string]interface{}
 	Created  time.Time
 	Modified time.Time
-}
-
-// Command represents a module command
-type Command struct {
-	Name        string   // Command name (e.g., "add", "status")
-	Description string   // Command description
-	Usage       string   // Usage example (e.g., "git add <file>")
-	Args        []string // Expected arguments
-}
-
-// Module defines the interface that all memex modules must implement
-type Module interface {
-	// Identity
-	ID() string          // Unique identifier (e.g., "git", "ast")
-	Name() string        // Human-readable name
-	Description() string // Module description
-
-	// Core functionality
-	Init(repo Repository) error                    // Initialize module with repository
-	Commands() []Command                           // Available commands
-	HandleCommand(cmd string, args []string) error // Execute a command
 }
 
 // Repository defines the interface for repository operations
