@@ -30,17 +30,11 @@ func ModuleCommand(args ...string) error {
 		return fmt.Errorf("module command requires subcommand (list, run)")
 	}
 
-	// Get current repository
-	repo, err := GetRepository()
-	if err != nil {
-		return fmt.Errorf("getting repository: %w", err)
-	}
-
 	cmd := args[0]
 	switch cmd {
 	case "list":
 		// List installed modules
-		modules := repo.ListModules()
+		modules := ListModules()
 		if len(modules) == 0 {
 			fmt.Println("No modules installed")
 			return nil
@@ -62,52 +56,59 @@ func ModuleCommand(args ...string) error {
 		}
 		return nil
 
-	case "add":
+	case "install":
 		if len(args) < 2 {
-			return fmt.Errorf("add requires module path")
+			return fmt.Errorf("install requires module path")
 		}
+		modulePath := args[1]
+		fullPath := fmt.Sprintf("github.com/systemshift/%s", modulePath)
 
-		// Run go get
-		cmd := exec.Command("go", "get", args[1])
-		cmd.Dir = filepath.Dir(repoPath)
+		// Run go get to download the module
+		cmd := exec.Command("go", "get", fullPath)
+		cmd.Dir = "."
 		if err := cmd.Run(); err != nil {
 			return fmt.Errorf("installing module: %w", err)
 		}
 
-		fmt.Printf("Module %s added successfully\n", args[1])
-		return nil
-
-	case "update":
-		// Run go get -u
-		cmd := exec.Command("go", "get", "-u", "./...")
-		cmd.Dir = filepath.Dir(repoPath)
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("updating modules: %w", err)
-		}
-
-		fmt.Println("Modules updated successfully")
-		return nil
-
-	case "remove":
-		if len(args) < 2 {
-			return fmt.Errorf("remove requires module name")
-		}
-
-		// Run go mod edit to remove module
-		cmd := exec.Command("go", "mod", "edit", "-droprequire", args[1])
-		cmd.Dir = filepath.Dir(repoPath)
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("removing module: %w", err)
-		}
-
 		// Run go mod tidy
 		cmd = exec.Command("go", "mod", "tidy")
-		cmd.Dir = filepath.Dir(repoPath)
+		cmd.Dir = "."
 		if err := cmd.Run(); err != nil {
 			return fmt.Errorf("tidying modules: %w", err)
 		}
 
-		fmt.Printf("Module %s removed successfully\n", args[1])
+		fmt.Printf("Module %s installed successfully\n", modulePath)
+		return nil
+
+	case "install-dev":
+		if len(args) < 2 {
+			return fmt.Errorf("install-dev requires module path")
+		}
+		modulePath := args[1]
+		fullPath := fmt.Sprintf("github.com/systemshift/%s", modulePath)
+
+		// Add require directive first
+		cmd := exec.Command("go", "mod", "edit", "-require", fmt.Sprintf("%s@v0.0.0", fullPath))
+		cmd.Dir = "."
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("adding require directive: %w", err)
+		}
+
+		// Add replace directive
+		cmd = exec.Command("go", "mod", "edit", "-replace", fmt.Sprintf("%s=./%s", fullPath, modulePath))
+		cmd.Dir = "."
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("adding replace directive: %w", err)
+		}
+
+		// Run go mod tidy
+		cmd = exec.Command("go", "mod", "tidy")
+		cmd.Dir = "."
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("tidying modules: %w", err)
+		}
+
+		fmt.Printf("Module %s installed in development mode\n", modulePath)
 		return nil
 
 	default:
@@ -117,15 +118,16 @@ func ModuleCommand(args ...string) error {
 			return fmt.Errorf("module command required")
 		}
 
-		module, exists := repo.GetModule(moduleID)
-		if !exists {
-			return fmt.Errorf("module not found: %s", moduleID)
-		}
-
 		cmd := args[1]
 		cmdArgs := args[2:]
 
-		return module.HandleCommand(cmd, cmdArgs)
+		// Get current repository for module commands
+		repo, err := GetRepository()
+		if err != nil {
+			return fmt.Errorf("getting repository: %w", err)
+		}
+
+		return HandleModuleCommand(moduleID, cmd, cmdArgs, repo)
 	}
 }
 
