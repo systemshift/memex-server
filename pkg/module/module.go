@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/systemshift/memex/internal/memex/core"
+	"github.com/systemshift/memex/internal/memex/modules"
 )
 
 // Re-export core types for module authors
@@ -15,6 +16,11 @@ type (
 	Module     = core.Module
 	Repository = core.Repository
 )
+
+// Register registers a module with memex
+func Register(m Module) error {
+	return modules.RegisterModule(m)
+}
 
 // Base provides a base implementation of Module interface
 type Base struct {

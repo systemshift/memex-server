@@ -10,6 +10,7 @@ import (
 
 	"github.com/systemshift/memex/internal/memex/core"
 	"github.com/systemshift/memex/internal/memex/migration"
+	"github.com/systemshift/memex/internal/memex/modules"
 	"github.com/systemshift/memex/internal/memex/repository"
 )
 
@@ -34,7 +35,7 @@ func ModuleCommand(args ...string) error {
 	switch cmd {
 	case "list":
 		// List installed modules
-		modules := ListModules()
+		modules := modules.ListModules()
 		if len(modules) == 0 {
 			fmt.Println("No modules installed")
 			return nil
@@ -85,17 +86,9 @@ func ModuleCommand(args ...string) error {
 			return fmt.Errorf("install-dev requires module path")
 		}
 		modulePath := args[1]
-		fullPath := fmt.Sprintf("github.com/systemshift/%s", modulePath)
 
-		// Add require directive first
-		cmd := exec.Command("go", "mod", "edit", "-require", fmt.Sprintf("%s@v0.0.0", fullPath))
-		cmd.Dir = "."
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("adding require directive: %w", err)
-		}
-
-		// Add replace directive
-		cmd = exec.Command("go", "mod", "edit", "-replace", fmt.Sprintf("%s=./%s", fullPath, modulePath))
+		// Add replace directive to use local module
+		cmd := exec.Command("go", "mod", "edit", "-replace", fmt.Sprintf("github.com/systemshift/%s=./%s", modulePath, modulePath))
 		cmd.Dir = "."
 		if err := cmd.Run(); err != nil {
 			return fmt.Errorf("adding replace directive: %w", err)
