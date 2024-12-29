@@ -2,6 +2,7 @@ package memex
 
 import (
 	"fmt"
+
 	"github.com/systemshift/memex/internal/memex"
 )
 
@@ -114,12 +115,7 @@ func (c *Commands) Module(args ...string) error {
 
 // ModuleHelp shows help for a module
 func (c *Commands) ModuleHelp(moduleID string) error {
-	repo, err := memex.GetRepository()
-	if err != nil {
-		return fmt.Errorf("getting repository: %w", err)
-	}
-
-	mod, exists := repo.GetModule(moduleID)
+	mod, exists := memex.GetModule(moduleID)
 	if !exists {
 		return fmt.Errorf("module not found: %s", moduleID)
 	}

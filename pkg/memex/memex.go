@@ -3,6 +3,7 @@ package memex
 import (
 	"fmt"
 
+	internalmemex "github.com/systemshift/memex/internal/memex"
 	"github.com/systemshift/memex/internal/memex/core"
 	"github.com/systemshift/memex/internal/memex/repository"
 )
@@ -111,57 +112,20 @@ func (m *Memex) GetContent(id string) ([]byte, error) {
 
 // RegisterModule registers a new module
 func (m *Memex) RegisterModule(mod core.Module) error {
-	return m.repo.RegisterModule(mod)
+	return internalmemex.RegisterModule(mod)
 }
 
 // GetModule returns a module by ID
 func (m *Memex) GetModule(id string) (core.Module, bool) {
-	return m.repo.GetModule(id)
+	return internalmemex.GetModule(id)
 }
 
 // ListModules returns all registered modules
 func (m *Memex) ListModules() []core.Module {
-	return m.repo.ListModules()
+	return internalmemex.ListModules()
 }
 
-// QueryNodesByModule returns all nodes created by a module
-func (m *Memex) QueryNodesByModule(moduleID string) ([]*Node, error) {
-	nodes, err := m.repo.QueryNodesByModule(moduleID)
-	if err != nil {
-		return nil, err
-	}
-
-	result := make([]*Node, len(nodes))
-	for i, node := range nodes {
-		result[i] = &Node{
-			ID:       node.ID,
-			Type:     node.Type,
-			Content:  node.Content,
-			Meta:     node.Meta,
-			Created:  node.Created,
-			Modified: node.Modified,
-		}
-	}
-	return result, nil
-}
-
-// QueryLinksByModule returns all links created by a module
-func (m *Memex) QueryLinksByModule(moduleID string) ([]*Link, error) {
-	links, err := m.repo.QueryLinksByModule(moduleID)
-	if err != nil {
-		return nil, err
-	}
-
-	result := make([]*Link, len(links))
-	for i, link := range links {
-		result[i] = &Link{
-			Source:   link.Source,
-			Target:   link.Target,
-			Type:     link.Type,
-			Meta:     link.Meta,
-			Created:  link.Created,
-			Modified: link.Modified,
-		}
-	}
-	return result, nil
+// HandleModuleCommand executes a module command
+func (m *Memex) HandleModuleCommand(moduleID string, cmd string, args []string) error {
+	return internalmemex.HandleModuleCommand(moduleID, cmd, args, m.repo)
 }

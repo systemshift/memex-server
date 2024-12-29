@@ -16,11 +16,6 @@ type (
 	Repository = core.Repository
 )
 
-// Common errors
-var (
-	ErrNotInitialized = core.ErrNotInitialized
-)
-
 // Base provides a base implementation of Module interface
 type Base struct {
 	id          string
@@ -63,29 +58,12 @@ func (b *Base) Init(repo Repository) error {
 
 // Commands returns the list of available commands
 func (b *Base) Commands() []Command {
-	baseCommands := []Command{
-		{
-			Name:        "help",
-			Description: "Show module help",
-		},
-		{
-			Name:        "version",
-			Description: "Show module version",
-		},
-	}
-	return append(baseCommands, b.commands...)
+	return b.commands
 }
 
 // HandleCommand handles a module command
 func (b *Base) HandleCommand(cmd string, args []string) error {
-	switch cmd {
-	case "help":
-		return nil // Let the CLI handle help
-	case "version":
-		return nil // Let the CLI handle version
-	default:
-		return fmt.Errorf("unknown command: %s", cmd)
-	}
+	return fmt.Errorf("unknown command: %s", cmd)
 }
 
 // AddCommand adds a command to the module
@@ -98,7 +76,7 @@ func (b *Base) AddCommand(cmd Command) {
 // AddNode adds a node to the repository
 func (b *Base) AddNode(content []byte, nodeType string, meta map[string]interface{}) (string, error) {
 	if b.repo == nil {
-		return "", ErrNotInitialized
+		return "", fmt.Errorf("module not initialized")
 	}
 	return b.repo.AddNode(content, nodeType, meta)
 }
@@ -106,7 +84,7 @@ func (b *Base) AddNode(content []byte, nodeType string, meta map[string]interfac
 // GetNode gets a node from the repository
 func (b *Base) GetNode(id string) (*Node, error) {
 	if b.repo == nil {
-		return nil, ErrNotInitialized
+		return nil, fmt.Errorf("module not initialized")
 	}
 	return b.repo.GetNode(id)
 }
@@ -114,7 +92,7 @@ func (b *Base) GetNode(id string) (*Node, error) {
 // AddLink adds a link between nodes
 func (b *Base) AddLink(source, target, linkType string, meta map[string]interface{}) error {
 	if b.repo == nil {
-		return ErrNotInitialized
+		return fmt.Errorf("module not initialized")
 	}
 	return b.repo.AddLink(source, target, linkType, meta)
 }
@@ -122,7 +100,7 @@ func (b *Base) AddLink(source, target, linkType string, meta map[string]interfac
 // GetLinks gets links for a node
 func (b *Base) GetLinks(nodeID string) ([]*Link, error) {
 	if b.repo == nil {
-		return nil, ErrNotInitialized
+		return nil, fmt.Errorf("module not initialized")
 	}
 	return b.repo.GetLinks(nodeID)
 }

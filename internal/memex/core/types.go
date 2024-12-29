@@ -66,15 +66,6 @@ type Repository interface {
 	GetLinks(nodeID string) ([]*Link, error)
 	DeleteLink(source, target, linkType string) error
 
-	// Module operations
-	ListModules() []Module
-	GetModule(id string) (Module, bool)
-	RegisterModule(module Module) error
-
-	// Query operations
-	QueryNodesByModule(moduleID string) ([]*Node, error)
-	QueryLinksByModule(moduleID string) ([]*Link, error)
-
 	// Close closes the repository
 	Close() error
 }
