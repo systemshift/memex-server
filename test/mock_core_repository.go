@@ -3,7 +3,6 @@
 // - AddNode to return (string, error)
 // - AddNodeWithID to return error
 // - GetLinks to return []*core.Link
-// - GetModule to return (core.Module, bool)
 // - ListNodes to return ([]string, error)
 
 package test
@@ -16,19 +15,15 @@ import (
 
 // MockCoreRepository is a test double implementing core.Repository for migration tests.
 type MockCoreRepository struct {
-	nodes          map[string]*core.Node
-	links          map[string][]*core.Link
-	modules        map[string]core.Module
-	enabledModules map[string]bool
+	nodes map[string]*core.Node
+	links map[string][]*core.Link
 }
 
 // NewMockCoreRepository builds a fresh in-memory repository that satisfies core.Repository.
 func NewMockCoreRepository() *MockCoreRepository {
 	return &MockCoreRepository{
-		nodes:          make(map[string]*core.Node),
-		links:          make(map[string][]*core.Link),
-		modules:        make(map[string]core.Module),
-		enabledModules: make(map[string]bool),
+		nodes: make(map[string]*core.Node),
+		links: make(map[string][]*core.Link),
 	}
 }
 
@@ -127,69 +122,6 @@ func (r *MockCoreRepository) GetLinks(nodeID string) ([]*core.Link, error) {
 // QueryLinks retrieves all links for a given node.
 func (r *MockCoreRepository) QueryLinks(nodeID string) ([]*core.Link, error) {
 	return r.links[nodeID], nil
-}
-
-// GetModule returns a module by ID.
-func (r *MockCoreRepository) GetModule(id string) (core.Module, bool) {
-	m, ok := r.modules[id]
-	return m, ok
-}
-
-// RegisterModule registers a new module.
-func (r *MockCoreRepository) RegisterModule(mod core.Module) error {
-	if _, exists := r.modules[mod.ID()]; exists {
-		return fmt.Errorf("module already registered: %s", mod.ID())
-	}
-	r.modules[mod.ID()] = mod
-	r.enabledModules[mod.ID()] = true
-	return nil
-}
-
-// UnregisterModule removes a module.
-func (r *MockCoreRepository) UnregisterModule(moduleID string) error {
-	if _, exists := r.modules[moduleID]; !exists {
-		return fmt.Errorf("module not found: %s", moduleID)
-	}
-	delete(r.modules, moduleID)
-	delete(r.enabledModules, moduleID)
-	return nil
-}
-
-// ListModules returns all registered modules.
-func (r *MockCoreRepository) ListModules() []core.Module {
-	var out []core.Module
-	for _, mod := range r.modules {
-		out = append(out, mod)
-	}
-	return out
-}
-
-// QueryNodesByModule filters nodes by "module" field in metadata.
-func (r *MockCoreRepository) QueryNodesByModule(moduleID string) ([]*core.Node, error) {
-	var results []*core.Node
-	for _, nd := range r.nodes {
-		if nd.Meta != nil {
-			if modID, ok := nd.Meta["module"].(string); ok && modID == moduleID {
-				results = append(results, nd)
-			}
-		}
-	}
-	return results, nil
-}
-
-// QueryLinksByModule filters links by "module" field in metadata.
-func (r *MockCoreRepository) QueryLinksByModule(moduleID string) ([]*core.Link, error) {
-	var results []*core.Link
-	for _, bucket := range r.links {
-		for _, l := range bucket {
-			if l.Meta != nil {
-				if modID, ok := l.Meta["module"].(string); ok && modID == moduleID {
-					results = append(results, l)
-				}
-			}
-		}
-	}
-	return results, nil
 }
 
 // GetContent fetches the node's content by ID.
