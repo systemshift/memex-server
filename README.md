@@ -226,8 +226,8 @@ go test ./internal/memex/storage/...
 
 ## Future Enhancements
 
-- Graph import/export capabilities
-- Subgraph selection and migration
+- ~~Graph import/export capabilities~~ ✓
+- ~~Subgraph selection and migration~~ ✓
 - Advanced graph queries
 - Content versioning
 - Collaborative features
