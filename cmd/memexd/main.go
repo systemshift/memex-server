@@ -7,50 +7,62 @@ import (
 	"html/template"
 	"log"
 	"net/http"
+	"os"
 	"path/filepath"
 
-	"github.com/systemshift/memex/internal/memex/storage"
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
+	"github.com/systemshift/memex/internal/memex/core"
+	"github.com/systemshift/memex/internal/memex/repository"
 )
 
+// Server handles HTTP requests and manages the repository
 type Server struct {
-	memex    *storage.MXStore
+	repo     core.Repository
 	template *template.Template
 }
 
-type GraphData struct {
-	Nodes []NodeData `json:"nodes"`
-	Edges []EdgeData `json:"edges"`
+// GraphResponse represents the graph visualization data
+type GraphResponse struct {
+	Nodes []NodeResponse `json:"nodes"`
+	Links []LinkResponse `json:"links"`
 }
 
-type NodeData struct {
-	ID      string         `json:"id"`
-	Type    string         `json:"type"`
-	Meta    map[string]any `json:"meta"`
-	Created string         `json:"created"`
+// NodeResponse represents a node in the graph visualization
+type NodeResponse struct {
+	ID       string                 `json:"id"`
+	Type     string                 `json:"type"`
+	Meta     map[string]interface{} `json:"meta"`
+	Created  string                 `json:"created"`
+	Modified string                 `json:"modified"`
 }
 
-type EdgeData struct {
-	Source string         `json:"source"`
-	Target string         `json:"target"`
-	Type   string         `json:"type"`
-	Meta   map[string]any `json:"meta"`
+// LinkResponse represents a link in the graph visualization
+type LinkResponse struct {
+	Source   string                 `json:"source"`
+	Target   string                 `json:"target"`
+	Type     string                 `json:"type"`
+	Meta     map[string]interface{} `json:"meta"`
+	Created  string                 `json:"created"`
+	Modified string                 `json:"modified"`
 }
 
 func main() {
+	// Parse command line flags
 	addr := flag.String("addr", ":3000", "HTTP service address")
-	repo := flag.String("repo", "", "Repository path")
+	repoPath := flag.String("repo", "", "Repository path")
 	flag.Parse()
 
-	if *repo == "" {
+	if *repoPath == "" {
 		log.Fatal("Repository path required")
 	}
 
-	// Open repository
-	store, err := storage.OpenMX(*repo)
+	// Initialize repository
+	repo, err := repository.Open(*repoPath)
 	if err != nil {
 		log.Fatalf("Error opening repository: %v", err)
 	}
-	defer store.Close()
+	defer repo.Close()
 
 	// Parse templates
 	tmpl, err := template.ParseGlob("cmd/memexd/templates/*.html")
@@ -60,25 +72,37 @@ func main() {
 
 	// Create server
 	server := &Server{
-		memex:    store,
+		repo:     repo,
 		template: tmpl,
 	}
 
-	// Setup routes
-	http.HandleFunc("/", server.handleIndex)
-	http.HandleFunc("/api/graph", server.handleGraph)
-	http.HandleFunc("/api/content/", server.handleContent)
-	http.HandleFunc("/node/", server.handleNode)
+	// Create router
+	r := chi.NewRouter()
 
-	// Serve static files
-	fs := http.FileServer(http.Dir("cmd/memexd/static"))
-	http.Handle("/static/", http.StripPrefix("/static/", fs))
+	// Middleware
+	r.Use(middleware.Logger)
+	r.Use(middleware.Recoverer)
+	r.Use(middleware.Compress(5))
+
+	// Routes
+	r.Get("/", server.handleIndex)
+	r.Route("/api", func(r chi.Router) {
+		r.Get("/graph", server.handleGraph)
+		r.Get("/nodes/{id}", server.handleGetNode)
+		r.Get("/nodes/{id}/content", server.handleGetContent)
+	})
+
+	// Static files
+	workDir, _ := os.Getwd()
+	filesDir := http.Dir(filepath.Join(workDir, "cmd/memexd/static"))
+	r.Handle("/static/*", http.StripPrefix("/static/", http.FileServer(filesDir)))
 
 	// Start server
 	log.Printf("Starting server on %s", *addr)
-	log.Fatal(http.ListenAndServe(*addr, nil))
+	log.Fatal(http.ListenAndServe(*addr, r))
 }
 
+// handleIndex serves the main page
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	if err := s.template.ExecuteTemplate(w, "index.html", nil); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -86,95 +110,135 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handleGraph returns the graph data for visualization
 func (s *Server) handleGraph(w http.ResponseWriter, r *http.Request) {
 	// Get all nodes
-	var graph GraphData
-	for _, entry := range s.memex.Nodes() {
-		node, err := s.memex.GetNode(fmt.Sprintf("%x", entry.ID[:]))
+	nodeIDs, err := s.repo.ListNodes()
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Error listing nodes: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	response := GraphResponse{
+		Nodes: make([]NodeResponse, 0, len(nodeIDs)),
+		Links: make([]LinkResponse, 0),
+	}
+
+	// Process each node
+	for _, id := range nodeIDs {
+		node, err := s.repo.GetNode(id)
 		if err != nil {
+			log.Printf("Error getting node %s: %v", id, err)
 			continue
 		}
 
-		// Add node
-		graph.Nodes = append(graph.Nodes, NodeData{
-			ID:      node.ID,
-			Type:    node.Type,
-			Meta:    node.Meta,
-			Created: node.Created.Format("2006-01-02 15:04:05"),
+		// Add node to response
+		response.Nodes = append(response.Nodes, NodeResponse{
+			ID:       node.ID,
+			Type:     node.Type,
+			Meta:     node.Meta,
+			Created:  node.Created.Format("2006-01-02 15:04:05"),
+			Modified: node.Modified.Format("2006-01-02 15:04:05"),
 		})
 
-		// Get links
-		links, err := s.memex.GetLinks(node.ID)
+		// Get and process links
+		links, err := s.repo.GetLinks(node.ID)
 		if err != nil {
+			log.Printf("Error getting links for node %s: %v", id, err)
 			continue
 		}
 
-		// Add edges
 		for _, link := range links {
-			graph.Edges = append(graph.Edges, EdgeData{
-				Source: node.ID,
-				Target: link.Target,
-				Type:   link.Type,
-				Meta:   link.Meta,
+			response.Links = append(response.Links, LinkResponse{
+				Source:   link.Source,
+				Target:   link.Target,
+				Type:     link.Type,
+				Meta:     link.Meta,
+				Created:  link.Created.Format("2006-01-02 15:04:05"),
+				Modified: link.Modified.Format("2006-01-02 15:04:05"),
 			})
 		}
 	}
 
-	// Write response
+	// Send response
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(graph); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		http.Error(w, fmt.Sprintf("Error encoding response: %v", err), http.StatusInternalServerError)
 		return
 	}
 }
 
-func (s *Server) handleContent(w http.ResponseWriter, r *http.Request) {
-	// Get content hash from URL
-	hash := filepath.Base(r.URL.Path)
-
-	// Reconstruct content from chunks
-	content, err := s.memex.ReconstructContent(hash)
-	if err != nil {
-		http.Error(w, "Content not found", http.StatusNotFound)
+// handleGetNode returns information about a specific node
+func (s *Server) handleGetNode(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		http.Error(w, "Node ID required", http.StatusBadRequest)
 		return
 	}
 
-	// Write response
-	w.Header().Set("Content-Type", "text/plain")
+	node, err := s.repo.GetNode(id)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Error getting node: %v", err), http.StatusNotFound)
+		return
+	}
+
+	// Create response with formatted timestamps
+	response := struct {
+		ID       string                 `json:"id"`
+		Type     string                 `json:"type"`
+		Content  string                 `json:"content"`
+		Meta     map[string]interface{} `json:"meta"`
+		Created  string                 `json:"created"`
+		Modified string                 `json:"modified"`
+	}{
+		ID:       node.ID,
+		Type:     node.Type,
+		Content:  string(node.Content),
+		Meta:     node.Meta,
+		Created:  node.Created.Format("2006-01-02 15:04:05"),
+		Modified: node.Modified.Format("2006-01-02 15:04:05"),
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		http.Error(w, fmt.Sprintf("Error encoding response: %v", err), http.StatusInternalServerError)
+		return
+	}
+}
+
+// handleGetContent returns the content of a node
+func (s *Server) handleGetContent(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		http.Error(w, "Node ID required", http.StatusBadRequest)
+		return
+	}
+
+	// Get node first to check type and get metadata
+	node, err := s.repo.GetNode(id)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Error getting node: %v", err), http.StatusNotFound)
+		return
+	}
+
+	// Get content
+	content, err := s.repo.GetContent(id)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Error getting content: %v", err), http.StatusNotFound)
+		return
+	}
+
+	// Set content type if available in metadata
+	if contentType, ok := node.Meta["content-type"].(string); ok {
+		w.Header().Set("Content-Type", contentType)
+	} else {
+		w.Header().Set("Content-Type", "application/octet-stream")
+	}
+
+	// Set filename for download if available
+	if filename, ok := node.Meta["filename"].(string); ok {
+		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
+	}
+
 	w.Write(content)
-}
-
-func (s *Server) handleNode(w http.ResponseWriter, r *http.Request) {
-	// Get node ID from URL
-	id := filepath.Base(r.URL.Path)
-
-	// Get node
-	node, err := s.memex.GetNode(id)
-	if err != nil {
-		http.Error(w, "Node not found", http.StatusNotFound)
-		return
-	}
-
-	// If file, serve content
-	if node.Type == "file" {
-		if contentHash, ok := node.Meta["content"].(string); ok {
-			content, err := s.memex.ReconstructContent(contentHash)
-			if err != nil {
-				http.Error(w, "Content not found", http.StatusNotFound)
-				return
-			}
-
-			// Set filename for download
-			if filename, ok := node.Meta["filename"].(string); ok {
-				w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
-			}
-
-			w.Write(content)
-			return
-		}
-	}
-
-	// Otherwise show node info
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(node)
 }
