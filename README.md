@@ -42,13 +42,6 @@ memexd --version
 3. Add the extracted directory to your PATH
 4. Verify installation by running `memex --version` and `memexd --version`
 
-### Using Homebrew (macOS)
-
-```bash
-# Install both memex and memexd
-brew install systemshift/memex/memex
-```
-
 ### Build from Source
 
 ```bash
