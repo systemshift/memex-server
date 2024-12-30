@@ -9,12 +9,21 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/systemshift/memex/internal/memex"
 	"github.com/systemshift/memex/internal/memex/core"
 	"github.com/systemshift/memex/internal/memex/repository"
 )
+
+// VersionResponse represents version information
+type VersionResponse struct {
+	Version   string `json:"version"`
+	Commit    string `json:"commit"`
+	BuildDate string `json:"buildDate"`
+}
 
 // Server handles HTTP requests and manages the repository
 type Server struct {
@@ -51,7 +60,13 @@ func main() {
 	// Parse command line flags
 	addr := flag.String("addr", ":3000", "HTTP service address")
 	repoPath := flag.String("repo", "", "Repository path")
+	showVersion := flag.Bool("version", false, "Show version information")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Println(memex.BuildInfo())
+		os.Exit(0)
+	}
 
 	if *repoPath == "" {
 		log.Fatal("Repository path required")
@@ -87,6 +102,7 @@ func main() {
 	// Routes
 	r.Get("/", server.handleIndex)
 	r.Route("/api", func(r chi.Router) {
+		r.Get("/version", server.handleVersion)
 		r.Get("/graph", server.handleGraph)
 		r.Get("/nodes/{id}", server.handleGetNode)
 		r.Get("/nodes/{id}/content", server.handleGetContent)
@@ -241,4 +257,24 @@ func (s *Server) handleGetContent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Write(content)
+}
+
+// handleVersion returns version information
+func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
+	info := strings.Split(memex.BuildInfo(), "\n")
+	version := strings.TrimPrefix(info[0], "Version: ")
+	commit := strings.TrimPrefix(info[1], "Commit: ")
+	date := strings.TrimPrefix(info[2], "Build Date: ")
+
+	response := VersionResponse{
+		Version:   version,
+		Commit:    commit,
+		BuildDate: date,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		http.Error(w, fmt.Sprintf("Error encoding response: %v", err), http.StatusInternalServerError)
+		return
+	}
 }

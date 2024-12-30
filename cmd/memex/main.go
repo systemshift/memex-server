@@ -6,8 +6,17 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/systemshift/memex/pkg/memex"
+	"github.com/systemshift/memex/internal/memex"
 )
+
+var (
+	showVersion = flag.Bool("version", false, "Show version information")
+)
+
+func printVersion() {
+	fmt.Println(memex.BuildInfo())
+	os.Exit(0)
+}
 
 func usage() {
 	fmt.Printf(`Usage: %s <command> [arguments]
@@ -21,6 +30,7 @@ Built-in Commands:
   link <src> <dst> <type>  Create a link between nodes
   links <id>               Show links for a node
   status                   Show repository status
+  version                  Show version information
   export <path>            Export repository to tar archive
   import <path>            Import repository from tar archive
 
@@ -46,6 +56,10 @@ func main() {
 
 	flag.Usage = usage
 	flag.Parse()
+
+	if *showVersion {
+		printVersion()
+	}
 
 	cmds := memex.NewCommands()
 	defer cmds.Close()
@@ -137,6 +151,15 @@ func main() {
 			os.Exit(1)
 		}
 		err = cmds.Status()
+
+	case "version":
+		if err := cmds.AutoConnect(); err == nil {
+			// If connected to a repo, show its version too
+			err = cmds.ShowVersion()
+		} else {
+			// Just show memex version
+			fmt.Println(memex.BuildInfo())
+		}
 
 	case "export":
 		if len(args) != 1 {

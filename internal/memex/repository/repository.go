@@ -21,15 +21,17 @@ const MagicNumber = "MEMEX01"
 
 // Header represents the .mx file header (128 bytes)
 type Header struct {
-	Magic     [7]byte  // "MEMEX01"
-	Version   uint8    // Format version
-	Created   int64    // Creation timestamp (Unix seconds)
-	Modified  int64    // Last modified timestamp (Unix seconds)
-	NodeCount uint32   // Number of nodes
-	EdgeCount uint32   // Number of edges
-	NodeIndex uint64   // Offset to node index
-	EdgeIndex uint64   // Offset to edge index
-	Reserved  [64]byte // Future use
+	Magic         [7]byte  // "MEMEX01"
+	FormatVersion uint8    // Repository format version (major)
+	FormatMinor   uint8    // Repository format version (minor)
+	MemexVersion  [32]byte // Memex version that created the repository
+	Created       int64    // Creation timestamp (Unix seconds)
+	Modified      int64    // Last modified timestamp (Unix seconds)
+	NodeCount     uint32   // Number of nodes
+	EdgeCount     uint32   // Number of edges
+	NodeIndex     uint64   // Offset to node index
+	EdgeIndex     uint64   // Offset to edge index
+	Reserved      [31]byte // Future use
 }
 
 // Repository represents a content repository
@@ -59,13 +61,15 @@ func Create(path string) (*Repository, error) {
 	// Initialize header
 	now := time.Now().UTC().Unix()
 	header := Header{
-		Version:   1,
-		Created:   now,
-		Modified:  now,
-		NodeCount: 0,
-		EdgeCount: 0,
+		FormatVersion: core.CurrentVersion.Major,
+		FormatMinor:   core.CurrentVersion.Minor,
+		Created:       now,
+		Modified:      now,
+		NodeCount:     0,
+		EdgeCount:     0,
 	}
 	copy(header.Magic[:], MagicNumber)
+	copy(header.MemexVersion[:], []byte(core.CurrentVersion.String()))
 
 	// Write header
 	if err := binary.Write(file, binary.LittleEndian, &header); err != nil {
@@ -117,10 +121,22 @@ func Open(path string) (*Repository, error) {
 		return nil, fmt.Errorf("reading header: %w", err)
 	}
 
-	// Verify magic number
+	// Verify magic number and version compatibility
 	if string(header.Magic[:]) != MagicNumber {
 		file.Close()
 		return nil, fmt.Errorf("invalid repository file")
+	}
+
+	// Check format version compatibility
+	repoVersion := core.RepositoryVersion{
+		Major: header.FormatVersion,
+		Minor: header.FormatMinor,
+	}
+
+	if !core.CurrentVersion.IsCompatible(repoVersion) {
+		file.Close()
+		return nil, fmt.Errorf("incompatible repository version %s (current version: %s)",
+			repoVersion.String(), core.CurrentVersion.String())
 	}
 
 	// Create repository instance

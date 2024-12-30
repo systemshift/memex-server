@@ -18,6 +18,39 @@ Memex is a graph-oriented data management tool.
 
 ## Installation
 
+### From Pre-built Binaries
+
+Download the latest pre-built binaries for your platform from the [GitHub Releases](https://github.com/systemshift/memex/releases) page.
+
+#### Linux and macOS
+```bash
+# Download and extract the archive
+tar xzf memex_<OS>_<ARCH>.tar.gz
+
+# Move binaries to your PATH
+sudo mv memex /usr/local/bin/
+sudo mv memexd /usr/local/bin/
+
+# Verify installation
+memex --version
+memexd --version
+```
+
+#### Windows
+1. Download the ZIP archive for Windows
+2. Extract the contents
+3. Add the extracted directory to your PATH
+4. Verify installation by running `memex --version` and `memexd --version`
+
+### Using Homebrew (macOS)
+
+```bash
+# Install both memex and memexd
+brew install systemshift/memex/memex
+```
+
+### Build from Source
+
 ```bash
 # Build the CLI tool
 go build -o ~/bin/memex ./cmd/memex
@@ -39,6 +72,9 @@ memex connect myrepo.mx
 
 # Show repository status
 memex status
+
+# Show version information
+memex version
 
 # Add a file
 memex add document.txt
