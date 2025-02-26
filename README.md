@@ -168,6 +168,21 @@ Then visit `http://localhost:3000` to access the web interface, which provides:
 - Command system integration
 - Metadata support for module data
 
+Module commands:
+```bash
+# Install a module
+memex module install <source>
+
+# Remove a module
+memex module remove <module-id>
+
+# List installed modules
+memex module list
+
+# Run a module command
+memex <module-id> <command> [args...]
+```
+
 ### Content Storage
 
 - Content split into chunks:

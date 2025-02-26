@@ -34,6 +34,12 @@ Built-in Commands:
   export <path>            Export repository to tar archive
   import <path>            Import repository from tar archive
 
+Module Commands:
+  module install <source>  Install a module from a source
+  module remove <id>       Remove a module
+  module list              List installed modules
+  <module-id> <command>    Execute a module command
+
 Export options:
   --nodes <id1,id2,...>    Export specific nodes and their subgraph
   --depth <n>              Maximum depth for subgraph export
@@ -190,8 +196,17 @@ func main() {
 
 		err = cmds.Import(args[0], opts)
 
+	case "module":
+		err = cmds.Module(args...)
+
 	default:
-		usage()
+		// Check if it's a module command
+		if err := cmds.AutoConnect(); err == nil {
+			// Try to handle as a module command
+			err = cmds.HandleModule(cmd, args...)
+		} else {
+			usage()
+		}
 	}
 
 	if err != nil {

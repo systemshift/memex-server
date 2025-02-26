@@ -119,3 +119,13 @@ func (c *Commands) Import(path string, opts ImportOptions) error {
 	}
 	return ImportCommand(args...)
 }
+
+// Module handles module-related commands
+func (c *Commands) Module(args ...string) error {
+	return ModuleCommand(args...)
+}
+
+// HandleModule handles a module-specific command
+func (c *Commands) HandleModule(moduleID string, args ...string) error {
+	return HandleModuleCommand(moduleID, args...)
+}
