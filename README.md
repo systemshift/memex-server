@@ -1,8 +1,8 @@
 # Memex - Personal Knowledge Graph
 
-[![Go Report Card](https://goreportcard.com/badge/github.com/aviaryan/memex)](https://goreportcard.com/report/github.com/aviaryan/memex)
+[![Go Report Card](https://goreportcard.com/badge/github.com/systemshift/memex)](https://goreportcard.com/report/github.com/systemshift/memex)
 [![License](https://img.shields.io/badge/License-BSD%203--Clause-blue.svg)](LICENSE)
-[![GitHub release](https://img.shields.io/github/v/release/aviaryan/memex)](https://github.com/aviaryan/memex/releases)
+[![GitHub release](https://img.shields.io/github/v/release/systemshift/memex)](https://github.com/systemshift/memex/releases)
 
 Memex is a graph-oriented data management tool.
 
