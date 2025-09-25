@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"plugin"
 	"strings"
 
 	"github.com/systemshift/memex/pkg/module"
@@ -72,103 +71,67 @@ func (m *ModuleManager) saveConfig() error {
 	return nil
 }
 
-// Install installs a module from a source
+// Install installs a module using 'go install'
 func (m *ModuleManager) Install(source string) error {
-	// Determine if source is a git repository or local directory
-	isGit := strings.HasPrefix(source, "https://") || strings.HasPrefix(source, "git://")
-
-	// Create modules directory
-	modulesDir := filepath.Join(m.configDir, "modules")
-	if err := os.MkdirAll(modulesDir, 0755); err != nil {
-		return fmt.Errorf("creating modules directory: %w", err)
+	// Check if source is a Go module URL
+	if !strings.Contains(source, "/") {
+		return fmt.Errorf("invalid module source: must be a Go module URL like 'github.com/user/memex-module@latest'")
 	}
 
-	// Create temporary directory for building
-	tempDir, err := os.MkdirTemp("", "memex-module-*")
+	// Install using go install
+	cmd := exec.Command("go", "install", source)
+	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("creating temp directory: %w", err)
-	}
-	defer os.RemoveAll(tempDir)
-
-	// Clone or copy source
-	if isGit {
-		cmd := exec.Command("git", "clone", source, tempDir)
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("cloning repository: %w", err)
-		}
-	} else {
-		// Check if source exists
-		if _, err := os.Stat(source); err != nil {
-			return fmt.Errorf("source directory not found: %w", err)
-		}
-
-		// Copy source to temp directory
-		cmd := exec.Command("cp", "-r", source+"/.", tempDir)
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("copying source: %w", err)
-		}
+		return fmt.Errorf("installing module: %w\nOutput: %s", err, string(output))
 	}
 
-	// Check for go.mod file
-	goModPath := filepath.Join(tempDir, "go.mod")
-	if _, err := os.Stat(goModPath); err != nil {
-		return fmt.Errorf("go.mod file not found in module source")
+	// Extract module name from source (e.g., github.com/user/memex-ast -> memex-ast)
+	parts := strings.Split(source, "/")
+	moduleName := parts[len(parts)-1]
+	// Remove version suffix if present (e.g., memex-ast@latest -> memex-ast)
+	if idx := strings.Index(moduleName, "@"); idx != -1 {
+		moduleName = moduleName[:idx]
 	}
 
-	// Build module
-	cmd := exec.Command("go", "build", "-o", filepath.Join(tempDir, "module.so"), "-buildmode=plugin", ".")
-	cmd.Dir = tempDir
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("building module: %w", err)
+	// Check if binary exists in PATH
+	if _, err := exec.LookPath(moduleName); err != nil {
+		return fmt.Errorf("module binary '%s' not found in PATH after installation", moduleName)
 	}
 
-	// Load module to get ID
-	p, err := plugin.Open(filepath.Join(tempDir, "module.so"))
+	// Get module info by running the binary with --info flag
+	cmd = exec.Command(moduleName, "--info")
+	output, err = cmd.Output()
 	if err != nil {
-		return fmt.Errorf("loading module: %w", err)
+		return fmt.Errorf("getting module info: %w", err)
 	}
 
-	newSymbol, err := p.Lookup("New")
-	if err != nil {
-		return fmt.Errorf("module does not export New function: %w", err)
+	// Parse module info (expecting JSON output)
+	var moduleInfo struct {
+		ID      string `json:"id"`
+		Version string `json:"version"`
 	}
-
-	newFunc, ok := newSymbol.(func() module.Module)
-	if !ok {
-		return fmt.Errorf("module New function has wrong signature")
+	if err := json.Unmarshal(output, &moduleInfo); err != nil {
+		// Fallback: use module name as ID
+		moduleInfo.ID = moduleName
+		moduleInfo.Version = "unknown"
 	}
-
-	mod := newFunc()
-	moduleID := mod.ID()
 
 	// Check if module already exists
-	if _, exists := m.modules[moduleID]; exists {
-		return fmt.Errorf("%w: %s", module.ErrModuleAlreadyExists, moduleID)
-	}
-
-	// Create module directory
-	moduleDir := filepath.Join(modulesDir, moduleID)
-	if err := os.MkdirAll(moduleDir, 0755); err != nil {
-		return fmt.Errorf("creating module directory: %w", err)
-	}
-
-	// Copy module files
-	cmd = exec.Command("cp", "-r", tempDir+"/.", moduleDir)
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("copying module files: %w", err)
+	if _, exists := m.modules[moduleInfo.ID]; exists {
+		return fmt.Errorf("%w: %s", module.ErrModuleAlreadyExists, moduleInfo.ID)
 	}
 
 	// Update configuration
-	m.modules[moduleID] = ModuleConfig{
-		Path:    moduleDir,
-		Version: mod.Version(),
+	m.modules[moduleInfo.ID] = ModuleConfig{
+		Path:    moduleName, // Store binary name instead of path
+		Version: moduleInfo.Version,
 	}
 
 	if err := m.saveConfig(); err != nil {
 		return fmt.Errorf("saving configuration: %w", err)
 	}
 
-	fmt.Printf("Module %s installed successfully\n", moduleID)
+	fmt.Printf("Module %s installed successfully\n", moduleInfo.ID)
 	return nil
 }
 
@@ -186,10 +149,10 @@ func (m *ModuleManager) Remove(moduleID string) error {
 		}
 	}
 
-	// Remove module directory
-	if err := os.RemoveAll(config.Path); err != nil {
-		return fmt.Errorf("removing module directory: %w", err)
-	}
+	// Note: We don't actually remove the binary from the system
+	// Users can manually remove it using 'go clean -i <module>' if needed
+	fmt.Printf("Module %s removed from memex registry\n", moduleID)
+	fmt.Printf("Note: Binary '%s' is still installed. Use 'go clean -i <module>' to remove it completely\n", config.Path)
 
 	// Update configuration
 	delete(m.modules, moduleID)
@@ -197,7 +160,6 @@ func (m *ModuleManager) Remove(moduleID string) error {
 		return fmt.Errorf("saving configuration: %w", err)
 	}
 
-	fmt.Printf("Module %s removed successfully\n", moduleID)
 	return nil
 }
 
@@ -216,64 +178,29 @@ func (m *ModuleManager) List() error {
 	return nil
 }
 
-// loadModule loads a module from the given path
-func (m *ModuleManager) loadModule(moduleID, modulePath string) error {
-	// Check if module is already loaded
-	if m.registry.HasModule(moduleID) {
-		return nil
+// isModuleAvailable checks if a module binary is available in PATH
+func (m *ModuleManager) isModuleAvailable(moduleID string) bool {
+	config, exists := m.modules[moduleID]
+	if !exists {
+		return false
 	}
 
-	// Load module
-	p, err := plugin.Open(filepath.Join(modulePath, "module.so"))
-	if err != nil {
-		return fmt.Errorf("loading module: %w", err)
-	}
-
-	newSymbol, err := p.Lookup("New")
-	if err != nil {
-		return fmt.Errorf("module does not export New function: %w", err)
-	}
-
-	newFunc, ok := newSymbol.(func() module.Module)
-	if !ok {
-		return fmt.Errorf("module New function has wrong signature")
-	}
-
-	mod := newFunc()
-	if mod.ID() != moduleID {
-		return fmt.Errorf("module ID mismatch: expected %s, got %s", moduleID, mod.ID())
-	}
-
-	// Initialize module
-	ctx := context.Background()
-	if err := mod.Init(ctx, m.registry); err != nil {
-		return fmt.Errorf("%w: %s", module.ErrModuleInitFailed, err)
-	}
-
-	// Register module
-	if err := m.registry.Register(mod); err != nil {
-		return fmt.Errorf("registering module: %w", err)
-	}
-
-	// Start module
-	if err := mod.Start(ctx); err != nil {
-		return fmt.Errorf("starting module: %w", err)
-	}
-
-	return nil
+	// Check if binary exists in PATH
+	_, err := exec.LookPath(config.Path)
+	return err == nil
 }
 
-// LoadAllModules loads all modules
+// LoadAllModules validates all registered modules are available
 func (m *ModuleManager) LoadAllModules() error {
-	for id, config := range m.modules {
-		if err := m.loadModule(id, config.Path); err != nil {
-			return fmt.Errorf("loading module %s: %w", id, err)
+	for id := range m.modules {
+		if !m.isModuleAvailable(id) {
+			fmt.Printf("Warning: module %s binary not found in PATH\n", id)
 		}
 	}
 	return nil
 }
 
-// ExecuteCommand executes a module command
+// ExecuteCommand executes a module command using subprocess
 func (m *ModuleManager) ExecuteCommand(moduleID, cmd string, args []string) error {
 	// Check if module exists
 	config, exists := m.modules[moduleID]
@@ -281,91 +208,66 @@ func (m *ModuleManager) ExecuteCommand(moduleID, cmd string, args []string) erro
 		return fmt.Errorf("%w: %s", module.ErrModuleNotFound, moduleID)
 	}
 
-	// Check if module is loaded
-	if !m.registry.HasModule(moduleID) {
-		if err := m.loadModule(moduleID, config.Path); err != nil {
-			return fmt.Errorf("loading module: %w", err)
-		}
+	// Check if module binary is available
+	if !m.isModuleAvailable(moduleID) {
+		return fmt.Errorf("module binary '%s' not found in PATH", config.Path)
 	}
 
-	// Execute command
-	ctx := context.Background()
-	result, err := m.registry.RouteCommand(ctx, moduleID, cmd, args)
-	if err != nil {
-		return fmt.Errorf("executing command: %w", err)
-	}
+	// Prepare command arguments
+	cmdArgs := []string{cmd}
+	cmdArgs = append(cmdArgs, args...)
 
-	// Print result if it's a string
-	if str, ok := result.(string); ok {
-		fmt.Println(str)
+	// Execute subprocess
+	execCmd := exec.Command(config.Path, cmdArgs...)
+	execCmd.Stdout = os.Stdout
+	execCmd.Stderr = os.Stderr
+	execCmd.Stdin = os.Stdin
+
+	if err := execCmd.Run(); err != nil {
+		return fmt.Errorf("executing module command: %w", err)
 	}
 
 	return nil
 }
 
-// ModuleRegistry implements the module.Registry interface
+// ModuleRegistry keeps track of installed modules for subprocess execution
 type ModuleRegistry struct {
-	modules map[string]module.Module
-	hooks   map[string][]module.Hook
+	modules map[string]ModuleConfig
 }
 
 // NewModuleRegistry creates a new module registry
 func NewModuleRegistry() *ModuleRegistry {
 	return &ModuleRegistry{
-		modules: make(map[string]module.Module),
-		hooks:   make(map[string][]module.Hook),
+		modules: make(map[string]ModuleConfig),
 	}
 }
 
-// Register registers a module
-func (r *ModuleRegistry) Register(mod module.Module) error {
-	if _, exists := r.modules[mod.ID()]; exists {
-		return fmt.Errorf("%w: %s", module.ErrModuleAlreadyExists, mod.ID())
+// Register registers a module configuration
+func (r *ModuleRegistry) Register(moduleID string, config ModuleConfig) error {
+	if _, exists := r.modules[moduleID]; exists {
+		return fmt.Errorf("%w: %s", module.ErrModuleAlreadyExists, moduleID)
 	}
 
-	r.modules[mod.ID()] = mod
-
-	// Register hooks
-	for _, hook := range mod.Hooks() {
-		r.hooks[hook.Name] = append(r.hooks[hook.Name], hook)
-	}
-
+	r.modules[moduleID] = config
 	return nil
 }
 
 // Unregister unregisters a module
 func (r *ModuleRegistry) Unregister(moduleID string) error {
-	mod, exists := r.modules[moduleID]
+	_, exists := r.modules[moduleID]
 	if !exists {
 		return fmt.Errorf("%w: %s", module.ErrModuleNotFound, moduleID)
-	}
-
-	// Stop module
-	ctx := context.Background()
-	if err := mod.Stop(ctx); err != nil {
-		return fmt.Errorf("stopping module: %w", err)
-	}
-
-	// Unregister hooks
-	for _, moduleHook := range mod.Hooks() {
-		hooks := r.hooks[moduleHook.Name]
-		for i, h := range hooks {
-			if h.Name == moduleHook.Name {
-				r.hooks[moduleHook.Name] = append(hooks[:i], hooks[i+1:]...)
-				break
-			}
-		}
 	}
 
 	delete(r.modules, moduleID)
 	return nil
 }
 
-// GetModule returns a module by ID
-func (r *ModuleRegistry) GetModule(id string) (module.Module, error) {
+// GetModule returns module config by ID
+func (r *ModuleRegistry) GetModule(id string) (ModuleConfig, error) {
 	mod, exists := r.modules[id]
 	if !exists {
-		return nil, fmt.Errorf("%w: %s", module.ErrModuleNotFound, id)
+		return ModuleConfig{}, fmt.Errorf("%w: %s", module.ErrModuleNotFound, id)
 	}
 	return mod, nil
 }
@@ -376,55 +278,29 @@ func (r *ModuleRegistry) HasModule(id string) bool {
 	return exists
 }
 
-// ListModules returns a list of all modules
-func (r *ModuleRegistry) ListModules() []module.ModuleInfo {
-	modules := make([]module.ModuleInfo, 0, len(r.modules))
-	for _, mod := range r.modules {
-		modules = append(modules, module.ModuleInfo{
-			ID:          mod.ID(),
-			Name:        mod.Name(),
-			Description: mod.Description(),
-			Version:     mod.Version(),
-			Commands:    mod.Commands(),
-		})
+// ListModules returns a list of all registered modules
+func (r *ModuleRegistry) ListModules() []ModuleConfig {
+	modules := make([]ModuleConfig, 0, len(r.modules))
+	for _, config := range r.modules {
+		modules = append(modules, config)
 	}
 	return modules
 }
 
-// RouteCommand routes a command to the appropriate module
+// RouteCommand is deprecated in subprocess model - use ExecuteCommand directly
 func (r *ModuleRegistry) RouteCommand(ctx context.Context, moduleID, cmd string, args []string) (interface{}, error) {
-	mod, exists := r.modules[moduleID]
-	if !exists {
-		return nil, fmt.Errorf("%w: %s", module.ErrModuleNotFound, moduleID)
-	}
-	return mod.HandleCommand(ctx, cmd, args)
+	return nil, fmt.Errorf("RouteCommand is deprecated - use subprocess execution")
 }
 
-// RegisterHook registers a hook
+// Hook system is simplified for subprocess model
+// RegisterHook is deprecated
 func (r *ModuleRegistry) RegisterHook(hook module.Hook) error {
-	r.hooks[hook.Name] = append(r.hooks[hook.Name], hook)
-	return nil
+	return fmt.Errorf("hook system not implemented for subprocess modules")
 }
 
-// TriggerHook triggers a hook
+// TriggerHook is deprecated
 func (r *ModuleRegistry) TriggerHook(ctx context.Context, name string, data interface{}) ([]interface{}, error) {
-	hooks, exists := r.hooks[name]
-	if !exists {
-		return nil, nil
-	}
-
-	results := make([]interface{}, 0, len(hooks))
-	for _, mod := range r.modules {
-		result, err := mod.HandleHook(ctx, name, data)
-		if err != nil {
-			return nil, fmt.Errorf("handling hook: %w", err)
-		}
-		if result != nil {
-			results = append(results, result)
-		}
-	}
-
-	return results, nil
+	return nil, fmt.Errorf("hook system not implemented for subprocess modules")
 }
 
 // ModuleCommand handles module-related commands
