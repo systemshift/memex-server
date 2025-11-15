@@ -36,3 +36,7 @@ Thumbs.db
 # Project specific
 .vault/
 *.log
+
+# Binaries
+memex
+memex-server

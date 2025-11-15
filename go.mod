@@ -7,4 +7,7 @@ require (
 	golang.org/x/term v0.26.0
 )
 
-require golang.org/x/sys v0.27.0 // indirect
+require (
+	github.com/neo4j/neo4j-go-driver/v5 v5.28.4 // indirect
+	golang.org/x/sys v0.27.0 // indirect
+)
