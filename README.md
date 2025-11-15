@@ -1,291 +1,340 @@
-# Memex - Personal Knowledge Graph
+# Memex - Knowledge Graphs for Agentic AI
 
-[![Go Report Card](https://goreportcard.com/badge/github.com/aviaryan/memex)](https://goreportcard.com/report/github.com/aviaryan/memex)
+[![Go Report Card](https://goreportcard.com/badge/github.com/systemshift/memex)](https://goreportcard.com/report/github.com/systemshift/memex)
 [![License](https://img.shields.io/badge/License-BSD%203--Clause-blue.svg)](LICENSE)
-[![GitHub release](https://img.shields.io/github/v/release/aviaryan/memex)](https://github.com/aviaryan/memex/releases)
+[![GitHub release](https://img.shields.io/github/v/release/systemshift/memex)](https://github.com/systemshift/memex/releases)
 
-Memex is a graph-oriented data management tool.
+> **⚠️ Project Status:** Memex is undergoing a significant architectural pivot. See [ARCHITECTURE_PIVOT.md](ARCHITECTURE_PIVOT.md) for details.
 
-## Key Features
+Memex provides structured knowledge graphs with rich ontologies for AI agents. While RAG gives agents document chunks, Memex gives them **understanding of relationships, context, and structure**.
 
-- **DAG-Based Storage**: Content organized as nodes in a directed acyclic graph
-- **Content-Addressable**: All content stored and referenced by hash for integrity and deduplication
-- **Flexible Linking**: Create typed, directional relationships between content
-- **Transaction System**: Cryptographic verification of all graph modifications with hash chain
-- **Module System**: Extend functionality through Go packages
-- **Dual Interface**: Use either CLI tool or web interface
-- **Single File Storage**: All data contained in one .mx file for easy backup and portability
+## The Problem
 
-## Installation
+AI agents today suffer from context amnesia:
+- They retrieve similar documents but don't understand relationships
+- They can't reason about structure or causality
+- They start every query from scratch
+- They have no memory between sessions
+- They can't learn from their own history
 
-### From Pre-built Binaries
+## The Solution
 
-Download the latest pre-built binaries for your platform from the [GitHub Releases](https://github.com/systemshift/memex/releases) page.
+Memex is a **knowledge infrastructure layer** that sits between your data and your agents:
 
-#### Linux and macOS
-```bash
-# Download and extract the archive
-tar xzf memex_<OS>_<ARCH>.tar.gz
-
-# Move binaries to your PATH
-sudo mv memex /usr/local/bin/
-sudo mv memexd /usr/local/bin/
-
-# Verify installation
-memex --version
-memexd --version
+```
+Your Data → Memex → Structured Graph → AI Agents
 ```
 
-#### Windows
-1. Download the ZIP archive for Windows
-2. Extract the contents
-3. Add the extracted directory to your PATH
-4. Verify installation by running `memex --version` and `memexd --version`
+**What Memex provides:**
+1. **Ontology-Driven Graphs**: Define entity types and relationships for your domain
+2. **Hybrid Retrieval**: Vector search + graph traversal + LLM synthesis
+3. **Lens System**: Different ontology views (code, research, legal, business)
+4. **Contextual Memory**: Track query patterns and concept activations
+5. **Agent Integration**: Native tools for LangChain, CrewAI, AutoGPT
 
-### Build from Source
+## Use Cases
+
+### Development Memory (Launch Use Case)
+Give coding agents memory of your project history:
 
 ```bash
-# Build the CLI tool
-go build -o ~/bin/memex ./cmd/memex
+# Ingest your development history
+memex ingest-repo ./myproject
+memex ingest-terminal ~/.zsh_history
+memex ingest-llm-traces ./cursor_logs
 
-# Build the web server
-go build -o ~/bin/memexd ./cmd/memexd
+# Now agents can query:
+# "What approaches failed when fixing auth bugs?"
+# "Show me terminal commands that resolved database errors"
+# "What did the LLM suggest for similar issues?"
 ```
 
-## Usage
+**Entities:** Commit, Error, Edit, Terminal Session, LLM Prompt, Function, File
+**Relationships:** fixes, caused_by, attempts_to_fix, suggested_by, resolves
 
-### Command Line Interface
+**Value:** Agents don't repeat failed attempts. They learn from project history.
 
-```bash
-# Create a new repository
-memex init myrepo
+### Research Assistant
+Build citation graphs and concept ontologies:
 
-# Connect to existing repository
-memex connect myrepo.mx
+```python
+from memex import MemexClient
 
-# Show repository status
-memex status
+memex = MemexClient()
+memex.ingest_papers("./research_papers/", lens="academic")
 
-# Show version information
-memex version
-
-# Add a file
-memex add document.txt
-
-# Create a note (opens editor)
-memex
-
-# Create a link between nodes
-memex link <source-id> <target-id> <type> [note]
-
-# Show links for a node
-memex links <id>
-
-# Delete a node
-memex delete <id>
-
-# Verify transaction history
-memex verify
-
-# List installed modules
-memex module list
-
-# Run a module command
-memex <module-id> <command> [args...]
+# Query with structure
+result = memex.query(
+    "How does Einstein's work influence quantum computing?",
+    lens="academic",
+    depth=3
+)
+# Returns: Citation path + concept relationships + key papers
 ```
 
-### Web Interface
+**Entities:** Paper, Author, Concept, Method, Dataset
+**Relationships:** cites, introduces, applies_to, authored_by
 
-Start the web server:
-```bash
-memexd -addr :3000 -path myrepo.mx
-```
+### Legal/Compliance
+Navigate legal precedents and statutes:
 
-Then visit `http://localhost:3000` to access the web interface, which provides:
-- Graph visualization
-- File upload
-- Link management
-- Content search
-- Node metadata viewing
-- Transaction history viewing
-- Module management
-
-## Project Structure
-
-```
-.
-├── cmd/                    # Command-line tools
-│   ├── memex/             # CLI tool
-│   └── memexd/            # Web server
-├── internal/              # Internal packages
-│   └── memex/
-│       ├── core/          # Core types and interfaces
-│       ├── storage/       # Storage implementation
-│       ├── transaction/   # Transaction system
-│       ├── commands.go    # CLI commands
-│       ├── config.go      # Configuration
-│       └── editor.go      # Text editor
-├── pkg/                   # Public API
-│   └── module/           # Module system
-├── test/                  # Test files
-└── docs/                  # Documentation
+```python
+memex.query(
+    "Find precedents for GDPR violations in EU",
+    lens="legal",
+    jurisdiction="EU"
+)
+# Returns: Relevant cases + legal relationships + statute connections
 ```
 
 ## Architecture
 
-### Storage Format (.mx file)
+### Client-Server Model
 
-- Fixed-size header with metadata
-- Content chunks with reference counting
-- Node data (DAG nodes)
-- Edge data (DAG edges)
-- Index for efficient lookup
-- Transaction log for action history
-
-### Node Types
-
-- **Files**: External content added to the graph
-- **Notes**: Text content created within Memex
-- Each node has:
-  - Unique ID
-  - Content (stored as chunks)
-  - Metadata
-  - Links to other nodes
-
-### Link System
-
-- Directional relationships between nodes
-- Typed links (e.g., "references", "relates-to")
-- Optional metadata/notes on links
-- Maintains acyclic property
-
-### Module System
-
-- Extend functionality through Go packages
-- Standard interface for all modules
-- Built-in base implementation
-- Repository operations (nodes, links)
-- Command system integration
-- Metadata support for module data
-
-Module commands:
-```bash
-# Install a module
-memex module install <source>
-
-# Remove a module
-memex module remove <module-id>
-
-# List installed modules
-memex module list
-
-# Run a module command
-memex <module-id> <command> [args...]
+```
+┌─────────────────────────────────┐
+│  Memex CLI / Python SDK         │  ← Your interface
+└────────────┬────────────────────┘
+             │ HTTP/gRPC API
+             ↓
+┌─────────────────────────────────┐
+│      Memex Server (Go)          │  ← Core engine
+│  ├─ Graph DB (Neo4j)            │
+│  ├─ Ontology Engine             │
+│  ├─ Entity Extraction (LLM)     │
+│  ├─ Query Engine                │
+│  └─ Transaction Log             │
+└─────────────────────────────────┘
 ```
 
-### Content Storage
+**Why client-server?**
+- Scale to large datasets (millions of nodes)
+- Share knowledge across teams
+- Batch expensive LLM operations
+- Professional deployment options
 
-- Content split into chunks:
-  - Small content (≤1024 bytes): Word-based chunks
-  - Large content (>1024 bytes): Fixed-size chunks
-- Each chunk identified by SHA-256 hash
-- Reference counting for chunk management
-- Automatic content deduplication
-- Similar content detection through shared chunks
+## Quick Start
 
-### Transaction System
-
-- Cryptographic verification of all graph modifications
-- Hash chain of actions (like Git commits)
-- State consistency validation
-- Support for future branching/merging
-- Audit trail of all changes
-
-## Development
-
-### Building
+### Self-Hosted (Docker)
 
 ```bash
-# Get dependencies
-go mod download
+# Clone repo
+git clone https://github.com/systemshift/memex
+cd memex
 
-# Build everything
-go build ./...
+# Start server + Neo4j
+docker-compose up -d
 
-# Run tests
-go test ./...
+# Install CLI
+go install ./cmd/memex
+
+# Connect
+memex connect http://localhost:8080
+
+# Create ontology
+memex ontology create dev-history.yaml
+
+# Ingest data
+memex ingest-repo ./myproject
+
+# Query
+memex query "Show me auth-related errors from last month"
 ```
 
-### Creating Modules
-
-See [Module Guide](docs/MODULE.md) for detailed instructions on creating modules.
-
-Quick example:
-```go
-package myplugin
-
-import "memex/pkg/module"
-
-type MyModule struct {
-    *module.Base
-}
-
-func New() module.Module {
-    return &MyModule{
-        Base: module.NewBase("mymodule", "My Module", "Description"),
-    }
-}
-```
-
-### Testing
+### Cloud Hosted (Coming Soon)
 
 ```bash
-# Run all tests
-go test ./...
+# Connect to managed instance
+memex connect https://api.memex.cloud
 
-# Run tests with coverage
-go test -cover ./...
-
-# Run tests for a specific package
-go test ./internal/memex/storage/...
+# Same commands, zero ops
 ```
+
+## Integration with AI Agents
+
+### LangChain
+
+```python
+from memex import MemexClient
+from langchain.tools import Tool
+from langchain.agents import create_react_agent
+
+memex = MemexClient("http://localhost:8080")
+
+# Create tool
+memex_tool = Tool(
+    name="knowledge_graph",
+    description="Query structured knowledge graph with relationships",
+    func=lambda q: memex.query(q, lens="dev-history")
+)
+
+# Use in agent
+agent = create_react_agent(
+    llm=llm,
+    tools=[memex_tool, web_search, calculator]
+)
+
+result = agent.run("How did we fix the auth timeout issue?")
+```
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew
+from memex.crewai import MemexTool
+
+researcher = Agent(
+    role="Research Analyst",
+    tools=[MemexTool(lens="academic")],
+    goal="Analyze research papers"
+)
+
+task = Task(
+    description="Find papers about quantum entanglement",
+    agent=researcher
+)
+
+crew = Crew(agents=[researcher], tasks=[task])
+result = crew.kickoff()
+```
+
+## The Lens System
+
+**Lenses** define how to view your data:
+
+```yaml
+# dev-history-lens.yaml
+name: Development History
+description: Track code changes, errors, and solutions
+
+entities:
+  Commit:
+    properties: [hash, message, author, timestamp]
+  Error:
+    properties: [type, message, location, severity]
+  Fix:
+    properties: [approach, success, reasoning]
+
+relationships:
+  - Commit fixes Error
+  - Error caused_by Code
+  - Fix attempts Error
+  - LLM suggests Fix
+
+queries:
+  error_resolution: "Path from Error to successful Fix"
+  similar_issues: "Errors with similar Fix patterns"
+  effectiveness: "LLM suggestion success rate"
+```
+
+**Use different lenses for different domains:**
+- `dev-history`: Code, errors, fixes
+- `academic`: Papers, citations, concepts
+- `legal`: Cases, statutes, precedents
+- `business`: Companies, markets, relationships
+
+## Roadmap
+
+### Phase 1: Core Server (Current)
+- [x] Transaction system (from v1)
+- [x] Core graph types
+- [ ] Neo4j integration
+- [ ] HTTP API
+- [ ] CLI as API client
+- [ ] Basic ontology validation
+
+### Phase 2: Entity Extraction
+- [ ] LLM-powered entity extraction
+- [ ] Ontology-driven prompts
+- [ ] Batch processing
+- [ ] Template learning (for large datasets)
+
+### Phase 3: Python SDK
+- [ ] HTTP client wrapper
+- [ ] LangChain integration
+- [ ] Pydantic models
+- [ ] Async support
+- [ ] Example notebooks
+
+### Phase 4: Enhanced Features
+- [ ] ECS representations (model-agnostic embeddings)
+- [ ] Activation tracking (contextual memory)
+- [ ] Multi-model ensemble queries
+- [ ] Query-induced ontology evolution
+
+### Phase 5: Production Ready
+- [ ] Multi-tenancy
+- [ ] Access control
+- [ ] Observability
+- [ ] Cloud deployment
+- [ ] Enterprise features
 
 ## Documentation
 
-- [API Documentation](docs/API.md): HTTP API endpoints and usage
-- [Design Document](docs/DESIGN.md): Architecture and design decisions
-- [Development Guide](docs/DEVELOPMENT.md): Setup and contribution guidelines
-- [Module Guide](docs/MODULE.md): Creating and using modules
-- [Storage Implementation](docs/STORAGE.md): Detailed explanation of the storage system
-- [Transaction System](docs/TRANSACTION.md): Graph modification tracking and verification
-- [Migration Guide](docs/MIGRATION.md): Graph import/export and content migration
+- [Architecture Pivot](ARCHITECTURE_PIVOT.md) - Vision and design decisions
+- [API Documentation](docs/API.md) - HTTP API reference
+- [Ontology Guide](docs/ONTOLOGY.md) - Creating custom ontologies (coming soon)
+- [Lens Development](docs/LENSES.md) - Building domain-specific lenses (coming soon)
+- [Agent Integration](docs/AGENTS.md) - Using with LangChain/CrewAI (coming soon)
+- [Development Guide](docs/DEVELOPMENT.md) - Contributing to Memex
+
+## Why Memex?
+
+### vs Vector Databases
+| Vector DBs | Memex |
+|-----------|-------|
+| Semantic similarity | Semantic + structural relationships |
+| Returns chunks | Returns subgraphs |
+| Static retrieval | Dynamic context assembly |
+| No reasoning | Graph traversal + LLM synthesis |
+| No memory | Session and usage memory |
+
+### vs Traditional Graph DBs
+| Graph DBs | Memex |
+|-----------|-------|
+| Manual schema | LLM-extracted entities |
+| Expert queries | Natural language + lenses |
+| No vector search | Hybrid vector + graph |
+| Static | Learns from usage |
+| General purpose | Optimized for AI agents |
+
+### vs LangChain/LangGraph
+**Not competing, complementing:**
+- LangChain/LangGraph: Agent orchestration ("how to think")
+- Memex: Knowledge structure ("what to think about")
+- Use together: Agents call Memex as a tool
 
 ## Contributing
 
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
-## Future Enhancements
+**Priority areas:**
+- Lens definitions for different domains
+- Integration examples (LangChain, CrewAI, etc.)
+- Entity extraction patterns
+- Performance optimizations
+- Documentation improvements
 
-- ~~Graph import/export capabilities~~ ✓
-- ~~Subgraph selection and migration~~ ✓
-- Advanced graph queries
-- Content versioning
-- Collaborative features
-- Export/import to other formats
-- Graph visualization improvements
-- Search enhancements
-- Remote graph synchronization
-- Smarter chunking algorithms
-- Similarity detection tuning
-- Transaction branching and merging
-- Distributed verification
-- Time travel through graph history
-- Additional module types
+## Community
+
+- [GitHub Discussions](https://github.com/systemshift/memex/discussions) - Ask questions, share ideas
+- [Discord](https://discord.gg/memex) - Real-time chat (coming soon)
+- [Twitter](https://twitter.com/memex_ai) - Updates and announcements (coming soon)
 
 ## License
 
-This project is licensed under the BSD 3-Clause License - see the [LICENSE](LICENSE) file for details.
+Memex is licensed under the BSD 3-Clause License. See [LICENSE](LICENSE) for details.
+
+## Acknowledgments
+
+Built on the shoulders of giants:
+- Neo4j for graph database
+- LangChain for agent framework inspiration
+- The ECS architecture pattern from game engines
+- Research on GraphRAG and knowledge graphs
+
+---
+
+**Status Note:** Memex v1.x was a local-first personal knowledge tool. We're pivoting to v2.x as knowledge infrastructure for AI agents. The current codebase is in transition. See [ARCHITECTURE_PIVOT.md](ARCHITECTURE_PIVOT.md) for the full story.
+
+If you're interested in the v1.x branch, see the `v1-stable` tag.
