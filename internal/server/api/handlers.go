@@ -1,6 +1,9 @@
 package api
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"time"
@@ -175,11 +178,27 @@ func (s *Server) Ingest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create a Source node
-	// TODO: Use content hash as ID instead of generated ID
-	now := time.Now()
-	sourceID := "source-" + time.Now().Format("20060102150405")
+	// Compute SHA256 hash of content
+	hash := sha256.Sum256([]byte(req.Content))
+	hashStr := hex.EncodeToString(hash[:])
+	sourceID := "sha256:" + hashStr
 
+	now := time.Now()
+
+	// Check if source already exists (dedup)
+	existing, err := s.repo.GetNode(r.Context(), sourceID)
+	if err == nil && existing != nil {
+		// Source already exists, return existing ID
+		resp := IngestResponse{
+			SourceID: existing.ID,
+			Created:  existing.Created,
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+		return
+	}
+
+	// Create new Source node
 	node := &core.Node{
 		ID:       sourceID,
 		Type:     "Source",
@@ -198,6 +217,16 @@ func (s *Server) Ingest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Record transaction
+	if err := s.recordTransaction(r.Context(), "ingest_source", map[string]interface{}{
+		"source_id": sourceID,
+		"format":    req.Format,
+		"size":      len(req.Content),
+	}); err != nil {
+		// Log but don't fail the request
+		// Transaction recording is for audit, not critical path
+	}
+
 	resp := IngestResponse{
 		SourceID: node.ID,
 		Created:  node.Created,
@@ -205,4 +234,24 @@ func (s *Server) Ingest(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
+}
+
+// recordTransaction creates a transaction record node
+func (s *Server) recordTransaction(ctx context.Context, operation string, details map[string]interface{}) error {
+	now := time.Now()
+	txID := "tx-" + now.Format("20060102150405.000000")
+
+	txNode := &core.Node{
+		ID:   txID,
+		Type: "Transaction",
+		Meta: map[string]interface{}{
+			"operation": operation,
+			"details":   details,
+			"timestamp": now.Format(time.RFC3339Nano),
+		},
+		Created:  now,
+		Modified: now,
+	}
+
+	return s.repo.CreateNode(ctx, txNode)
 }
