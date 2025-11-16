@@ -2,6 +2,7 @@ package graph
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
@@ -50,6 +51,12 @@ func (r *Repository) CreateNode(ctx context.Context, node *core.Node) error {
 	defer session.Close(ctx)
 
 	_, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		// Convert meta to JSON string (Neo4j doesn't support nested maps)
+		metaJSON, err := json.Marshal(node.Meta)
+		if err != nil {
+			return nil, fmt.Errorf("marshaling meta: %w", err)
+		}
+
 		query := `
 			CREATE (n:Node {
 				id: $id,
@@ -64,12 +71,12 @@ func (r *Repository) CreateNode(ctx context.Context, node *core.Node) error {
 		params := map[string]any{
 			"id":         node.ID,
 			"type":       node.Type,
-			"properties": node.Meta,
+			"properties": string(metaJSON),
 			"created":    node.Created.Format("2006-01-02T15:04:05Z"),
 			"modified":   node.Modified.Format("2006-01-02T15:04:05Z"),
 		}
 
-		_, err := tx.Run(ctx, query, params)
+		_, err = tx.Run(ctx, query, params)
 		return nil, err
 	})
 
@@ -100,10 +107,18 @@ func (r *Repository) GetNode(ctx context.Context, id string) (*core.Node, error)
 		nodeValue, _ := record.Get("n")
 		nodeData := nodeValue.(neo4j.Node)
 
+		// Unmarshal properties JSON string back to map
+		var meta map[string]any
+		if propsStr, ok := nodeData.Props["properties"].(string); ok {
+			if err := json.Unmarshal([]byte(propsStr), &meta); err != nil {
+				return nil, fmt.Errorf("unmarshaling properties: %w", err)
+			}
+		}
+
 		node := &core.Node{
 			ID:   nodeData.Props["id"].(string),
 			Type: nodeData.Props["type"].(string),
-			Meta: nodeData.Props["properties"].(map[string]any),
+			Meta: meta,
 		}
 
 		return node, nil
@@ -122,6 +137,12 @@ func (r *Repository) CreateLink(ctx context.Context, link *core.Link) error {
 	defer session.Close(ctx)
 
 	_, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		// Convert meta to JSON string
+		metaJSON, err := json.Marshal(link.Meta)
+		if err != nil {
+			return nil, fmt.Errorf("marshaling meta: %w", err)
+		}
+
 		query := `
 			MATCH (source:Node {id: $source_id})
 			MATCH (target:Node {id: $target_id})
@@ -138,12 +159,12 @@ func (r *Repository) CreateLink(ctx context.Context, link *core.Link) error {
 			"source_id":  link.Source,
 			"target_id":  link.Target,
 			"type":       link.Type,
-			"properties": link.Meta,
+			"properties": string(metaJSON),
 			"created":    link.Created.Format("2006-01-02T15:04:05Z"),
 			"modified":   link.Modified.Format("2006-01-02T15:04:05Z"),
 		}
 
-		_, err := tx.Run(ctx, query, params)
+		_, err = tx.Run(ctx, query, params)
 		return nil, err
 	})
 
@@ -174,11 +195,19 @@ func (r *Repository) GetLinks(ctx context.Context, nodeID string) ([]*core.Link,
 
 			relData := relValue.(neo4j.Relationship)
 
+			// Unmarshal properties JSON string back to map
+			var meta map[string]any
+			if propsStr, ok := relData.Props["properties"].(string); ok {
+				if err := json.Unmarshal([]byte(propsStr), &meta); err != nil {
+					return nil, fmt.Errorf("unmarshaling properties: %w", err)
+				}
+			}
+
 			link := &core.Link{
 				Source: nodeID,
 				Target: targetID.(string),
 				Type:   relData.Props["type"].(string),
-				Meta:   relData.Props["properties"].(map[string]any),
+				Meta:   meta,
 			}
 			links = append(links, link)
 		}
