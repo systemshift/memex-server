@@ -53,6 +53,7 @@ func main() {
 	r.Get("/health", apiServer.HealthCheck)
 
 	r.Route("/api", func(r chi.Router) {
+		r.Post("/ingest", apiServer.Ingest)
 		r.Post("/nodes", apiServer.CreateNode)
 		r.Get("/nodes", apiServer.ListNodes)
 		r.Get("/nodes/{id}", apiServer.GetNode)

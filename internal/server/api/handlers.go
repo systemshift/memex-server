@@ -149,3 +149,60 @@ func (s *Server) HealthCheck(w http.ResponseWriter, r *http.Request) {
 		"status": "ok",
 	})
 }
+
+// IngestRequest is the request body for ingesting content
+type IngestRequest struct {
+	Content string `json:"content"`
+	Format  string `json:"format,omitempty"` // e.g. "text", "git-log", "json"
+}
+
+// IngestResponse is the response for ingesting content
+type IngestResponse struct {
+	SourceID string    `json:"source_id"`
+	Created  time.Time `json:"created"`
+}
+
+// Ingest handles POST /api/ingest
+func (s *Server) Ingest(w http.ResponseWriter, r *http.Request) {
+	var req IngestRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if req.Content == "" {
+		http.Error(w, "content is required", http.StatusBadRequest)
+		return
+	}
+
+	// Create a Source node
+	// TODO: Use content hash as ID instead of generated ID
+	now := time.Now()
+	sourceID := "source-" + time.Now().Format("20060102150405")
+
+	node := &core.Node{
+		ID:       sourceID,
+		Type:     "Source",
+		Content:  []byte(req.Content),
+		Meta: map[string]interface{}{
+			"format":      req.Format,
+			"ingested_at": now.Format(time.RFC3339),
+			"size_bytes":  len(req.Content),
+		},
+		Created:  now,
+		Modified: now,
+	}
+
+	if err := s.repo.CreateNode(r.Context(), node); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	resp := IngestResponse{
+		SourceID: node.ID,
+		Created:  node.Created,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}

@@ -61,6 +61,7 @@ func (r *Repository) CreateNode(ctx context.Context, node *core.Node) error {
 			CREATE (n:Node {
 				id: $id,
 				type: $type,
+				content: $content,
 				properties: $properties,
 				created: datetime($created),
 				modified: datetime($modified)
@@ -71,6 +72,7 @@ func (r *Repository) CreateNode(ctx context.Context, node *core.Node) error {
 		params := map[string]any{
 			"id":         node.ID,
 			"type":       node.Type,
+			"content":    string(node.Content),
 			"properties": string(metaJSON),
 			"created":    node.Created.Format("2006-01-02T15:04:05Z"),
 			"modified":   node.Modified.Format("2006-01-02T15:04:05Z"),
@@ -115,10 +117,17 @@ func (r *Repository) GetNode(ctx context.Context, id string) (*core.Node, error)
 			}
 		}
 
+		// Get content
+		var content []byte
+		if contentStr, ok := nodeData.Props["content"].(string); ok {
+			content = []byte(contentStr)
+		}
+
 		node := &core.Node{
-			ID:   nodeData.Props["id"].(string),
-			Type: nodeData.Props["type"].(string),
-			Meta: meta,
+			ID:      nodeData.Props["id"].(string),
+			Type:    nodeData.Props["type"].(string),
+			Content: content,
+			Meta:    meta,
 		}
 
 		return node, nil
