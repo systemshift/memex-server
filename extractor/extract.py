@@ -11,6 +11,10 @@ import sys
 import json
 import requests
 from openai import OpenAI
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 MEMEX_URL = os.getenv("MEMEX_URL", "http://localhost:8080")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")

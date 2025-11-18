@@ -48,3 +48,7 @@ __pycache__/
 *.pyo
 *.pyd
 .Python
+
+# Environment variables
+.env
+*.env
