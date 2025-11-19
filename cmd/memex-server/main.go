@@ -37,6 +37,13 @@ func main() {
 
 	log.Println("Connected to Neo4j successfully")
 
+	// Create indexes for performance
+	if err := repo.EnsureIndexes(ctx); err != nil {
+		log.Printf("Warning: Failed to create indexes: %v", err)
+	} else {
+		log.Println("Database indexes ensured")
+	}
+
 	// Initialize API server
 	apiServer := api.New(repo)
 

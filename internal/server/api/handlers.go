@@ -257,6 +257,22 @@ func (s *Server) recordTransaction(ctx context.Context, operation string, detail
 	return s.repo.CreateNode(ctx, txNode)
 }
 
+// parsePagination extracts limit and offset from query parameters
+func parsePagination(r *http.Request) (limit int, offset int) {
+	limit = 100 // default limit
+	offset = 0
+
+	query := r.URL.Query()
+	if l := query.Get("limit"); l != "" {
+		fmt.Sscanf(l, "%d", &limit)
+	}
+	if o := query.Get("offset"); o != "" {
+		fmt.Sscanf(o, "%d", &offset)
+	}
+
+	return limit, offset
+}
+
 // QueryFilter handles GET /api/query/filter
 func (s *Server) QueryFilter(w http.ResponseWriter, r *http.Request) {
 	// Parse query parameters
@@ -264,8 +280,9 @@ func (s *Server) QueryFilter(w http.ResponseWriter, r *http.Request) {
 	types := query["type"]           // can have multiple: ?type=Person&type=Concept
 	propertyKey := query.Get("key")  // e.g., ?key=extractor
 	propertyValue := query.Get("value") // e.g., ?value=openai
+	limit, offset := parsePagination(r)
 
-	nodes, err := s.repo.FilterNodes(r.Context(), types, propertyKey, propertyValue)
+	nodes, err := s.repo.FilterNodes(r.Context(), types, propertyKey, propertyValue, limit, offset)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -285,8 +302,9 @@ func (s *Server) QuerySearch(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "query parameter 'q' is required", http.StatusBadRequest)
 		return
 	}
+	limit, offset := parsePagination(r)
 
-	nodes, err := s.repo.SearchNodes(r.Context(), q)
+	nodes, err := s.repo.SearchNodes(r.Context(), q, limit, offset)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -321,8 +339,9 @@ func (s *Server) QueryTraverse(w http.ResponseWriter, r *http.Request) {
 
 	// Optional relationship type filters
 	relationshipTypes := query["rel_type"]
+	limit, offset := parsePagination(r)
 
-	nodes, err := s.repo.TraverseGraph(r.Context(), startNodeID, depth, relationshipTypes)
+	nodes, err := s.repo.TraverseGraph(r.Context(), startNodeID, depth, relationshipTypes, limit, offset)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

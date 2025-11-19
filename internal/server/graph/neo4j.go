@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/systemshift/memex/internal/memex/core"
@@ -43,6 +44,72 @@ func New(ctx context.Context, cfg Config) (*Repository, error) {
 // Close closes the Neo4j connection
 func (r *Repository) Close(ctx context.Context) error {
 	return r.driver.Close(ctx)
+}
+
+// EnsureIndexes creates necessary indexes for performance
+func (r *Repository) EnsureIndexes(ctx context.Context) error {
+	session := r.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
+	defer session.Close(ctx)
+
+	indexes := []string{
+		// Index on node ID for fast lookups
+		"CREATE INDEX node_id_index IF NOT EXISTS FOR (n:Node) ON (n.id)",
+		// Index on node type for filtering
+		"CREATE INDEX node_type_index IF NOT EXISTS FOR (n:Node) ON (n.type)",
+		// Text index on properties for search (Neo4j 5+)
+		"CREATE TEXT INDEX node_properties_text_index IF NOT EXISTS FOR (n:Node) ON (n.properties)",
+	}
+
+	for _, indexQuery := range indexes {
+		_, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+			_, err := tx.Run(ctx, indexQuery, nil)
+			return nil, err
+		})
+		if err != nil {
+			return fmt.Errorf("creating index: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// parseNodeFromNeo4j is a helper to parse Neo4j node data into core.Node
+func parseNodeFromNeo4j(nodeData neo4j.Node) (*core.Node, error) {
+	// Unmarshal properties JSON string back to map
+	var meta map[string]any
+	if propsStr, ok := nodeData.Props["properties"].(string); ok {
+		if err := json.Unmarshal([]byte(propsStr), &meta); err != nil {
+			return nil, fmt.Errorf("unmarshaling properties: %w", err)
+		}
+	}
+
+	// Get content
+	var content []byte
+	if contentStr, ok := nodeData.Props["content"].(string); ok {
+		content = []byte(contentStr)
+	}
+
+	// Parse timestamps
+	var created, modified time.Time
+	if createdVal, ok := nodeData.Props["created"]; ok {
+		if neo4jTime, ok := createdVal.(time.Time); ok {
+			created = neo4jTime
+		}
+	}
+	if modifiedVal, ok := nodeData.Props["modified"]; ok {
+		if neo4jTime, ok := modifiedVal.(time.Time); ok {
+			modified = neo4jTime
+		}
+	}
+
+	return &core.Node{
+		ID:       nodeData.Props["id"].(string),
+		Type:     nodeData.Props["type"].(string),
+		Content:  content,
+		Meta:     meta,
+		Created:  created,
+		Modified: modified,
+	}, nil
 }
 
 // CreateNode creates a new node in the graph
@@ -109,28 +176,7 @@ func (r *Repository) GetNode(ctx context.Context, id string) (*core.Node, error)
 		nodeValue, _ := record.Get("n")
 		nodeData := nodeValue.(neo4j.Node)
 
-		// Unmarshal properties JSON string back to map
-		var meta map[string]any
-		if propsStr, ok := nodeData.Props["properties"].(string); ok {
-			if err := json.Unmarshal([]byte(propsStr), &meta); err != nil {
-				return nil, fmt.Errorf("unmarshaling properties: %w", err)
-			}
-		}
-
-		// Get content
-		var content []byte
-		if contentStr, ok := nodeData.Props["content"].(string); ok {
-			content = []byte(contentStr)
-		}
-
-		node := &core.Node{
-			ID:      nodeData.Props["id"].(string),
-			Type:    nodeData.Props["type"].(string),
-			Content: content,
-			Meta:    meta,
-		}
-
-		return node, nil
+		return parseNodeFromNeo4j(nodeData)
 	})
 
 	if err != nil {
@@ -262,7 +308,7 @@ func (r *Repository) ListNodes(ctx context.Context) ([]string, error) {
 }
 
 // FilterNodes returns nodes matching filter criteria
-func (r *Repository) FilterNodes(ctx context.Context, nodeTypes []string, propertyKey string, propertyValue string) ([]*core.Node, error) {
+func (r *Repository) FilterNodes(ctx context.Context, nodeTypes []string, propertyKey string, propertyValue string, limit int, offset int) ([]*core.Node, error) {
 	session := r.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
 	defer session.Close(ctx)
 
@@ -290,6 +336,13 @@ func (r *Repository) FilterNodes(ctx context.Context, nodeTypes []string, proper
 
 		query += ` RETURN n`
 
+		// Add pagination
+		if limit > 0 {
+			query += ` SKIP $offset LIMIT $limit`
+			params["offset"] = offset
+			params["limit"] = limit
+		}
+
 		result, err := tx.Run(ctx, query, params)
 		if err != nil {
 			return nil, err
@@ -301,23 +354,9 @@ func (r *Repository) FilterNodes(ctx context.Context, nodeTypes []string, proper
 			nodeValue, _ := record.Get("n")
 			nodeData := nodeValue.(neo4j.Node)
 
-			var meta map[string]any
-			if propsStr, ok := nodeData.Props["properties"].(string); ok {
-				if err := json.Unmarshal([]byte(propsStr), &meta); err != nil {
-					continue
-				}
-			}
-
-			var content []byte
-			if contentStr, ok := nodeData.Props["content"].(string); ok {
-				content = []byte(contentStr)
-			}
-
-			node := &core.Node{
-				ID:      nodeData.Props["id"].(string),
-				Type:    nodeData.Props["type"].(string),
-				Content: content,
-				Meta:    meta,
+			node, err := parseNodeFromNeo4j(nodeData)
+			if err != nil {
+				continue // Skip nodes that fail to parse
 			}
 			nodes = append(nodes, node)
 		}
@@ -333,7 +372,7 @@ func (r *Repository) FilterNodes(ctx context.Context, nodeTypes []string, proper
 }
 
 // SearchNodes performs full-text search across node properties
-func (r *Repository) SearchNodes(ctx context.Context, searchTerm string) ([]*core.Node, error) {
+func (r *Repository) SearchNodes(ctx context.Context, searchTerm string, limit int, offset int) ([]*core.Node, error) {
 	session := r.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
 	defer session.Close(ctx)
 
@@ -347,7 +386,15 @@ func (r *Repository) SearchNodes(ctx context.Context, searchTerm string) ([]*cor
 			RETURN n
 		`
 
-		result, err := tx.Run(ctx, query, map[string]any{"term": searchTerm})
+		// Add pagination
+		params := map[string]any{"term": searchTerm}
+		if limit > 0 {
+			query += ` SKIP $offset LIMIT $limit`
+			params["offset"] = offset
+			params["limit"] = limit
+		}
+
+		result, err := tx.Run(ctx, query, params)
 		if err != nil {
 			return nil, err
 		}
@@ -358,23 +405,9 @@ func (r *Repository) SearchNodes(ctx context.Context, searchTerm string) ([]*cor
 			nodeValue, _ := record.Get("n")
 			nodeData := nodeValue.(neo4j.Node)
 
-			var meta map[string]any
-			if propsStr, ok := nodeData.Props["properties"].(string); ok {
-				if err := json.Unmarshal([]byte(propsStr), &meta); err != nil {
-					continue
-				}
-			}
-
-			var content []byte
-			if contentStr, ok := nodeData.Props["content"].(string); ok {
-				content = []byte(contentStr)
-			}
-
-			node := &core.Node{
-				ID:      nodeData.Props["id"].(string),
-				Type:    nodeData.Props["type"].(string),
-				Content: content,
-				Meta:    meta,
+			node, err := parseNodeFromNeo4j(nodeData)
+			if err != nil {
+				continue // Skip nodes that fail to parse
 			}
 			nodes = append(nodes, node)
 		}
@@ -390,7 +423,7 @@ func (r *Repository) SearchNodes(ctx context.Context, searchTerm string) ([]*cor
 }
 
 // TraverseGraph performs graph traversal from a starting node
-func (r *Repository) TraverseGraph(ctx context.Context, startNodeID string, depth int, relationshipTypes []string) (map[string]*core.Node, error) {
+func (r *Repository) TraverseGraph(ctx context.Context, startNodeID string, depth int, relationshipTypes []string, limit int, offset int) (map[string]*core.Node, error) {
 	session := r.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
 	defer session.Close(ctx)
 
@@ -409,6 +442,13 @@ func (r *Repository) TraverseGraph(ctx context.Context, startNodeID string, dept
 
 		query += ` RETURN DISTINCT n`
 
+		// Add pagination
+		if limit > 0 {
+			query += ` SKIP $offset LIMIT $limit`
+			params["offset"] = offset
+			params["limit"] = limit
+		}
+
 		result, err := tx.Run(ctx, query, params)
 		if err != nil {
 			return nil, err
@@ -420,23 +460,9 @@ func (r *Repository) TraverseGraph(ctx context.Context, startNodeID string, dept
 			nodeValue, _ := record.Get("n")
 			nodeData := nodeValue.(neo4j.Node)
 
-			var meta map[string]any
-			if propsStr, ok := nodeData.Props["properties"].(string); ok {
-				if err := json.Unmarshal([]byte(propsStr), &meta); err != nil {
-					continue
-				}
-			}
-
-			var content []byte
-			if contentStr, ok := nodeData.Props["content"].(string); ok {
-				content = []byte(contentStr)
-			}
-
-			node := &core.Node{
-				ID:      nodeData.Props["id"].(string),
-				Type:    nodeData.Props["type"].(string),
-				Content: content,
-				Meta:    meta,
+			node, err := parseNodeFromNeo4j(nodeData)
+			if err != nil {
+				continue // Skip nodes that fail to parse
 			}
 			nodes[node.ID] = node
 		}
