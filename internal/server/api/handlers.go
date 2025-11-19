@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -254,4 +255,84 @@ func (s *Server) recordTransaction(ctx context.Context, operation string, detail
 	}
 
 	return s.repo.CreateNode(ctx, txNode)
+}
+
+// QueryFilter handles GET /api/query/filter
+func (s *Server) QueryFilter(w http.ResponseWriter, r *http.Request) {
+	// Parse query parameters
+	query := r.URL.Query()
+	types := query["type"]           // can have multiple: ?type=Person&type=Concept
+	propertyKey := query.Get("key")  // e.g., ?key=extractor
+	propertyValue := query.Get("value") // e.g., ?value=openai
+
+	nodes, err := s.repo.FilterNodes(r.Context(), types, propertyKey, propertyValue)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"nodes": nodes,
+		"count": len(nodes),
+	})
+}
+
+// QuerySearch handles GET /api/query/search
+func (s *Server) QuerySearch(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query().Get("q")
+	if q == "" {
+		http.Error(w, "query parameter 'q' is required", http.StatusBadRequest)
+		return
+	}
+
+	nodes, err := s.repo.SearchNodes(r.Context(), q)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"nodes": nodes,
+		"count": len(nodes),
+		"query": q,
+	})
+}
+
+// QueryTraverse handles GET /api/query/traverse
+func (s *Server) QueryTraverse(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+	startNodeID := query.Get("start")
+	if startNodeID == "" {
+		http.Error(w, "query parameter 'start' is required", http.StatusBadRequest)
+		return
+	}
+
+	// Default depth is 2
+	depth := 2
+	if d := query.Get("depth"); d != "" {
+		var err error
+		if _, err = fmt.Sscanf(d, "%d", &depth); err != nil {
+			http.Error(w, "invalid depth parameter", http.StatusBadRequest)
+			return
+		}
+	}
+
+	// Optional relationship type filters
+	relationshipTypes := query["rel_type"]
+
+	nodes, err := s.repo.TraverseGraph(r.Context(), startNodeID, depth, relationshipTypes)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"nodes": nodes,
+		"count": len(nodes),
+		"start": startNodeID,
+		"depth": depth,
+	})
 }

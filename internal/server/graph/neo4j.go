@@ -260,3 +260,193 @@ func (r *Repository) ListNodes(ctx context.Context) ([]string, error) {
 
 	return result.([]string), nil
 }
+
+// FilterNodes returns nodes matching filter criteria
+func (r *Repository) FilterNodes(ctx context.Context, nodeTypes []string, propertyKey string, propertyValue string) ([]*core.Node, error) {
+	session := r.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
+	defer session.Close(ctx)
+
+	result, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		query := `MATCH (n:Node)`
+		params := make(map[string]any)
+
+		// Add type filter
+		if len(nodeTypes) > 0 {
+			query += ` WHERE n.type IN $types`
+			params["types"] = nodeTypes
+		}
+
+		// Add property filter (searches in JSON properties)
+		if propertyKey != "" && propertyValue != "" {
+			if len(nodeTypes) > 0 {
+				query += ` AND`
+			} else {
+				query += ` WHERE`
+			}
+			query += ` n.properties CONTAINS $searchValue`
+			// Search for the key-value pair in JSON
+			params["searchValue"] = fmt.Sprintf(`"%s":"%s"`, propertyKey, propertyValue)
+		}
+
+		query += ` RETURN n`
+
+		result, err := tx.Run(ctx, query, params)
+		if err != nil {
+			return nil, err
+		}
+
+		var nodes []*core.Node
+		for result.Next(ctx) {
+			record := result.Record()
+			nodeValue, _ := record.Get("n")
+			nodeData := nodeValue.(neo4j.Node)
+
+			var meta map[string]any
+			if propsStr, ok := nodeData.Props["properties"].(string); ok {
+				if err := json.Unmarshal([]byte(propsStr), &meta); err != nil {
+					continue
+				}
+			}
+
+			var content []byte
+			if contentStr, ok := nodeData.Props["content"].(string); ok {
+				content = []byte(contentStr)
+			}
+
+			node := &core.Node{
+				ID:      nodeData.Props["id"].(string),
+				Type:    nodeData.Props["type"].(string),
+				Content: content,
+				Meta:    meta,
+			}
+			nodes = append(nodes, node)
+		}
+
+		return nodes, nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return result.([]*core.Node), nil
+}
+
+// SearchNodes performs full-text search across node properties
+func (r *Repository) SearchNodes(ctx context.Context, searchTerm string) ([]*core.Node, error) {
+	session := r.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
+	defer session.Close(ctx)
+
+	result, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		query := `
+			MATCH (n:Node)
+			WHERE n.id CONTAINS $term
+			   OR n.type CONTAINS $term
+			   OR n.properties CONTAINS $term
+			   OR n.content CONTAINS $term
+			RETURN n
+		`
+
+		result, err := tx.Run(ctx, query, map[string]any{"term": searchTerm})
+		if err != nil {
+			return nil, err
+		}
+
+		var nodes []*core.Node
+		for result.Next(ctx) {
+			record := result.Record()
+			nodeValue, _ := record.Get("n")
+			nodeData := nodeValue.(neo4j.Node)
+
+			var meta map[string]any
+			if propsStr, ok := nodeData.Props["properties"].(string); ok {
+				if err := json.Unmarshal([]byte(propsStr), &meta); err != nil {
+					continue
+				}
+			}
+
+			var content []byte
+			if contentStr, ok := nodeData.Props["content"].(string); ok {
+				content = []byte(contentStr)
+			}
+
+			node := &core.Node{
+				ID:      nodeData.Props["id"].(string),
+				Type:    nodeData.Props["type"].(string),
+				Content: content,
+				Meta:    meta,
+			}
+			nodes = append(nodes, node)
+		}
+
+		return nodes, nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return result.([]*core.Node), nil
+}
+
+// TraverseGraph performs graph traversal from a starting node
+func (r *Repository) TraverseGraph(ctx context.Context, startNodeID string, depth int, relationshipTypes []string) (map[string]*core.Node, error) {
+	session := r.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
+	defer session.Close(ctx)
+
+	result, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		query := `
+			MATCH path = (start:Node {id: $start_id})-[r:LINK*1..` + fmt.Sprintf("%d", depth) + `]->(n:Node)
+		`
+
+		params := map[string]any{"start_id": startNodeID}
+
+		// Add relationship type filter
+		if len(relationshipTypes) > 0 {
+			query += ` WHERE ALL(rel in r WHERE rel.type IN $rel_types)`
+			params["rel_types"] = relationshipTypes
+		}
+
+		query += ` RETURN DISTINCT n`
+
+		result, err := tx.Run(ctx, query, params)
+		if err != nil {
+			return nil, err
+		}
+
+		nodes := make(map[string]*core.Node)
+		for result.Next(ctx) {
+			record := result.Record()
+			nodeValue, _ := record.Get("n")
+			nodeData := nodeValue.(neo4j.Node)
+
+			var meta map[string]any
+			if propsStr, ok := nodeData.Props["properties"].(string); ok {
+				if err := json.Unmarshal([]byte(propsStr), &meta); err != nil {
+					continue
+				}
+			}
+
+			var content []byte
+			if contentStr, ok := nodeData.Props["content"].(string); ok {
+				content = []byte(contentStr)
+			}
+
+			node := &core.Node{
+				ID:      nodeData.Props["id"].(string),
+				Type:    nodeData.Props["type"].(string),
+				Content: content,
+				Meta:    meta,
+			}
+			nodes[node.ID] = node
+		}
+
+		return nodes, nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return result.(map[string]*core.Node), nil
+}

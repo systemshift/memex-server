@@ -59,6 +59,11 @@ func main() {
 		r.Get("/nodes/{id}", apiServer.GetNode)
 		r.Get("/nodes/{id}/links", apiServer.GetLinks)
 		r.Post("/links", apiServer.CreateLink)
+
+		// Query endpoints
+		r.Get("/query/filter", apiServer.QueryFilter)
+		r.Get("/query/search", apiServer.QuerySearch)
+		r.Get("/query/traverse", apiServer.QueryTraverse)
 	})
 
 	// HTTP server
