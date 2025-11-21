@@ -43,6 +43,7 @@ memex-server
 
 # Python
 extractor/memex/
+mcp-server/venv/
 __pycache__/
 *.pyc
 *.pyo
