@@ -90,7 +90,7 @@ func parseNodeFromNeo4j(nodeData neo4j.Node) (*core.Node, error) {
 	}
 
 	// Parse timestamps
-	var created, modified time.Time
+	var created, modified, deletedAt time.Time
 	if createdVal, ok := nodeData.Props["created"]; ok {
 		if neo4jTime, ok := createdVal.(time.Time); ok {
 			created = neo4jTime
@@ -101,14 +101,29 @@ func parseNodeFromNeo4j(nodeData neo4j.Node) (*core.Node, error) {
 			modified = neo4jTime
 		}
 	}
+	if deletedAtVal, ok := nodeData.Props["deleted_at"]; ok {
+		if neo4jTime, ok := deletedAtVal.(time.Time); ok {
+			deletedAt = neo4jTime
+		}
+	}
+
+	// Parse deleted flag
+	deleted := false
+	if deletedVal, ok := nodeData.Props["deleted"]; ok {
+		if d, ok := deletedVal.(bool); ok {
+			deleted = d
+		}
+	}
 
 	return &core.Node{
-		ID:       nodeData.Props["id"].(string),
-		Type:     nodeData.Props["type"].(string),
-		Content:  content,
-		Meta:     meta,
-		Created:  created,
-		Modified: modified,
+		ID:        nodeData.Props["id"].(string),
+		Type:      nodeData.Props["type"].(string),
+		Content:   content,
+		Meta:      meta,
+		Created:   created,
+		Modified:  modified,
+		Deleted:   deleted,
+		DeletedAt: deletedAt,
 	}, nil
 }
 
@@ -131,7 +146,8 @@ func (r *Repository) CreateNode(ctx context.Context, node *core.Node) error {
 				content: $content,
 				properties: $properties,
 				created: datetime($created),
-				modified: datetime($modified)
+				modified: datetime($modified),
+				deleted: false
 			})
 			RETURN n
 		`
@@ -160,6 +176,7 @@ func (r *Repository) GetNode(ctx context.Context, id string) (*core.Node, error)
 	result, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
 		query := `
 			MATCH (n:Node {id: $id})
+			WHERE (n.deleted IS NULL OR n.deleted = false)
 			RETURN n
 		`
 
@@ -283,7 +300,11 @@ func (r *Repository) ListNodes(ctx context.Context) ([]string, error) {
 	defer session.Close(ctx)
 
 	result, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
-		query := `MATCH (n:Node) RETURN n.id as id`
+		query := `
+			MATCH (n:Node)
+			WHERE (n.deleted IS NULL OR n.deleted = false)
+			RETURN n.id as id
+		`
 
 		result, err := tx.Run(ctx, query, nil)
 		if err != nil {
@@ -313,23 +334,18 @@ func (r *Repository) FilterNodes(ctx context.Context, nodeTypes []string, proper
 	defer session.Close(ctx)
 
 	result, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
-		query := `MATCH (n:Node)`
+		query := `MATCH (n:Node) WHERE (n.deleted IS NULL OR n.deleted = false)`
 		params := make(map[string]any)
 
 		// Add type filter
 		if len(nodeTypes) > 0 {
-			query += ` WHERE n.type IN $types`
+			query += ` AND n.type IN $types`
 			params["types"] = nodeTypes
 		}
 
 		// Add property filter (searches in JSON properties)
 		if propertyKey != "" && propertyValue != "" {
-			if len(nodeTypes) > 0 {
-				query += ` AND`
-			} else {
-				query += ` WHERE`
-			}
-			query += ` n.properties CONTAINS $searchValue`
+			query += ` AND n.properties CONTAINS $searchValue`
 			// Search for the key-value pair in JSON
 			params["searchValue"] = fmt.Sprintf(`"%s":"%s"`, propertyKey, propertyValue)
 		}
@@ -379,10 +395,11 @@ func (r *Repository) SearchNodes(ctx context.Context, searchTerm string, limit i
 	result, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
 		query := `
 			MATCH (n:Node)
-			WHERE n.id CONTAINS $term
+			WHERE (n.deleted IS NULL OR n.deleted = false)
+			  AND (n.id CONTAINS $term
 			   OR n.type CONTAINS $term
 			   OR n.properties CONTAINS $term
-			   OR n.content CONTAINS $term
+			   OR n.content CONTAINS $term)
 			RETURN n
 		`
 
@@ -422,47 +439,60 @@ func (r *Repository) SearchNodes(ctx context.Context, searchTerm string, limit i
 	return result.([]*core.Node), nil
 }
 
-// DeleteNode deletes a node and optionally its relationships
-func (r *Repository) DeleteNode(ctx context.Context, nodeID string, deleteRelationships bool) error {
+// DeleteNode marks a node as deleted (tombstone) instead of removing it
+func (r *Repository) DeleteNode(ctx context.Context, nodeID string, force bool) error {
 	session := r.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
 	defer session.Close(ctx)
 
 	_, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
-		var query string
-		if deleteRelationships {
-			// Delete node and all its relationships
-			query = `
-				MATCH (n:Node {id: $id})
-				DETACH DELETE n
-			`
-		} else {
-			// Only delete node if it has no relationships
-			query = `
-				MATCH (n:Node {id: $id})
-				WHERE NOT (n)-[]-()
-				DELETE n
-			`
-		}
-
-		result, err := tx.Run(ctx, query, map[string]any{"id": nodeID})
+		// Check if node exists and get its type
+		checkQuery := `
+			MATCH (n:Node {id: $id})
+			WHERE n.deleted IS NULL OR n.deleted = false
+			RETURN n.type as type
+		`
+		checkResult, err := tx.Run(ctx, checkQuery, map[string]any{"id": nodeID})
 		if err != nil {
 			return nil, err
 		}
 
-		summary, err := result.Consume(ctx)
+		if !checkResult.Next(ctx) {
+			return nil, fmt.Errorf("node not found or already deleted: %s", nodeID)
+		}
+
+		record := checkResult.Record()
+		nodeType, _ := record.Get("type")
+		nodeTypeStr := nodeType.(string)
+
+		// Protect Source layer (content-addressed nodes) unless force=true
+		if !force && len(nodeID) > 7 && nodeID[:7] == "sha256:" {
+			return nil, fmt.Errorf("cannot delete Source layer node (content-addressed): %s. Source nodes are immutable to maintain DAG integrity. Use force=true to override (not recommended)", nodeID)
+		}
+
+		// Tombstone the node (soft delete)
+		updateQuery := `
+			MATCH (n:Node {id: $id})
+			SET n.deleted = true,
+				n.deleted_at = datetime($deleted_at)
+			RETURN n
+		`
+
+		result, err := tx.Run(ctx, updateQuery, map[string]any{
+			"id":         nodeID,
+			"deleted_at": time.Now().Format("2006-01-02T15:04:05Z"),
+		})
 		if err != nil {
 			return nil, err
 		}
 
-		if summary.Counters().NodesDeleted() == 0 {
-			if deleteRelationships {
-				return nil, fmt.Errorf("node not found: %s", nodeID)
-			} else {
-				return nil, fmt.Errorf("node has relationships, use deleteRelationships=true or delete relationships first")
-			}
+		if !result.Next(ctx) {
+			return nil, fmt.Errorf("failed to tombstone node: %s", nodeID)
 		}
 
-		return nil, nil
+		return map[string]any{
+			"tombstoned": true,
+			"type":       nodeTypeStr,
+		}, nil
 	})
 
 	return err
@@ -511,13 +541,15 @@ func (r *Repository) TraverseGraph(ctx context.Context, startNodeID string, dept
 	result, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
 		query := `
 			MATCH path = (start:Node {id: $start_id})-[r:LINK*1..` + fmt.Sprintf("%d", depth) + `]->(n:Node)
+			WHERE (start.deleted IS NULL OR start.deleted = false)
+			  AND (n.deleted IS NULL OR n.deleted = false)
 		`
 
 		params := map[string]any{"start_id": startNodeID}
 
 		// Add relationship type filter
 		if len(relationshipTypes) > 0 {
-			query += ` WHERE ALL(rel in r WHERE rel.type IN $rel_types)`
+			query += ` AND ALL(rel in r WHERE rel.type IN $rel_types)`
 			params["rel_types"] = relationshipTypes
 		}
 

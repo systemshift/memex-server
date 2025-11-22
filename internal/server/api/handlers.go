@@ -322,18 +322,20 @@ func (s *Server) QuerySearch(w http.ResponseWriter, r *http.Request) {
 func (s *Server) DeleteNode(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
-	// Check query parameter for cascade delete
-	cascade := r.URL.Query().Get("cascade") == "true"
+	// Check query parameter for force delete (bypasses Source layer protection)
+	force := r.URL.Query().Get("force") == "true"
 
-	if err := s.repo.DeleteNode(r.Context(), id, cascade); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	if err := s.repo.DeleteNode(r.Context(), id, force); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"deleted": id,
-		"cascade": cascade,
+		"tombstoned": true,
+		"id":         id,
+		"force":      force,
+		"message":    "Node marked as deleted (tombstone). Maintains DAG integrity.",
 	})
 }
 

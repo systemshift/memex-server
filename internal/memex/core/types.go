@@ -6,12 +6,14 @@ import (
 
 // Node represents a node in the graph
 type Node struct {
-	ID       string
-	Type     string
-	Content  []byte
-	Meta     map[string]interface{}
-	Created  time.Time
-	Modified time.Time
+	ID        string
+	Type      string
+	Content   []byte
+	Meta      map[string]interface{}
+	Created   time.Time
+	Modified  time.Time
+	Deleted   bool      // Tombstone flag
+	DeletedAt time.Time // When node was deleted
 }
 
 // Link represents a relationship between nodes
