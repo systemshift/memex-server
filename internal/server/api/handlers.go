@@ -318,6 +318,52 @@ func (s *Server) QuerySearch(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// DeleteNode handles DELETE /api/nodes/{id}
+func (s *Server) DeleteNode(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	// Check query parameter for cascade delete
+	cascade := r.URL.Query().Get("cascade") == "true"
+
+	if err := s.repo.DeleteNode(r.Context(), id, cascade); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"deleted": id,
+		"cascade": cascade,
+	})
+}
+
+// DeleteLink handles DELETE /api/links
+func (s *Server) DeleteLink(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+	source := query.Get("source")
+	target := query.Get("target")
+	linkType := query.Get("type")
+
+	if source == "" || target == "" || linkType == "" {
+		http.Error(w, "source, target, and type query parameters required", http.StatusBadRequest)
+		return
+	}
+
+	if err := s.repo.DeleteLink(r.Context(), source, target, linkType); err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"deleted": map[string]string{
+			"source": source,
+			"target": target,
+			"type":   linkType,
+		},
+	})
+}
+
 // QueryTraverse handles GET /api/query/traverse
 func (s *Server) QueryTraverse(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()

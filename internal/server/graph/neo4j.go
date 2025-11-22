@@ -422,6 +422,87 @@ func (r *Repository) SearchNodes(ctx context.Context, searchTerm string, limit i
 	return result.([]*core.Node), nil
 }
 
+// DeleteNode deletes a node and optionally its relationships
+func (r *Repository) DeleteNode(ctx context.Context, nodeID string, deleteRelationships bool) error {
+	session := r.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
+	defer session.Close(ctx)
+
+	_, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		var query string
+		if deleteRelationships {
+			// Delete node and all its relationships
+			query = `
+				MATCH (n:Node {id: $id})
+				DETACH DELETE n
+			`
+		} else {
+			// Only delete node if it has no relationships
+			query = `
+				MATCH (n:Node {id: $id})
+				WHERE NOT (n)-[]-()
+				DELETE n
+			`
+		}
+
+		result, err := tx.Run(ctx, query, map[string]any{"id": nodeID})
+		if err != nil {
+			return nil, err
+		}
+
+		summary, err := result.Consume(ctx)
+		if err != nil {
+			return nil, err
+		}
+
+		if summary.Counters().NodesDeleted() == 0 {
+			if deleteRelationships {
+				return nil, fmt.Errorf("node not found: %s", nodeID)
+			} else {
+				return nil, fmt.Errorf("node has relationships, use deleteRelationships=true or delete relationships first")
+			}
+		}
+
+		return nil, nil
+	})
+
+	return err
+}
+
+// DeleteLink deletes a specific relationship between two nodes
+func (r *Repository) DeleteLink(ctx context.Context, sourceID string, targetID string, linkType string) error {
+	session := r.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
+	defer session.Close(ctx)
+
+	_, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		query := `
+			MATCH (source:Node {id: $source_id})-[r:LINK {type: $link_type}]->(target:Node {id: $target_id})
+			DELETE r
+		`
+
+		result, err := tx.Run(ctx, query, map[string]any{
+			"source_id": sourceID,
+			"target_id": targetID,
+			"link_type": linkType,
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		summary, err := result.Consume(ctx)
+		if err != nil {
+			return nil, err
+		}
+
+		if summary.Counters().RelationshipsDeleted() == 0 {
+			return nil, fmt.Errorf("link not found: %s -[%s]-> %s", sourceID, linkType, targetID)
+		}
+
+		return nil, nil
+	})
+
+	return err
+}
+
 // TraverseGraph performs graph traversal from a starting node
 func (r *Repository) TraverseGraph(ctx context.Context, startNodeID string, depth int, relationshipTypes []string, limit int, offset int) (map[string]*core.Node, error) {
 	session := r.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})

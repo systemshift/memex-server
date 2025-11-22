@@ -64,8 +64,10 @@ func main() {
 		r.Post("/nodes", apiServer.CreateNode)
 		r.Get("/nodes", apiServer.ListNodes)
 		r.Get("/nodes/{id}", apiServer.GetNode)
+		r.Delete("/nodes/{id}", apiServer.DeleteNode)
 		r.Get("/nodes/{id}/links", apiServer.GetLinks)
 		r.Post("/links", apiServer.CreateLink)
+		r.Delete("/links", apiServer.DeleteLink)
 
 		// Query endpoints
 		r.Get("/query/filter", apiServer.QueryFilter)
