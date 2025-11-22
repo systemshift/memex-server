@@ -403,3 +403,36 @@ func (s *Server) QueryTraverse(w http.ResponseWriter, r *http.Request) {
 		"depth": depth,
 	})
 }
+
+// QuerySubgraph handles GET /api/query/subgraph
+// Returns nodes + ALL edges within a k-hop neighborhood
+func (s *Server) QuerySubgraph(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+	startNodeID := query.Get("start")
+	if startNodeID == "" {
+		http.Error(w, "query parameter 'start' is required", http.StatusBadRequest)
+		return
+	}
+
+	// Default depth is 2
+	depth := 2
+	if d := query.Get("depth"); d != "" {
+		var err error
+		if _, err = fmt.Sscanf(d, "%d", &depth); err != nil {
+			http.Error(w, "invalid depth parameter", http.StatusBadRequest)
+			return
+		}
+	}
+
+	// Optional relationship type filters
+	relationshipTypes := query["rel_type"]
+
+	subgraph, err := s.repo.GetSubgraph(r.Context(), startNodeID, depth, relationshipTypes)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(subgraph)
+}

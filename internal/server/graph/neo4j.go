@@ -589,3 +589,142 @@ func (r *Repository) TraverseGraph(ctx context.Context, startNodeID string, dept
 
 	return result.(map[string]*core.Node), nil
 }
+
+// SubgraphEdge represents an edge in the subgraph
+type SubgraphEdge struct {
+	Source string                 `json:"source"`
+	Target string                 `json:"target"`
+	Type   string                 `json:"type"`
+	Meta   map[string]interface{} `json:"meta,omitempty"`
+}
+
+// Subgraph represents nodes and edges within a graph region
+type Subgraph struct {
+	Nodes []*core.Node    `json:"nodes"`
+	Edges []*SubgraphEdge `json:"edges"`
+	Stats SubgraphStats   `json:"stats"`
+}
+
+// SubgraphStats provides metadata about the subgraph
+type SubgraphStats struct {
+	NodeCount int `json:"node_count"`
+	EdgeCount int `json:"edge_count"`
+	Depth     int `json:"depth"`
+}
+
+// GetSubgraph extracts a subgraph centered on a start node
+// Returns all nodes within depth hops and ALL edges between those nodes
+func (r *Repository) GetSubgraph(ctx context.Context, startNodeID string, depth int, relationshipTypes []string) (*Subgraph, error) {
+	session := r.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
+	defer session.Close(ctx)
+
+	result, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		// First, get all nodes within depth hops
+		nodeQuery := `
+			MATCH path = (start:Node {id: $start_id})-[r:LINK*0..` + fmt.Sprintf("%d", depth) + `]-(n:Node)
+			WHERE (start.deleted IS NULL OR start.deleted = false)
+			  AND (n.deleted IS NULL OR n.deleted = false)
+		`
+		params := map[string]any{"start_id": startNodeID}
+
+		// Add relationship type filter if specified
+		if len(relationshipTypes) > 0 {
+			nodeQuery += ` AND ALL(rel in r WHERE rel.type IN $rel_types)`
+			params["rel_types"] = relationshipTypes
+		}
+
+		nodeQuery += ` RETURN DISTINCT n`
+
+		nodeResult, err := tx.Run(ctx, nodeQuery, params)
+		if err != nil {
+			return nil, err
+		}
+
+		// Collect all node IDs and nodes
+		nodeMap := make(map[string]*core.Node)
+		var nodeIDs []string
+		for nodeResult.Next(ctx) {
+			record := nodeResult.Record()
+			nodeValue, _ := record.Get("n")
+			nodeData := nodeValue.(neo4j.Node)
+
+			node, err := parseNodeFromNeo4j(nodeData)
+			if err != nil {
+				continue
+			}
+			nodeMap[node.ID] = node
+			nodeIDs = append(nodeIDs, node.ID)
+		}
+
+		// Now get ALL edges between these nodes
+		edgeQuery := `
+			MATCH (source:Node)-[r:LINK]->(target:Node)
+			WHERE source.id IN $node_ids AND target.id IN $node_ids
+		`
+		edgeParams := map[string]any{"node_ids": nodeIDs}
+
+		// Add relationship type filter for edges if specified
+		if len(relationshipTypes) > 0 {
+			edgeQuery += ` AND r.type IN $rel_types`
+			edgeParams["rel_types"] = relationshipTypes
+		}
+
+		edgeQuery += ` RETURN source.id as source_id, target.id as target_id, r`
+
+		edgeResult, err := tx.Run(ctx, edgeQuery, edgeParams)
+		if err != nil {
+			return nil, err
+		}
+
+		var edges []*SubgraphEdge
+		for edgeResult.Next(ctx) {
+			record := edgeResult.Record()
+			sourceID, _ := record.Get("source_id")
+			targetID, _ := record.Get("target_id")
+			relValue, _ := record.Get("r")
+
+			relData := relValue.(neo4j.Relationship)
+
+			// Unmarshal properties JSON string back to map
+			var meta map[string]any
+			if propsStr, ok := relData.Props["properties"].(string); ok {
+				if err := json.Unmarshal([]byte(propsStr), &meta); err != nil {
+					// Skip if can't parse
+					meta = make(map[string]any)
+				}
+			}
+
+			edge := &SubgraphEdge{
+				Source: sourceID.(string),
+				Target: targetID.(string),
+				Type:   relData.Props["type"].(string),
+				Meta:   meta,
+			}
+			edges = append(edges, edge)
+		}
+
+		// Convert node map to slice
+		nodes := make([]*core.Node, 0, len(nodeMap))
+		for _, node := range nodeMap {
+			nodes = append(nodes, node)
+		}
+
+		subgraph := &Subgraph{
+			Nodes: nodes,
+			Edges: edges,
+			Stats: SubgraphStats{
+				NodeCount: len(nodes),
+				EdgeCount: len(edges),
+				Depth:     depth,
+			},
+		}
+
+		return subgraph, nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return result.(*Subgraph), nil
+}

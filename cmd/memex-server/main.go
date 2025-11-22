@@ -73,6 +73,7 @@ func main() {
 		r.Get("/query/filter", apiServer.QueryFilter)
 		r.Get("/query/search", apiServer.QuerySearch)
 		r.Get("/query/traverse", apiServer.QueryTraverse)
+		r.Get("/query/subgraph", apiServer.QuerySubgraph)
 	})
 
 	// HTTP server
