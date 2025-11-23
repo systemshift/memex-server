@@ -436,3 +436,124 @@ func (s *Server) QuerySubgraph(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(subgraph)
 }
+
+// UpdateAttentionEdgeRequest is the request body for updating attention edges
+type UpdateAttentionEdgeRequest struct {
+	Source   string  `json:"source"`
+	Target   string  `json:"target"`
+	QueryID  string  `json:"query_id"`
+	Weight   float64 `json:"weight"`
+}
+
+// UpdateAttentionEdge handles POST /api/edges/attention
+// Allows ML pipeline to persist attention patterns to the DAG
+func (s *Server) UpdateAttentionEdge(w http.ResponseWriter, r *http.Request) {
+	var req UpdateAttentionEdgeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if req.Source == "" || req.Target == "" {
+		http.Error(w, "source and target are required", http.StatusBadRequest)
+		return
+	}
+
+	if req.Weight < 0 || req.Weight > 1 {
+		http.Error(w, "weight must be between 0 and 1", http.StatusBadRequest)
+		return
+	}
+
+	if err := s.repo.UpdateAttentionEdge(r.Context(), req.Source, req.Target, req.QueryID, req.Weight); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "Attention edge updated",
+		"source":  req.Source,
+		"target":  req.Target,
+		"weight":  req.Weight,
+	})
+}
+
+// QueryAttentionSubgraph handles GET /api/query/attention_subgraph
+// Returns subgraph following high-weight attention edges
+func (s *Server) QueryAttentionSubgraph(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+	startNodeID := query.Get("start")
+	if startNodeID == "" {
+		http.Error(w, "query parameter 'start' is required", http.StatusBadRequest)
+		return
+	}
+
+	// Default min weight is 0.5
+	minWeight := 0.5
+	if mw := query.Get("min_weight"); mw != "" {
+		var err error
+		if _, err = fmt.Sscanf(mw, "%f", &minWeight); err != nil {
+			http.Error(w, "invalid min_weight parameter", http.StatusBadRequest)
+			return
+		}
+	}
+
+	// Default max nodes is 50
+	maxNodes := 50
+	if mn := query.Get("max_nodes"); mn != "" {
+		var err error
+		if _, err = fmt.Sscanf(mn, "%d", &maxNodes); err != nil {
+			http.Error(w, "invalid max_nodes parameter", http.StatusBadRequest)
+			return
+		}
+	}
+
+	subgraph, err := s.repo.GetAttentionSubgraph(r.Context(), startNodeID, minWeight, maxNodes)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(subgraph)
+}
+
+// PruneAttentionEdges handles POST /api/edges/attention/prune
+// Removes weak attention edges to maintain DAG quality
+func (s *Server) PruneAttentionEdges(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+
+	// Default min weight is 0.3
+	minWeight := 0.3
+	if mw := query.Get("min_weight"); mw != "" {
+		var err error
+		if _, err = fmt.Sscanf(mw, "%f", &minWeight); err != nil {
+			http.Error(w, "invalid min_weight parameter", http.StatusBadRequest)
+			return
+		}
+	}
+
+	// Default min query count is 2
+	minQueryCount := 2
+	if mc := query.Get("min_query_count"); mc != "" {
+		var err error
+		if _, err = fmt.Sscanf(mc, "%d", &minQueryCount); err != nil {
+			http.Error(w, "invalid min_query_count parameter", http.StatusBadRequest)
+			return
+		}
+	}
+
+	deletedCount, err := s.repo.PruneWeakAttentionEdges(r.Context(), minWeight, minQueryCount)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":       true,
+		"deleted_count": deletedCount,
+		"message":       fmt.Sprintf("Pruned %d weak attention edges", deletedCount),
+	})
+}
