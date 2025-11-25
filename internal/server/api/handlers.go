@@ -519,6 +519,34 @@ func (s *Server) QueryAttentionSubgraph(w http.ResponseWriter, r *http.Request) 
 	json.NewEncoder(w).Encode(subgraph)
 }
 
+// GraphMap handles GET /api/graph/map
+// Returns high-level graph structure for agent exploration
+func (s *Server) GraphMap(w http.ResponseWriter, r *http.Request) {
+	// Default sample size is 100
+	sampleSize := 100
+	if ss := r.URL.Query().Get("sample_size"); ss != "" {
+		var err error
+		if _, err = fmt.Sscanf(ss, "%d", &sampleSize); err != nil {
+			http.Error(w, "invalid sample_size parameter", http.StatusBadRequest)
+			return
+		}
+	}
+
+	// Cap sample size to prevent abuse
+	if sampleSize > 500 {
+		sampleSize = 500
+	}
+
+	graphMap, err := s.repo.GetGraphMap(r.Context(), sampleSize)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(graphMap)
+}
+
 // PruneAttentionEdges handles POST /api/edges/attention/prune
 // Removes weak attention edges to maintain DAG quality
 func (s *Server) PruneAttentionEdges(w http.ResponseWriter, r *http.Request) {

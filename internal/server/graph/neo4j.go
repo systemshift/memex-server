@@ -58,6 +58,8 @@ func (r *Repository) EnsureIndexes(ctx context.Context) error {
 		"CREATE INDEX node_type_index IF NOT EXISTS FOR (n:Node) ON (n.type)",
 		// Text index on properties for search (Neo4j 5+)
 		"CREATE TEXT INDEX node_properties_text_index IF NOT EXISTS FOR (n:Node) ON (n.properties)",
+		// Index on degree for fast top-connected queries
+		"CREATE INDEX node_degree_index IF NOT EXISTS FOR (n:Node) ON (n.degree)",
 	}
 
 	for _, indexQuery := range indexes {
@@ -147,7 +149,8 @@ func (r *Repository) CreateNode(ctx context.Context, node *core.Node) error {
 				properties: $properties,
 				created: datetime($created),
 				modified: datetime($modified),
-				deleted: false
+				deleted: false,
+				degree: 0
 			})
 			RETURN n
 		`
@@ -224,6 +227,8 @@ func (r *Repository) CreateLink(ctx context.Context, link *core.Link) error {
 				created: datetime($created),
 				modified: datetime($modified)
 			}]->(target)
+			SET source.degree = COALESCE(source.degree, 0) + 1,
+			    target.degree = COALESCE(target.degree, 0) + 1
 			RETURN r
 		`
 
@@ -507,6 +512,8 @@ func (r *Repository) DeleteLink(ctx context.Context, sourceID string, targetID s
 		query := `
 			MATCH (source:Node {id: $source_id})-[r:LINK {type: $link_type}]->(target:Node {id: $target_id})
 			DELETE r
+			SET source.degree = CASE WHEN source.degree > 0 THEN source.degree - 1 ELSE 0 END,
+			    target.degree = CASE WHEN target.degree > 0 THEN target.degree - 1 ELSE 0 END
 		`
 
 		result, err := tx.Run(ctx, query, map[string]any{
@@ -950,6 +957,152 @@ func (r *Repository) GetAttentionSubgraph(ctx context.Context, startNodeID strin
 	}
 
 	return result.(*Subgraph), nil
+}
+
+// GraphMap represents the high-level structure of the graph for agent exploration
+type GraphMap struct {
+	Stats           GraphStats            `json:"stats"`
+	NodeTypes       map[string]int        `json:"node_types"`
+	EdgeTypes       map[string]int        `json:"edge_types"`
+	TopConnected    []NodeSummary         `json:"top_connected"`
+	SamplesByType   map[string][]string   `json:"samples_by_type"`
+}
+
+// GraphStats holds basic graph statistics
+type GraphStats struct {
+	TotalNodes int `json:"total_nodes"`
+	TotalEdges int `json:"total_edges"`
+}
+
+// NodeSummary is a lightweight node representation for the map
+type NodeSummary struct {
+	ID     string `json:"id"`
+	Type   string `json:"type"`
+	Degree int    `json:"degree"`
+}
+
+// GetGraphMap returns a high-level map of the graph for agent exploration
+func (r *Repository) GetGraphMap(ctx context.Context, sampleSize int) (*GraphMap, error) {
+	session := r.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
+	defer session.Close(ctx)
+
+	result, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		graphMap := &GraphMap{
+			NodeTypes:     make(map[string]int),
+			EdgeTypes:     make(map[string]int),
+			SamplesByType: make(map[string][]string),
+		}
+
+		// Get total node count and count by type
+		nodeCountQuery := `
+			MATCH (n:Node)
+			WHERE n.deleted IS NULL OR n.deleted = false
+			RETURN n.type as type, count(*) as count
+		`
+		nodeResult, err := tx.Run(ctx, nodeCountQuery, nil)
+		if err != nil {
+			return nil, err
+		}
+
+		totalNodes := 0
+		for nodeResult.Next(ctx) {
+			record := nodeResult.Record()
+			nodeType, _ := record.Get("type")
+			count, _ := record.Get("count")
+			countInt := int(count.(int64))
+			graphMap.NodeTypes[nodeType.(string)] = countInt
+			totalNodes += countInt
+		}
+		graphMap.Stats.TotalNodes = totalNodes
+
+		// Get total edge count and count by type
+		edgeCountQuery := `
+			MATCH ()-[r:LINK]->()
+			RETURN r.type as type, count(*) as count
+		`
+		edgeResult, err := tx.Run(ctx, edgeCountQuery, nil)
+		if err != nil {
+			return nil, err
+		}
+
+		totalEdges := 0
+		for edgeResult.Next(ctx) {
+			record := edgeResult.Record()
+			edgeType, _ := record.Get("type")
+			count, _ := record.Get("count")
+			countInt := int(count.(int64))
+			graphMap.EdgeTypes[edgeType.(string)] = countInt
+			totalEdges += countInt
+		}
+		graphMap.Stats.TotalEdges = totalEdges
+
+		// Get top connected nodes (using precomputed degree)
+		topConnectedQuery := `
+			MATCH (n:Node)
+			WHERE (n.deleted IS NULL OR n.deleted = false)
+			  AND n.degree IS NOT NULL
+			RETURN n.id as id, n.type as type, n.degree as degree
+			ORDER BY n.degree DESC
+			LIMIT $limit
+		`
+		topResult, err := tx.Run(ctx, topConnectedQuery, map[string]any{"limit": sampleSize})
+		if err != nil {
+			return nil, err
+		}
+
+		for topResult.Next(ctx) {
+			record := topResult.Record()
+			id, _ := record.Get("id")
+			nodeType, _ := record.Get("type")
+			degree, _ := record.Get("degree")
+
+			degreeInt := 0
+			if degree != nil {
+				if d, ok := degree.(int64); ok {
+					degreeInt = int(d)
+				}
+			}
+
+			graphMap.TopConnected = append(graphMap.TopConnected, NodeSummary{
+				ID:     id.(string),
+				Type:   nodeType.(string),
+				Degree: degreeInt,
+			})
+		}
+
+		// Get sample nodes per type
+		for nodeType := range graphMap.NodeTypes {
+			sampleQuery := `
+				MATCH (n:Node {type: $type})
+				WHERE n.deleted IS NULL OR n.deleted = false
+				RETURN n.id as id
+				LIMIT $limit
+			`
+			sampleResult, err := tx.Run(ctx, sampleQuery, map[string]any{
+				"type":  nodeType,
+				"limit": sampleSize,
+			})
+			if err != nil {
+				continue
+			}
+
+			var samples []string
+			for sampleResult.Next(ctx) {
+				record := sampleResult.Record()
+				id, _ := record.Get("id")
+				samples = append(samples, id.(string))
+			}
+			graphMap.SamplesByType[nodeType] = samples
+		}
+
+		return graphMap, nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return result.(*GraphMap), nil
 }
 
 // PruneWeakAttentionEdges removes attention edges with low weight or query count
