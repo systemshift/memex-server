@@ -134,6 +134,7 @@ async def extract_knowledge(client: AsyncOpenAI, title: str, content: str, retri
                     "content": EXTRACTION_PROMPT.format(title=title, content=content)
                 }],
                 max_completion_tokens=8000,
+                reasoning_effort="low",  # Minimize reasoning, prioritize output
             )
 
             text = response.choices[0].message.content
