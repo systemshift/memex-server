@@ -1,0 +1,9 @@
+{
+  "precision": 0.22049892445016286,
+  "recall": 0.6,
+  "f1": 0.27339724706313473,
+  "questions": 20,
+  "method": "agent-based",
+  "model": "gpt-4o-mini",
+  "max_iterations": 8
+}
