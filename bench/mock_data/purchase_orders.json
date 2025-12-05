@@ -1,0 +1,38 @@
+[
+  {
+    "id": "po-2024-001",
+    "type": "PurchaseOrder",
+    "vendor": "CloudServices (AWS)",
+    "contact": "tbrown@cloudservices.net",
+    "amount": 35000.0,
+    "currency": "USD",
+    "description": "AWS infrastructure - Q4 2024",
+    "status": "approved",
+    "created_date": "2024-10-06 00:00:00",
+    "approved_by": "James Mitchell"
+  },
+  {
+    "id": "po-2024-002",
+    "type": "PurchaseOrder",
+    "vendor": "ComplianceCo",
+    "contact": "audits@complianceco.com",
+    "amount": 35000.0,
+    "currency": "USD",
+    "description": "SOC2 Type II Audit Services",
+    "status": "approved",
+    "created_date": "2024-10-19 00:00:00",
+    "approved_by": "Sarah Chen"
+  },
+  {
+    "id": "po-2024-003",
+    "type": "PurchaseOrder",
+    "vendor": "Legal Partners LLP",
+    "contact": "awhite@legalfirm.com",
+    "amount": 15000.0,
+    "currency": "USD",
+    "description": "Legal services - Contract review, corporate matters Q4",
+    "status": "approved",
+    "created_date": "2024-10-11 00:00:00",
+    "approved_by": "James Mitchell"
+  }
+]

@@ -1,0 +1,75 @@
+[
+  {
+    "id": "cal-acme-tech-001",
+    "type": "Calendar",
+    "title": "Acme Corp Technical Deep Dive",
+    "organizer": "emily.rodriguez@nexustech.io",
+    "attendees": [
+      "marcus.williams@nexustech.io",
+      "jharrison@acmecorp.com",
+      "pwong@acmecorp.com"
+    ],
+    "date": "2024-10-11 00:00:00",
+    "duration_minutes": 60,
+    "location": "Zoom",
+    "description": "Technical discovery call with Acme Corp engineering leadership to discuss enterprise deployment requirements."
+  },
+  {
+    "id": "cal-phoenix-kickoff",
+    "type": "Calendar",
+    "title": "Project Phoenix Kickoff",
+    "organizer": "marcus.williams@nexustech.io",
+    "attendees": [
+      "david.kim@nexustech.io",
+      "alex.thompson@nexustech.io",
+      "robert.garcia@nexustech.io",
+      "rachel.foster@nexustech.io"
+    ],
+    "date": "2024-10-10 00:00:00",
+    "duration_minutes": 90,
+    "location": "Conference Room A",
+    "description": "Kickoff meeting for Project Phoenix platform rewrite. Agenda: architecture overview, team assignments, timeline discussion."
+  },
+  {
+    "id": "cal-vc-meeting",
+    "type": "Calendar",
+    "title": "Tech Ventures - Series A Discussion",
+    "organizer": "sarah.chen@nexustech.io",
+    "attendees": [
+      "jadams@techventures.vc"
+    ],
+    "date": "2024-11-05 00:00:00",
+    "duration_minutes": 45,
+    "location": "Zoom",
+    "description": "Initial Series A discussion with Tech Ventures. Sharing deck and key metrics."
+  },
+  {
+    "id": "cal-board-oct",
+    "type": "Calendar",
+    "title": "October Board Meeting",
+    "organizer": "sarah.chen@nexustech.io",
+    "attendees": [
+      "james.mitchell@nexustech.io",
+      "marcus.williams@nexustech.io",
+      "emily.rodriguez@nexustech.io"
+    ],
+    "date": "2024-10-09 00:00:00",
+    "duration_minutes": 120,
+    "location": "Zoom",
+    "description": "Monthly board meeting. Agenda: Q3 review, Acme update, Phoenix approval, Q4 budget."
+  },
+  {
+    "id": "cal-qbr-globalretail",
+    "type": "Calendar",
+    "title": "Global Retail QBR",
+    "organizer": "lisa.park@nexustech.io",
+    "attendees": [
+      "mstone@globalretail.com",
+      "emily.rodriguez@nexustech.io"
+    ],
+    "date": "2024-10-26 00:00:00",
+    "duration_minutes": 60,
+    "location": "Zoom",
+    "description": "Quarterly business review with Global Retail. Review usage, discuss expansion, and roadmap alignment."
+  }
+]
