@@ -1,6 +1,6 @@
 # Memex Architecture
 
-**Date:** November 2024
+**Date:** November 2025
 **Status:** Active Development
 
 ## Vision
