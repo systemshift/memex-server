@@ -3,6 +3,7 @@
 Live Memex Demo - Working Web App
 
 A real working demo that queries the knowledge graph and uses LLM to answer questions.
+Styled to match memex.systems/demo.html
 
 Usage:
     python live_demo.py
@@ -227,7 +228,6 @@ Be thorough but efficient. Read sources before answering to get accurate details
         msg = response.choices[0].message
 
         if not msg.tool_calls:
-            # No more tool calls - generate answer from context
             break
 
         messages.append(msg)
@@ -290,7 +290,7 @@ Be thorough but efficient. Read sources before answering to get accurate details
     }
 
 
-# ============== HTML Template ==============
+# ============== HTML Template (matching memex.systems style) ==============
 
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -298,297 +298,363 @@ HTML_TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Memex Live Demo</title>
+    <title>Memex Live Demo - Nexus Technologies</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600&family=Space+Grotesk:wght@400;500;600&display=swap" rel="stylesheet">
     <style>
         :root {
             --bg: #0a0a0a;
-            --surface: #141414;
-            --border: #2a2a2a;
+            --bg-secondary: #111111;
             --text: #e0e0e0;
-            --text-dim: #888;
-            --accent: #4a9eff;
-            --accent-dim: #2a5a8a;
+            --text-dim: #707070;
+            --accent: #00ff88;
+            --accent-dim: #00aa5a;
+            --border: #222;
         }
 
-        * { box-sizing: border-box; margin: 0; padding: 0; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
 
         body {
-            font-family: 'SF Mono', 'Consolas', monospace;
+            font-family: 'Space Grotesk', sans-serif;
             background: var(--bg);
             color: var(--text);
             line-height: 1.6;
             min-height: 100vh;
         }
 
-        .container {
-            max-width: 900px;
-            margin: 0 auto;
-            padding: 2rem;
-        }
+        .mono { font-family: 'JetBrains Mono', monospace; }
 
         header {
-            text-align: center;
-            margin-bottom: 3rem;
-            padding-bottom: 2rem;
             border-bottom: 1px solid var(--border);
+            padding: 1rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .logo {
+            font-family: 'JetBrains Mono', monospace;
+            font-weight: 600;
+            font-size: 1.2rem;
+            color: var(--accent);
+            text-decoration: none;
+        }
+        .logo span { color: var(--text-dim); }
+        .logo .live { color: #ff4444; }
+
+        .stats-bar {
+            display: flex;
+            gap: 2rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.8rem;
+        }
+        .stats-bar span { color: var(--accent); }
+
+        .container {
+            max-width: 1100px;
+            margin: 0 auto;
+            padding: 3rem 2rem;
         }
 
         h1 {
             font-size: 2rem;
-            font-weight: 400;
+            font-weight: 500;
             margin-bottom: 0.5rem;
         }
+        h1 .highlight { color: var(--accent); }
 
         .subtitle {
             color: var(--text-dim);
-            font-size: 0.9rem;
-        }
-
-        .stats {
-            display: flex;
-            justify-content: center;
-            gap: 2rem;
-            margin-top: 1rem;
-            font-size: 0.8rem;
-            color: var(--text-dim);
+            font-size: 1.1rem;
+            margin-bottom: 2rem;
         }
 
         .query-section {
             margin-bottom: 2rem;
         }
 
-        .query-box {
+        .section-label {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            margin-bottom: 1rem;
+        }
+
+        .query-input-box {
             display: flex;
             gap: 1rem;
+            margin-bottom: 1rem;
         }
 
-        input[type="text"] {
+        .query-input-box input {
             flex: 1;
-            padding: 1rem;
-            background: var(--surface);
+            background: var(--bg-secondary);
             border: 1px solid var(--border);
+            padding: 0.75rem 1rem;
             color: var(--text);
-            font-family: inherit;
-            font-size: 1rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.9rem;
             border-radius: 4px;
         }
-
-        input[type="text"]:focus {
+        .query-input-box input:focus {
             outline: none;
             border-color: var(--accent);
         }
 
-        button {
-            padding: 1rem 2rem;
+        .query-input-box button {
             background: var(--accent);
-            color: white;
+            color: #000;
             border: none;
+            padding: 0.75rem 1.5rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.9rem;
+            font-weight: 500;
             border-radius: 4px;
             cursor: pointer;
-            font-family: inherit;
-            font-size: 1rem;
+            transition: all 0.2s;
         }
+        .query-input-box button:hover { background: var(--accent-dim); color: #fff; }
+        .query-input-box button:disabled { background: var(--border); cursor: not-allowed; }
 
-        button:hover {
-            background: var(--accent-dim);
-        }
-
-        button:disabled {
-            background: var(--border);
-            cursor: not-allowed;
-        }
-
-        .examples {
-            margin-top: 1rem;
+        .query-buttons {
             display: flex;
             flex-wrap: wrap;
-            gap: 0.5rem;
+            gap: 0.75rem;
         }
 
-        .example-btn {
-            padding: 0.5rem 1rem;
-            background: var(--surface);
+        .query-btn {
+            background: var(--bg-secondary);
             border: 1px solid var(--border);
-            color: var(--text-dim);
+            color: var(--text);
+            padding: 0.5rem 0.75rem;
+            font-family: 'JetBrains Mono', monospace;
             font-size: 0.8rem;
             border-radius: 4px;
             cursor: pointer;
+            transition: all 0.2s;
         }
-
-        .example-btn:hover {
+        .query-btn:hover {
             border-color: var(--accent);
+            color: var(--accent);
+        }
+
+        .sources-showcase {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        .source-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 1rem;
+            transition: border-color 0.2s;
+        }
+        .source-card:hover { border-color: var(--accent-dim); }
+
+        .source-card-header {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-bottom: 0.75rem;
+        }
+
+        .source-icon { font-size: 1rem; }
+
+        .source-type {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.7rem;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+        }
+
+        .source-card-channel {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            color: var(--accent);
+            margin-bottom: 0.5rem;
+        }
+
+        .source-card-content p {
+            font-size: 0.85rem;
+            color: var(--text-dim);
+            line-height: 1.5;
+            margin: 0;
+            max-height: 80px;
+            overflow: hidden;
+        }
+
+        .source-card-meta {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.7rem;
+            color: var(--text-dim);
+            opacity: 0.7;
+            margin-top: 0.75rem;
+        }
+
+        .flow-arrow {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 0.25rem;
+            margin: 1.5rem 0;
+            color: var(--accent);
+            font-size: 1.25rem;
+        }
+
+        .flow-label {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+        }
+
+        .query-panel {
+            background: var(--bg-secondary);
+            border: 1px solid var(--accent-dim);
+            border-radius: 6px;
+            overflow: hidden;
+        }
+
+        .query-header {
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid var(--border);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.8rem;
+            color: var(--accent);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .query-result { padding: 1rem; }
+
+        .result-label {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            color: var(--text-dim);
+            margin-bottom: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .compiled-answer {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            padding: 1.25rem;
+        }
+
+        .compiled-answer p {
+            margin: 0;
+            line-height: 1.8;
             color: var(--text);
+            font-size: 0.95rem;
+            white-space: pre-wrap;
         }
 
-        .results {
+        .result-stats {
+            margin-top: 1rem;
+            padding-top: 1rem;
+            border-top: 1px solid var(--border);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            color: var(--text-dim);
+            display: flex;
+            gap: 1.5rem;
+        }
+        .stat-item span { color: var(--accent); }
+
+        .exploration-toggle {
+            margin-top: 1.5rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.8rem;
+            color: var(--text-dim);
+            cursor: pointer;
+        }
+        .exploration-toggle:hover { color: var(--accent); }
+
+        .exploration-log {
             display: none;
+            margin-top: 1rem;
+            padding: 1rem;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
         }
+        .exploration-log.show { display: block; }
 
-        .results.show {
-            display: block;
+        .exploration-step {
+            padding: 0.25rem 0;
+            color: var(--text-dim);
+            border-left: 2px solid var(--border);
+            padding-left: 1rem;
+            margin-bottom: 0.5rem;
         }
 
         .loading {
             text-align: center;
             padding: 3rem;
             color: var(--text-dim);
+            font-family: 'JetBrains Mono', monospace;
         }
 
-        .answer-section {
-            background: var(--surface);
-            border: 1px solid var(--border);
-            border-radius: 4px;
-            padding: 1.5rem;
-            margin-bottom: 1.5rem;
-        }
-
-        .answer-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 1rem;
-            padding-bottom: 0.5rem;
-            border-bottom: 1px solid var(--border);
-        }
-
-        .answer-meta {
-            font-size: 0.8rem;
+        .empty-state {
+            text-align: center;
+            padding: 3rem;
             color: var(--text-dim);
         }
 
-        .answer-content {
-            white-space: pre-wrap;
-            line-height: 1.8;
-        }
-
-        .sources-section h3 {
-            margin-bottom: 1rem;
-            font-weight: 400;
-            color: var(--text-dim);
-        }
-
-        .source-card {
-            background: var(--surface);
-            border: 1px solid var(--border);
-            border-radius: 4px;
-            padding: 1rem;
-            margin-bottom: 1rem;
-        }
-
-        .source-header {
-            display: flex;
-            justify-content: space-between;
-            margin-bottom: 0.5rem;
-        }
-
-        .source-type {
-            color: var(--accent);
-            font-size: 0.8rem;
-            text-transform: uppercase;
-        }
-
-        .source-meta {
-            font-size: 0.75rem;
-            color: var(--text-dim);
-        }
-
-        .source-content {
-            font-size: 0.9rem;
-            color: var(--text-dim);
-            max-height: 150px;
-            overflow: hidden;
-            position: relative;
-        }
-
-        .source-content::after {
-            content: '';
-            position: absolute;
-            bottom: 0;
-            left: 0;
-            right: 0;
-            height: 50px;
-            background: linear-gradient(transparent, var(--surface));
-        }
-
-        .exploration {
-            margin-top: 1.5rem;
-            padding-top: 1rem;
-            border-top: 1px solid var(--border);
-        }
-
-        .exploration h4 {
-            font-weight: 400;
-            color: var(--text-dim);
-            margin-bottom: 0.5rem;
-            cursor: pointer;
-        }
-
-        .exploration-log {
-            display: none;
-            font-size: 0.8rem;
-            color: var(--text-dim);
-            font-family: monospace;
-        }
-
-        .exploration-log.show {
-            display: block;
-        }
-
-        .exploration-step {
-            padding: 0.25rem 0;
-            border-left: 2px solid var(--border);
-            padding-left: 1rem;
-            margin-left: 0.5rem;
+        @media (max-width: 768px) {
+            .sources-showcase { grid-template-columns: 1fr; }
+            .query-buttons { flex-direction: column; }
+            .stats-bar { display: none; }
         }
     </style>
 </head>
 <body>
+    <header>
+        <a href="https://memex.systems" class="logo">memex<span>.live</span> <span class="live">&bull;</span></a>
+        <div class="stats-bar">
+            <div><span>640</span> entities</div>
+            <div><span>1,491</span> relationships</div>
+            <div><span>72</span> documents</div>
+        </div>
+    </header>
+
     <div class="container">
-        <header>
-            <h1>memex <span style="color: var(--text-dim)">// live demo</span></h1>
-            <p class="subtitle">Query the knowledge graph of Nexus Technologies</p>
-            <div class="stats">
-                <span>640 nodes</span>
-                <span>1,491 edges</span>
-                <span>72 documents</span>
-            </div>
-        </header>
+        <h1><span class="highlight">Nexus Technologies</span> Knowledge Graph</h1>
+        <p class="subtitle">
+            Live queries against the knowledge graph. Type any question or click a suggestion.
+        </p>
 
         <div class="query-section">
-            <div class="query-box">
-                <input type="text" id="query" placeholder="Ask anything about Nexus Technologies..." />
+            <div class="section-label">Ask anything</div>
+            <div class="query-input-box">
+                <input type="text" id="query" placeholder="What do you want to know about Nexus Technologies?" />
                 <button id="submit" onclick="runQuery()">Query</button>
             </div>
-            <div class="examples">
-                <button class="example-btn" onclick="setQuery('What is the Acme Corp deal about?')">Acme deal</button>
-                <button class="example-btn" onclick="setQuery('Who is working on Project Phoenix?')">Project Phoenix</button>
-                <button class="example-btn" onclick="setQuery('What are the Q4 budget priorities?')">Q4 budget</button>
-                <button class="example-btn" onclick="setQuery('Tell me about the Series A fundraising')">Series A</button>
-                <button class="example-btn" onclick="setQuery('What security compliance work is happening?')">Security compliance</button>
+            <div class="query-buttons">
+                <button class="query-btn" onclick="setQuery('What is the Acme Corp deal about?')">Acme deal</button>
+                <button class="query-btn" onclick="setQuery('Who is working on Project Phoenix?')">Project Phoenix</button>
+                <button class="query-btn" onclick="setQuery('What is the Series A fundraising status?')">Series A</button>
+                <button class="query-btn" onclick="setQuery('What is the SOC2 compliance timeline?')">SOC2 timeline</button>
+                <button class="query-btn" onclick="setQuery('What are the Q4 budget concerns?')">Q4 budget</button>
             </div>
         </div>
 
-        <div id="loading" class="loading" style="display: none;">
-            <p>Exploring knowledge graph...</p>
-        </div>
-
-        <div id="results" class="results">
-            <div class="answer-section">
-                <div class="answer-header">
-                    <strong>Answer</strong>
-                    <span class="answer-meta" id="meta"></span>
-                </div>
-                <div class="answer-content" id="answer"></div>
-            </div>
-
-            <div class="sources-section">
-                <h3>Sources</h3>
-                <div id="sources"></div>
-            </div>
-
-            <div class="exploration">
-                <h4 onclick="toggleExploration()">+ Exploration log</h4>
-                <div id="exploration-log" class="exploration-log"></div>
+        <div id="results-container">
+            <div class="empty-state">
+                <p>Enter a query above to see live results from the knowledge graph</p>
             </div>
         </div>
     </div>
@@ -596,6 +662,7 @@ HTML_TEMPLATE = """
     <script>
         function setQuery(q) {
             document.getElementById('query').value = q;
+            runQuery();
         }
 
         function toggleExploration() {
@@ -603,12 +670,24 @@ HTML_TEMPLATE = """
             log.classList.toggle('show');
         }
 
+        function getIcon(type) {
+            const icons = {
+                'email': '&#x2709;',
+                'slack': '&#x0023;',
+                'document': '&#x1F4C4;',
+                'calendar': '&#x1F4C5;',
+                'invoice': '&#x1F4B0;',
+                'purchaseorder': '&#x1F4DD;'
+            };
+            return icons[type.toLowerCase()] || '&#x1F4C1;';
+        }
+
         async function runQuery() {
             const query = document.getElementById('query').value;
             if (!query) return;
 
-            document.getElementById('loading').style.display = 'block';
-            document.getElementById('results').classList.remove('show');
+            const container = document.getElementById('results-container');
+            container.innerHTML = '<div class="loading">Exploring knowledge graph...</div>';
             document.getElementById('submit').disabled = true;
 
             try {
@@ -619,31 +698,62 @@ HTML_TEMPLATE = """
                 });
                 const data = await resp.json();
 
-                document.getElementById('answer').textContent = data.answer;
-                document.getElementById('meta').textContent = `${data.hops} hops | ${data.time}s | ${data.sources.length} sources`;
-
-                const sourcesHtml = data.sources.map(s => `
-                    <div class="source-card">
-                        <div class="source-header">
-                            <span class="source-type">${s.doc_type}</span>
-                            <span class="source-meta">${Object.entries(s.meta || {}).slice(0, 3).map(([k,v]) => v).join(' | ')}</span>
+                const sourcesHtml = data.sources.slice(0, 4).map(s => {
+                    const title = s.meta?.title || s.meta?.subject || s.meta?.channel || s.doc_type;
+                    const date = s.meta?.date || '';
+                    return `
+                        <div class="source-card">
+                            <div class="source-card-header">
+                                <span class="source-icon">${getIcon(s.doc_type)}</span>
+                                <span class="source-type">${s.doc_type}</span>
+                            </div>
+                            <div class="source-card-content">
+                                <div class="source-card-channel">${title}</div>
+                                <p>${(s.content || '').substring(0, 200)}...</p>
+                            </div>
+                            <div class="source-card-meta">${date}</div>
                         </div>
-                        <div class="source-content">${s.content || 'No content'}</div>
-                    </div>
-                `).join('');
-                document.getElementById('sources').innerHTML = sourcesHtml;
+                    `;
+                }).join('');
 
                 const explorationHtml = data.exploration.map((step, i) => `
                     <div class="exploration-step">${i+1}. ${step.tool}(${JSON.stringify(step.args)})</div>
                 `).join('');
-                document.getElementById('exploration-log').innerHTML = explorationHtml;
 
-                document.getElementById('results').classList.add('show');
+                container.innerHTML = `
+                    <div class="query-panel">
+                        <div class="query-header">
+                            <span>memex</span> live query
+                        </div>
+                        <div class="query-result">
+                            <div class="result-label">Compiled context from ${data.sources.length} sources</div>
+                            <div class="compiled-answer">
+                                <p>${data.answer}</p>
+                            </div>
+                            <div class="result-stats">
+                                <div class="stat-item"><span>${data.sources.length}</span> sources</div>
+                                <div class="stat-item"><span>${data.hops}</span> graph hops</div>
+                                <div class="stat-item"><span>${data.time}s</span></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="flow-arrow">
+                        <span>&uarr;</span>
+                        <span class="flow-label">compiled from sources</span>
+                        <span>&uarr;</span>
+                    </div>
+
+                    <div class="sources-showcase">${sourcesHtml}</div>
+
+                    <div class="exploration-toggle" onclick="toggleExploration()">+ Show exploration log</div>
+                    <div id="exploration-log" class="exploration-log">${explorationHtml}</div>
+                `;
+
             } catch (e) {
-                alert('Error: ' + e.message);
+                container.innerHTML = '<div class="empty-state"><p>Error: ' + e.message + '</p></div>';
             }
 
-            document.getElementById('loading').style.display = 'none';
             document.getElementById('submit').disabled = false;
         }
 
