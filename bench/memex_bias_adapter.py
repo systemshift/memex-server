@@ -310,14 +310,14 @@ class ModelHooks:
     def _get_bias_for_seq(self, seq_len: int, device, dtype) -> torch.Tensor:
         """Get bias matrix sized and typed for current sequence."""
         if seq_len <= self.bias_matrix.shape[0]:
-            bias = self.bias_matrix[:seq_len, :seq_len]
+            bias = self.bias_matrix[:seq_len, :seq_len].clone()
         else:
             # Pad with zeros if sequence is longer
             bias = torch.zeros(seq_len, seq_len)
             orig_len = self.bias_matrix.shape[0]
             bias[:orig_len, :orig_len] = self.bias_matrix
 
-        return bias.to(device=device, dtype=dtype)
+        return bias.to(device=device, dtype=dtype).contiguous()
 
     def _hook_gpt2(self, module, args, kwargs):
         """Hook for GPT-2 style attention (with kwargs support)."""
@@ -354,7 +354,7 @@ class ModelHooks:
         return args, kwargs
 
     def _hook_llama(self, module, args, kwargs):
-        """Hook for Llama/Mistral style attention."""
+        """Hook for Llama/Mistral/Phi style attention (SDPA compatible)."""
         if not self.active:
             return args, kwargs
 
@@ -362,25 +362,32 @@ class ModelHooks:
         if hidden_states is None:
             return args, kwargs
 
+        batch_size = hidden_states.shape[0]
         seq_len = hidden_states.shape[1]
 
-        # Llama uses attention_mask in kwargs
-        attention_mask = kwargs.get("attention_mask")
-
-        # Build bias
+        # Build bias - needs to be (batch, num_heads, seq, seq) for SDPA
         bias = self._get_bias_for_seq(seq_len, hidden_states.device, hidden_states.dtype)
 
+        # Get number of attention heads from module config
+        num_heads = getattr(module, 'num_heads', None) or getattr(module, 'num_attention_heads', 32)
+
+        # Shape: (1, 1, seq, seq) - will broadcast over batch and heads
+        bias = bias.unsqueeze(0).unsqueeze(0)
+
+        # Get existing attention_mask
+        attention_mask = kwargs.get("attention_mask")
+
         if attention_mask is not None:
-            # Match attention_mask shape: (batch, 1, seq, seq) or (batch, heads, seq, seq)
+            # Ensure bias matches attention_mask dimensions
             while bias.dim() < attention_mask.dim():
                 bias = bias.unsqueeze(0)
-            # Expand to match batch size
-            if bias.shape[0] == 1 and attention_mask.shape[0] > 1:
-                bias = bias.expand(attention_mask.shape[0], -1, -1, -1)
+            # Make sure it's contiguous and same dtype
+            bias = bias.to(dtype=attention_mask.dtype).contiguous()
             attention_mask = attention_mask + bias
+            attention_mask = attention_mask.contiguous()
         else:
-            # Create new mask with just bias
-            attention_mask = bias.unsqueeze(0).unsqueeze(0)
+            # Just use bias as the mask
+            attention_mask = bias.contiguous()
 
         kwargs["attention_mask"] = attention_mask
         return args, kwargs
