@@ -193,6 +193,9 @@ def create_graph_for_benchmark(questions: list[dict]) -> MemexGraph:
         entity_id = name.lower().replace(" ", "_")
         graph.add_entity(GraphEntity(id=entity_id, name=name))
 
+    # Track how many times each edge appears (simulates query_count)
+    edge_counts: dict[str, int] = {}
+
     # Add edges based on co-occurrence in contexts
     for q in questions:
         entities = q.get("entities", [])
@@ -200,13 +203,22 @@ def create_graph_for_benchmark(questions: list[dict]) -> MemexGraph:
             for e2 in entities[i+1:]:
                 id1 = e1.lower().replace(" ", "_")
                 id2 = e2.lower().replace(" ", "_")
-                # Stronger weight for multi-hop questions
-                weight = 1.5 if q.get("hops", 1) > 1 else 1.0
-                # Add or strengthen edge
-                current = graph.get_weight(id1, id2)
-                graph.add_edge(id1, id2, max(current, weight))
+                key = f"{id1}|{id2}" if id1 < id2 else f"{id2}|{id1}"
+                edge_counts[key] = edge_counts.get(key, 0) + 1
 
-    print(f"Created graph: {len(graph.entities)} entities, {len(graph.weights)//2} edges")
+                # Stronger weight for multi-hop questions
+                weight = 0.9 if q.get("hops", 1) > 1 else 0.7
+                # Add or strengthen edge with query_count
+                current_edge = graph.get_edge(id1, id2)
+                if current_edge:
+                    # Update to stronger weight if found
+                    graph.add_edge(id1, id2, max(current_edge.weight, weight), edge_counts[key])
+                else:
+                    graph.add_edge(id1, id2, weight, 1)
+
+    stats = graph.compute_stats()
+    print(f"Created graph: {len(graph.entities)} entities, {stats['count']} edges")
+    print(f"  Adaptive scale: {graph.get_adaptive_scale():.2f}")
     return graph
 
 
@@ -334,7 +346,11 @@ def print_stats(stats: BenchmarkStats):
 def main():
     parser = argparse.ArgumentParser(description="Benchmark Memex Bias Injection")
     parser.add_argument("--model", default="microsoft/phi-2", help="Model to use")
-    parser.add_argument("--bias-scale", type=float, default=1.5, help="Bias scale factor")
+    parser.add_argument("--bias-mode", default="adaptive",
+                       choices=["adaptive", "confidence", "raw", "fixed"],
+                       help="Bias scaling mode (default: adaptive)")
+    parser.add_argument("--bias-scale", type=float, default=2.0,
+                       help="Bias scale factor (only used with --bias-mode=fixed)")
     parser.add_argument("--questions", type=int, default=None, help="Number of questions (default: all)")
     parser.add_argument("--neo4j", action="store_true", help="Load graph from Neo4j")
     parser.add_argument("--graph-file", type=str, help="Load graph from JSON file")
@@ -345,7 +361,9 @@ def main():
     print("MEMEX BIAS INJECTION BENCHMARK")
     print("=" * 60)
     print(f"Model: {args.model}")
-    print(f"Bias scale: {args.bias_scale}")
+    print(f"Bias mode: {args.bias_mode}")
+    if args.bias_mode == "fixed":
+        print(f"Bias scale: {args.bias_scale}")
 
     # Load model
     print("\nLoading model...")
@@ -374,8 +392,8 @@ def main():
         questions = create_synthetic_benchmark()
         graph = create_graph_for_benchmark(questions)
 
-    # Create memex
-    memex = MemexSDPA(graph, bias_scale=args.bias_scale)
+    # Create memex with specified bias mode
+    memex = MemexSDPA(graph, bias_mode=args.bias_mode, bias_scale=args.bias_scale)
 
     # Get questions
     if not args.neo4j and not args.graph_file:
@@ -402,7 +420,9 @@ def main():
         output_data = {
             "config": {
                 "model": args.model,
-                "bias_scale": args.bias_scale,
+                "bias_mode": args.bias_mode,
+                "bias_scale": args.bias_scale if args.bias_mode == "fixed" else None,
+                "adaptive_scale": graph.get_adaptive_scale() if args.bias_mode == "adaptive" else None,
                 "questions": len(questions)
             },
             "stats": {
