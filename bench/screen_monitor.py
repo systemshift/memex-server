@@ -40,18 +40,67 @@ MAX_IMAGE_SIZE = (1920, 1080)  # Resize large screenshots to save API costs
 
 # ============== Screen Capture Module ==============
 
+def get_session_type() -> str:
+    """Detect if running X11 or Wayland."""
+    return os.environ.get("XDG_SESSION_TYPE", "x11").lower()
+
+
 class ScreenCapture:
     """Captures screenshots and gathers window metadata."""
 
     def __init__(self, interval: int = DEFAULT_INTERVAL):
         self.interval = interval
-        self.sct = mss.mss()
+        self.session_type = get_session_type()
         self.last_capture_time = 0
         self.last_window_title = None
+        self.temp_screenshot = "/tmp/memex_screenshot.png"
+
+        # Only init mss for X11
+        if self.session_type == "x11":
+            self.sct = mss.mss()
+        else:
+            self.sct = None
+            print(f"Detected Wayland session - using gnome-screenshot")
 
     def get_active_window_info(self) -> dict:
-        """Get info about the currently focused window (X11)."""
-        # Try xdotool first
+        """Get info about the currently focused window."""
+        # Try Wayland/GNOME method first (gdbus)
+        if self.session_type == "wayland":
+            try:
+                result = subprocess.run(
+                    ["gdbus", "call", "--session",
+                     "--dest", "org.gnome.Shell",
+                     "--object-path", "/org/gnome/Shell",
+                     "--method", "org.gnome.Shell.Eval",
+                     "global.display.focus_window ? global.display.focus_window.title : 'Desktop'"],
+                    capture_output=True, text=True, timeout=2
+                )
+                if result.returncode == 0 and "true" in result.stdout:
+                    # Parse: (true, "'Window Title'")
+                    match = re.search(r"'([^']*)'", result.stdout)
+                    if match:
+                        window_title = match.group(1)
+
+                        # Get app name
+                        result2 = subprocess.run(
+                            ["gdbus", "call", "--session",
+                             "--dest", "org.gnome.Shell",
+                             "--object-path", "/org/gnome/Shell",
+                             "--method", "org.gnome.Shell.Eval",
+                             "global.display.focus_window ? global.display.focus_window.wm_class : 'Unknown'"],
+                            capture_output=True, text=True, timeout=2
+                        )
+                        app_name = "Unknown"
+                        if result2.returncode == 0:
+                            match2 = re.search(r"'([^']*)'", result2.stdout)
+                            if match2:
+                                app_name = match2.group(1)
+
+                        return {"window_title": window_title, "app_name": app_name}
+            except:
+                pass
+
+        # Try xdotool (X11 or XWayland)
         try:
             result = subprocess.run(
                 ["xdotool", "getactivewindow", "getwindowname"],
@@ -99,23 +148,58 @@ class ScreenCapture:
         # Final fallback
         return {"window_title": "Desktop", "app_name": "Unknown"}
 
-    def capture(self) -> dict:
-        """Capture screenshot and return with metadata."""
-        # Capture the primary monitor
+    def capture_wayland(self) -> bytes:
+        """Capture screenshot on Wayland using gnome-screenshot or grim."""
+        # Try gnome-screenshot first (GNOME/Ubuntu)
+        try:
+            subprocess.run(
+                ["gnome-screenshot", "-f", self.temp_screenshot],
+                capture_output=True, timeout=5, check=True
+            )
+            with open(self.temp_screenshot, "rb") as f:
+                return f.read()
+        except:
+            pass
+
+        # Try grim (wlroots/Sway)
+        try:
+            subprocess.run(
+                ["grim", self.temp_screenshot],
+                capture_output=True, timeout=5, check=True
+            )
+            with open(self.temp_screenshot, "rb") as f:
+                return f.read()
+        except:
+            pass
+
+        raise RuntimeError("No Wayland screenshot tool found. Install gnome-screenshot or grim.")
+
+    def capture_x11(self) -> bytes:
+        """Capture screenshot on X11 using mss."""
         monitor = self.sct.monitors[1]  # Primary monitor
         screenshot = self.sct.grab(monitor)
-
-        # Convert to PIL Image
         img = Image.frombytes("RGB", screenshot.size, screenshot.bgra, "raw", "BGRX")
+
+        buffer = io.BytesIO()
+        img.save(buffer, format="PNG", optimize=True)
+        return buffer.getvalue()
+
+    def capture(self) -> dict:
+        """Capture screenshot and return with metadata."""
+        # Capture based on session type
+        if self.session_type == "wayland":
+            image_bytes = self.capture_wayland()
+            img = Image.open(io.BytesIO(image_bytes))
+        else:
+            image_bytes = self.capture_x11()
+            img = Image.open(io.BytesIO(image_bytes))
 
         # Resize if too large (saves API costs)
         if img.size[0] > MAX_IMAGE_SIZE[0] or img.size[1] > MAX_IMAGE_SIZE[1]:
             img.thumbnail(MAX_IMAGE_SIZE, Image.Resampling.LANCZOS)
-
-        # Convert to PNG bytes
-        buffer = io.BytesIO()
-        img.save(buffer, format="PNG", optimize=True)
-        image_bytes = buffer.getvalue()
+            buffer = io.BytesIO()
+            img.save(buffer, format="PNG", optimize=True)
+            image_bytes = buffer.getvalue()
 
         # Get window info
         window_info = self.get_active_window_info()
