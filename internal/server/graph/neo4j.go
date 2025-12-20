@@ -206,6 +206,65 @@ func (r *Repository) GetNode(ctx context.Context, id string) (*core.Node, error)
 	return result.(*core.Node), nil
 }
 
+// UpdateNodeMeta updates a node's metadata (merges with existing)
+func (r *Repository) UpdateNodeMeta(ctx context.Context, id string, meta map[string]any) error {
+	session := r.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
+	defer session.Close(ctx)
+
+	_, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		// First get existing properties
+		getQuery := `
+			MATCH (n:Node {id: $id})
+			WHERE (n.deleted IS NULL OR n.deleted = false)
+			RETURN n.properties as properties
+		`
+		result, err := tx.Run(ctx, getQuery, map[string]any{"id": id})
+		if err != nil {
+			return nil, err
+		}
+
+		if !result.Next(ctx) {
+			return nil, fmt.Errorf("node not found: %s", id)
+		}
+
+		// Parse existing properties
+		existingMeta := make(map[string]any)
+		record := result.Record()
+		if propsVal, ok := record.Get("properties"); ok {
+			if propsStr, ok := propsVal.(string); ok && propsStr != "" {
+				if err := json.Unmarshal([]byte(propsStr), &existingMeta); err != nil {
+					return nil, fmt.Errorf("unmarshaling existing properties: %w", err)
+				}
+			}
+		}
+
+		// Merge new meta into existing
+		for k, v := range meta {
+			existingMeta[k] = v
+		}
+
+		// Convert back to JSON
+		metaJSON, err := json.Marshal(existingMeta)
+		if err != nil {
+			return nil, fmt.Errorf("marshaling meta: %w", err)
+		}
+
+		// Update the node
+		updateQuery := `
+			MATCH (n:Node {id: $id})
+			SET n.properties = $properties, n.modified = datetime()
+			RETURN n
+		`
+		_, err = tx.Run(ctx, updateQuery, map[string]any{
+			"id":         id,
+			"properties": string(metaJSON),
+		})
+		return nil, err
+	})
+
+	return err
+}
+
 // CreateLink creates a relationship between two nodes
 func (r *Repository) CreateLink(ctx context.Context, link *core.Link) error {
 	session := r.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})

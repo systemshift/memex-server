@@ -82,6 +82,29 @@ func (s *Server) GetNode(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(node)
 }
 
+// UpdateNodeRequest is the request body for updating a node's metadata
+type UpdateNodeRequest struct {
+	Meta map[string]interface{} `json:"meta"`
+}
+
+// UpdateNode handles PATCH /api/nodes/{id}
+func (s *Server) UpdateNode(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	var req UpdateNodeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if err := s.repo.UpdateNodeMeta(r.Context(), id, req.Meta); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
 // CreateLinkRequest is the request body for creating a link
 type CreateLinkRequest struct {
 	Source string                 `json:"source"`
