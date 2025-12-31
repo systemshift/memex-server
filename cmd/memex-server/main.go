@@ -76,9 +76,11 @@ func main() {
 		r.Get("/query/traverse", apiServer.QueryTraverse)
 		r.Get("/query/subgraph", apiServer.QuerySubgraph)
 		r.Get("/query/attention_subgraph", apiServer.QueryAttentionSubgraph)
+		r.Get("/query/by_lens", apiServer.QueryByLens)
 
 		// Graph exploration
 		r.Get("/graph/map", apiServer.GraphMap)
+		r.Get("/graph/export", apiServer.ExportLens)
 
 		// Attention edge endpoints
 		r.Post("/edges/attention", apiServer.UpdateAttentionEdge)

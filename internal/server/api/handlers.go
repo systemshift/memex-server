@@ -841,3 +841,65 @@ func (s *Server) GetLensEntities(w http.ResponseWriter, r *http.Request) {
 		"count":    len(entities),
 	})
 }
+
+// QueryByLens handles GET /api/query/by_lens
+// Query entities interpreted through a lens, optionally filtered by pattern
+func (s *Server) QueryByLens(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+	lensID := query.Get("lens_id")
+	if lensID == "" {
+		http.Error(w, "lens_id query parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	// Handle lens: prefix
+	if len(lensID) < 5 || lensID[:5] != "lens:" {
+		lensID = "lens:" + lensID
+	}
+
+	// Optional pattern filter (e.g., "commitment", "deadline")
+	pattern := query.Get("pattern")
+	limit, offset := parsePagination(r)
+
+	entities, err := s.repo.QueryByLens(r.Context(), lensID, pattern, limit, offset)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"lens_id":  lensID,
+		"pattern":  pattern,
+		"entities": entities,
+		"count":    len(entities),
+	})
+}
+
+// ExportLens handles GET /api/graph/export
+// Export a lens with all entities interpreted through it
+func (s *Server) ExportLens(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+	lensID := query.Get("lens_id")
+	if lensID == "" {
+		http.Error(w, "lens_id query parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	// Handle lens: prefix
+	if len(lensID) < 5 || lensID[:5] != "lens:" {
+		lensID = "lens:" + lensID
+	}
+
+	// Optional: include EXTRACTED_FROM links (default true)
+	includeExtractedFrom := query.Get("include_sources") != "false"
+
+	export, err := s.repo.ExportLens(r.Context(), lensID, includeExtractedFrom)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(export)
+}

@@ -166,6 +166,76 @@ class MemexMCP:
                     "properties": {},
                 },
             ),
+            # Lens tools
+            Tool(
+                name="list_lenses",
+                description="List all available lenses. Lenses define primitives and patterns for extracting entities from content.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {},
+                },
+            ),
+            Tool(
+                name="get_lens",
+                description="Get a lens definition with its primitives and patterns. Use to understand the extraction schema.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "lens_id": {
+                            "type": "string",
+                            "description": "ID of the lens (with or without 'lens:' prefix)",
+                        },
+                    },
+                    "required": ["lens_id"],
+                },
+            ),
+            Tool(
+                name="query_by_lens",
+                description="Get entities that were extracted/interpreted through a specific lens. Optionally filter by matched pattern.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "lens_id": {
+                            "type": "string",
+                            "description": "ID of the lens (with or without 'lens:' prefix)",
+                        },
+                        "pattern": {
+                            "type": "string",
+                            "description": "Optional pattern name to filter entities (e.g., 'commitment', 'deadline')",
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of results (default: 100)",
+                            "default": 100,
+                        },
+                        "offset": {
+                            "type": "integer",
+                            "description": "Pagination offset (default: 0)",
+                            "default": 0,
+                        },
+                    },
+                    "required": ["lens_id"],
+                },
+            ),
+            Tool(
+                name="export_lens",
+                description="Export a complete lens with all entities interpreted through it. Useful for exporting a coherent subgraph.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "lens_id": {
+                            "type": "string",
+                            "description": "ID of the lens (with or without 'lens:' prefix)",
+                        },
+                        "include_sources": {
+                            "type": "boolean",
+                            "description": "Include EXTRACTED_FROM links to source nodes (default: true)",
+                            "default": True,
+                        },
+                    },
+                    "required": ["lens_id"],
+                },
+            ),
         ]
 
     async def call_tool(self, name: str, arguments: dict) -> list[TextContent]:
@@ -183,6 +253,14 @@ class MemexMCP:
                 return await self._get_node_links(arguments)
             elif name == "list_all_nodes":
                 return await self._list_all_nodes()
+            elif name == "list_lenses":
+                return await self._list_lenses()
+            elif name == "get_lens":
+                return await self._get_lens(arguments)
+            elif name == "query_by_lens":
+                return await self._query_by_lens(arguments)
+            elif name == "export_lens":
+                return await self._export_lens(arguments)
             else:
                 return [TextContent(type="text", text=f"Unknown tool: {name}")]
         except Exception as e:
@@ -283,6 +361,109 @@ class MemexMCP:
             type="text",
             text=f"Total nodes: {data['count']}\n\nNode IDs:\n" + "\n".join(data["nodes"])
         )]
+
+    async def _list_lenses(self) -> list[TextContent]:
+        """List all available lenses"""
+        response = await self.client.get("/api/lenses")
+        response.raise_for_status()
+        data = response.json()
+
+        if data["count"] == 0:
+            return [TextContent(
+                type="text",
+                text="No lenses found. Create lenses to define extraction schemas."
+            )]
+
+        lens_summaries = []
+        for lens in data["lenses"]:
+            summary = f"- {lens['id']}: {lens.get('name', 'Unnamed')}"
+            if lens.get("version"):
+                summary += f" (v{lens['version']})"
+            lens_summaries.append(summary)
+
+        return [TextContent(
+            type="text",
+            text=f"Found {data['count']} lenses:\n\n" + "\n".join(lens_summaries)
+        )]
+
+    async def _get_lens(self, args: dict) -> list[TextContent]:
+        """Get lens definition with primitives and patterns"""
+        lens_id = args["lens_id"]
+        # Handle lens: prefix
+        if not lens_id.startswith("lens:"):
+            lens_id = f"lens:{lens_id}"
+
+        response = await self.client.get(f"/api/lenses/{lens_id.replace('lens:', '')}")
+        response.raise_for_status()
+        lens = response.json()
+
+        # Format lens for readability
+        meta = lens.get("Meta", {})
+        output = f"""Lens: {lens['ID']}
+Name: {meta.get('name', 'Unnamed')}
+Version: {meta.get('version', '?')}
+Author: {meta.get('author', 'Unknown')}
+
+Primitives (extraction vocabulary):
+{json.dumps(meta.get('primitives', {}), indent=2)}
+
+Patterns (structural templates):
+{json.dumps(meta.get('patterns', {}), indent=2)}
+
+Extraction Hints:
+{meta.get('extraction_hints', 'None')}
+"""
+        return [TextContent(type="text", text=output)]
+
+    async def _query_by_lens(self, args: dict) -> list[TextContent]:
+        """Get entities interpreted through a lens"""
+        params = {
+            "lens_id": args["lens_id"],
+            "limit": args.get("limit", 100),
+            "offset": args.get("offset", 0),
+        }
+        if "pattern" in args and args["pattern"]:
+            params["pattern"] = args["pattern"]
+
+        response = await self.client.get("/api/query/by_lens", params=params)
+        response.raise_for_status()
+        data = response.json()
+
+        if data["count"] == 0:
+            return [TextContent(
+                type="text",
+                text=f"No entities found for lens {data['lens_id']}" +
+                     (f" with pattern '{data['pattern']}'" if data.get("pattern") else "")
+            )]
+
+        return [TextContent(
+            type="text",
+            text=f"Found {data['count']} entities interpreted through {data['lens_id']}:\n\n" +
+                 json.dumps(data["entities"], indent=2)
+        )]
+
+    async def _export_lens(self, args: dict) -> list[TextContent]:
+        """Export a complete lens with entities"""
+        params = {"lens_id": args["lens_id"]}
+        if "include_sources" in args:
+            params["include_sources"] = str(args["include_sources"]).lower()
+
+        response = await self.client.get("/api/graph/export", params=params)
+        response.raise_for_status()
+        data = response.json()
+
+        output = f"""Lens Export: {data['lens']['ID']}
+
+Lens Definition:
+{json.dumps(data['lens'], indent=2)}
+
+Entities ({data['stats']['entity_count']} total):
+{json.dumps(data['entities'], indent=2) if data['entities'] else 'None'}
+
+Links ({data['stats']['link_count']} total):
+{json.dumps(data['links'], indent=2) if data['links'] else 'None'}
+"""
+        return [TextContent(type="text", text=output)]
 
     async def run(self):
         """Run the MCP server"""

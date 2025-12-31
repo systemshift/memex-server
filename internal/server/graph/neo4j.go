@@ -1298,3 +1298,201 @@ func (r *Repository) CreateInterpretedThroughLink(ctx context.Context, entityID,
 	}
 	return r.CreateLink(ctx, link)
 }
+
+// QueryByLens returns entities interpreted through a lens, optionally filtered by pattern
+func (r *Repository) QueryByLens(ctx context.Context, lensID string, pattern string, limit int, offset int) ([]*core.Node, error) {
+	session := r.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
+	defer session.Close(ctx)
+
+	result, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		query := `
+			MATCH (e:Node)-[r:LINK {type: 'INTERPRETED_THROUGH'}]->(l:Node {id: $lens_id})
+			WHERE (e.deleted IS NULL OR e.deleted = false)
+		`
+		params := map[string]any{"lens_id": lensID}
+
+		// Filter by pattern if specified (searches in link properties)
+		if pattern != "" {
+			query += ` AND r.properties CONTAINS $pattern`
+			params["pattern"] = pattern
+		}
+
+		query += ` RETURN e, r.properties as link_props`
+
+		// Add pagination
+		if limit > 0 {
+			query += ` SKIP $offset LIMIT $limit`
+			params["offset"] = offset
+			params["limit"] = limit
+		}
+
+		result, err := tx.Run(ctx, query, params)
+		if err != nil {
+			return nil, err
+		}
+
+		var nodes []*core.Node
+		for result.Next(ctx) {
+			record := result.Record()
+			nodeValue, _ := record.Get("e")
+			nodeData := nodeValue.(neo4j.Node)
+
+			node, err := parseNodeFromNeo4j(nodeData)
+			if err != nil {
+				continue
+			}
+
+			// Add interpretation metadata
+			if linkPropsValue, ok := record.Get("link_props"); ok {
+				if linkPropsStr, ok := linkPropsValue.(string); ok {
+					var linkMeta map[string]interface{}
+					if err := json.Unmarshal([]byte(linkPropsStr), &linkMeta); err == nil {
+						if node.Meta == nil {
+							node.Meta = make(map[string]interface{})
+						}
+						node.Meta["_interpretation"] = linkMeta
+					}
+				}
+			}
+
+			nodes = append(nodes, node)
+		}
+
+		return nodes, nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return result.([]*core.Node), nil
+}
+
+// LensExport represents a complete lens export with entities and links
+type LensExport struct {
+	Lens     *core.Node      `json:"lens"`
+	Entities []*core.Node    `json:"entities"`
+	Links    []*SubgraphEdge `json:"links"`
+	Stats    struct {
+		EntityCount int `json:"entity_count"`
+		LinkCount   int `json:"link_count"`
+	} `json:"stats"`
+}
+
+// ExportLens returns a complete export of a lens and its interpreted entities
+func (r *Repository) ExportLens(ctx context.Context, lensID string, includeExtractedFrom bool) (*LensExport, error) {
+	session := r.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
+	defer session.Close(ctx)
+
+	result, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		export := &LensExport{}
+
+		// Get the lens node
+		lensQuery := `
+			MATCH (l:Node {id: $lens_id})
+			WHERE (l.deleted IS NULL OR l.deleted = false)
+			RETURN l
+		`
+		lensResult, err := tx.Run(ctx, lensQuery, map[string]any{"lens_id": lensID})
+		if err != nil {
+			return nil, err
+		}
+
+		if !lensResult.Next(ctx) {
+			return nil, fmt.Errorf("lens not found: %s", lensID)
+		}
+
+		lensRecord := lensResult.Record()
+		lensValue, _ := lensRecord.Get("l")
+		lensData := lensValue.(neo4j.Node)
+		lensNode, err := parseNodeFromNeo4j(lensData)
+		if err != nil {
+			return nil, err
+		}
+		export.Lens = lensNode
+
+		// Get all entities interpreted through this lens
+		entityQuery := `
+			MATCH (e:Node)-[r:LINK {type: 'INTERPRETED_THROUGH'}]->(l:Node {id: $lens_id})
+			WHERE (e.deleted IS NULL OR e.deleted = false)
+			RETURN e, r
+		`
+		entityResult, err := tx.Run(ctx, entityQuery, map[string]any{"lens_id": lensID})
+		if err != nil {
+			return nil, err
+		}
+
+		entityIDs := []string{}
+		for entityResult.Next(ctx) {
+			record := entityResult.Record()
+			nodeValue, _ := record.Get("e")
+			relValue, _ := record.Get("r")
+
+			nodeData := nodeValue.(neo4j.Node)
+			node, err := parseNodeFromNeo4j(nodeData)
+			if err != nil {
+				continue
+			}
+			export.Entities = append(export.Entities, node)
+			entityIDs = append(entityIDs, node.ID)
+
+			// Add INTERPRETED_THROUGH link
+			relData := relValue.(neo4j.Relationship)
+			var meta map[string]any
+			if propsStr, ok := relData.Props["properties"].(string); ok {
+				json.Unmarshal([]byte(propsStr), &meta)
+			}
+
+			export.Links = append(export.Links, &SubgraphEdge{
+				Source: node.ID,
+				Target: lensID,
+				Type:   "INTERPRETED_THROUGH",
+				Meta:   meta,
+			})
+		}
+
+		// Optionally get EXTRACTED_FROM links
+		if includeExtractedFrom && len(entityIDs) > 0 {
+			extractQuery := `
+				MATCH (e:Node)-[r:LINK {type: 'EXTRACTED_FROM'}]->(s:Node)
+				WHERE e.id IN $entity_ids
+				RETURN e.id as entity_id, s.id as source_id, r
+			`
+			extractResult, err := tx.Run(ctx, extractQuery, map[string]any{"entity_ids": entityIDs})
+			if err != nil {
+				return nil, err
+			}
+
+			for extractResult.Next(ctx) {
+				record := extractResult.Record()
+				entityID, _ := record.Get("entity_id")
+				sourceID, _ := record.Get("source_id")
+				relValue, _ := record.Get("r")
+
+				relData := relValue.(neo4j.Relationship)
+				var meta map[string]any
+				if propsStr, ok := relData.Props["properties"].(string); ok {
+					json.Unmarshal([]byte(propsStr), &meta)
+				}
+
+				export.Links = append(export.Links, &SubgraphEdge{
+					Source: entityID.(string),
+					Target: sourceID.(string),
+					Type:   "EXTRACTED_FROM",
+					Meta:   meta,
+				})
+			}
+		}
+
+		export.Stats.EntityCount = len(export.Entities)
+		export.Stats.LinkCount = len(export.Links)
+
+		return export, nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return result.(*LensExport), nil
+}
