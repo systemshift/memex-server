@@ -83,6 +83,14 @@ func main() {
 		// Attention edge endpoints
 		r.Post("/edges/attention", apiServer.UpdateAttentionEdge)
 		r.Post("/edges/attention/prune", apiServer.PruneAttentionEdges)
+
+		// Lens endpoints
+		r.Post("/lenses", apiServer.CreateLens)
+		r.Get("/lenses", apiServer.ListLenses)
+		r.Get("/lenses/{id}", apiServer.GetLens)
+		r.Patch("/lenses/{id}", apiServer.UpdateLens)
+		r.Delete("/lenses/{id}", apiServer.DeleteLens)
+		r.Get("/lenses/{id}/entities", apiServer.GetLensEntities)
 	})
 
 	// HTTP server

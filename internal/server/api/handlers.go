@@ -608,3 +608,236 @@ func (s *Server) PruneAttentionEdges(w http.ResponseWriter, r *http.Request) {
 		"message":       fmt.Sprintf("Pruned %d weak attention edges", deletedCount),
 	})
 }
+
+// ==================== Lens Handlers ====================
+
+// CreateLensRequest is the request body for creating a lens
+type CreateLensRequest struct {
+	ID              string                 `json:"id"`
+	Name            string                 `json:"name"`
+	Description     string                 `json:"description,omitempty"`
+	Version         string                 `json:"version,omitempty"`
+	Author          string                 `json:"author,omitempty"`
+	Primitives      map[string]string      `json:"primitives"`
+	Patterns        map[string]interface{} `json:"patterns,omitempty"`
+	ExtractionHints string                 `json:"extraction_hints,omitempty"`
+}
+
+// CreateLens handles POST /api/lenses
+func (s *Server) CreateLens(w http.ResponseWriter, r *http.Request) {
+	var req CreateLensRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Validate required fields
+	if req.ID == "" {
+		http.Error(w, "id is required", http.StatusBadRequest)
+		return
+	}
+	if req.Name == "" {
+		http.Error(w, "name is required", http.StatusBadRequest)
+		return
+	}
+	if req.Primitives == nil || len(req.Primitives) == 0 {
+		http.Error(w, "primitives are required", http.StatusBadRequest)
+		return
+	}
+
+	// Ensure ID has lens: prefix
+	if len(req.ID) < 5 || req.ID[:5] != "lens:" {
+		req.ID = "lens:" + req.ID
+	}
+
+	// Set default version
+	if req.Version == "" {
+		req.Version = "1.0"
+	}
+
+	now := time.Now()
+	node := &core.Node{
+		ID:   req.ID,
+		Type: "Lens",
+		Content: []byte(req.Description),
+		Meta: map[string]interface{}{
+			"name":             req.Name,
+			"version":          req.Version,
+			"author":           req.Author,
+			"primitives":       req.Primitives,
+			"patterns":         req.Patterns,
+			"extraction_hints": req.ExtractionHints,
+		},
+		Created:  now,
+		Modified: now,
+	}
+
+	if err := s.repo.CreateNode(r.Context(), node); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"id":      node.ID,
+		"created": node.Created,
+	})
+}
+
+// ListLenses handles GET /api/lenses
+func (s *Server) ListLenses(w http.ResponseWriter, r *http.Request) {
+	// Filter nodes by type "Lens"
+	nodes, err := s.repo.FilterNodes(r.Context(), []string{"Lens"}, "", "", 100, 0)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Build response with lens summaries
+	lenses := make([]map[string]interface{}, 0, len(nodes))
+	for _, node := range nodes {
+		lens := map[string]interface{}{
+			"id":       node.ID,
+			"type":     node.Type,
+			"created":  node.Created,
+			"modified": node.Modified,
+		}
+		if node.Meta != nil {
+			if name, ok := node.Meta["name"]; ok {
+				lens["name"] = name
+			}
+			if version, ok := node.Meta["version"]; ok {
+				lens["version"] = version
+			}
+			if author, ok := node.Meta["author"]; ok {
+				lens["author"] = author
+			}
+		}
+		lenses = append(lenses, lens)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"lenses": lenses,
+		"count":  len(lenses),
+	})
+}
+
+// GetLens handles GET /api/lenses/{id}
+func (s *Server) GetLens(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	// Handle URL-encoded lens: prefix
+	if len(id) < 5 || id[:5] != "lens:" {
+		id = "lens:" + id
+	}
+
+	node, err := s.repo.GetNode(r.Context(), id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	// Verify it's actually a lens
+	if node.Type != "Lens" {
+		http.Error(w, "node is not a lens", http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(node)
+}
+
+// UpdateLens handles PATCH /api/lenses/{id}
+func (s *Server) UpdateLens(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	// Handle URL-encoded lens: prefix
+	if len(id) < 5 || id[:5] != "lens:" {
+		id = "lens:" + id
+	}
+
+	var req map[string]interface{}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Update version on change
+	if _, exists := req["version"]; !exists {
+		// Auto-increment version if not specified
+		node, err := s.repo.GetNode(r.Context(), id)
+		if err == nil && node.Meta != nil {
+			if oldVersion, ok := node.Meta["version"].(string); ok {
+				req["version"] = oldVersion + ".1"
+			}
+		}
+	}
+
+	if err := s.repo.UpdateNodeMeta(r.Context(), id, req); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"id":      id,
+		"updated": true,
+	})
+}
+
+// DeleteLens handles DELETE /api/lenses/{id}
+func (s *Server) DeleteLens(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	// Handle URL-encoded lens: prefix
+	if len(id) < 5 || id[:5] != "lens:" {
+		id = "lens:" + id
+	}
+
+	// Verify it's a lens before deleting
+	node, err := s.repo.GetNode(r.Context(), id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	if node.Type != "Lens" {
+		http.Error(w, "node is not a lens", http.StatusBadRequest)
+		return
+	}
+
+	if err := s.repo.DeleteNode(r.Context(), id, false); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"id":      id,
+		"deleted": true,
+	})
+}
+
+// GetLensEntities handles GET /api/lenses/{id}/entities
+func (s *Server) GetLensEntities(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	// Handle URL-encoded lens: prefix
+	if len(id) < 5 || id[:5] != "lens:" {
+		id = "lens:" + id
+	}
+
+	// Get entities interpreted through this lens
+	entities, err := s.repo.GetEntitiesInterpretedThrough(r.Context(), id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"lens_id":  id,
+		"entities": entities,
+		"count":    len(entities),
+	})
+}

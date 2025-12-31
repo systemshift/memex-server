@@ -1230,3 +1230,71 @@ func (r *Repository) PruneWeakAttentionEdges(ctx context.Context, minWeight floa
 
 	return result.(int), nil
 }
+
+// GetEntitiesInterpretedThrough returns all entities linked to a lens via INTERPRETED_THROUGH edges
+func (r *Repository) GetEntitiesInterpretedThrough(ctx context.Context, lensID string) ([]*core.Node, error) {
+	session := r.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
+	defer session.Close(ctx)
+
+	result, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		// Query entities that have INTERPRETED_THROUGH links to this lens
+		query := `
+			MATCH (e:Node)-[r:LINK {type: 'INTERPRETED_THROUGH'}]->(l:Node {id: $lens_id})
+			WHERE (e.deleted IS NULL OR e.deleted = false)
+			RETURN e, r.properties as link_props
+		`
+
+		result, err := tx.Run(ctx, query, map[string]any{"lens_id": lensID})
+		if err != nil {
+			return nil, err
+		}
+
+		var nodes []*core.Node
+		for result.Next(ctx) {
+			record := result.Record()
+			nodeValue, _ := record.Get("e")
+			nodeData := nodeValue.(neo4j.Node)
+
+			node, err := parseNodeFromNeo4j(nodeData)
+			if err != nil {
+				continue
+			}
+
+			// Add link metadata to node meta
+			if linkPropsValue, ok := record.Get("link_props"); ok {
+				if linkPropsStr, ok := linkPropsValue.(string); ok {
+					var linkMeta map[string]interface{}
+					if err := json.Unmarshal([]byte(linkPropsStr), &linkMeta); err == nil {
+						if node.Meta == nil {
+							node.Meta = make(map[string]interface{})
+						}
+						node.Meta["_interpretation"] = linkMeta
+					}
+				}
+			}
+
+			nodes = append(nodes, node)
+		}
+
+		return nodes, nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return result.([]*core.Node), nil
+}
+
+// CreateInterpretedThroughLink creates an INTERPRETED_THROUGH link between an entity and a lens
+func (r *Repository) CreateInterpretedThroughLink(ctx context.Context, entityID, lensID string, meta map[string]interface{}) error {
+	link := &core.Link{
+		Source:   entityID,
+		Target:   lensID,
+		Type:     "INTERPRETED_THROUGH",
+		Meta:     meta,
+		Created:  time.Now(),
+		Modified: time.Now(),
+	}
+	return r.CreateLink(ctx, link)
+}
