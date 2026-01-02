@@ -6,13 +6,28 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/systemshift/memex/internal/memex/core"
+	"github.com/systemshift/memex/internal/server/subscriptions"
 )
 
 // Repository wraps Neo4j operations
 type Repository struct {
-	driver neo4j.DriverWithContext
+	driver       neo4j.DriverWithContext
+	eventEmitter func(subscriptions.Event)
+}
+
+// SetEventEmitter sets the callback for emitting events to the subscription manager
+func (r *Repository) SetEventEmitter(emitter func(subscriptions.Event)) {
+	r.eventEmitter = emitter
+}
+
+// emit sends an event to the subscription manager if one is registered
+func (r *Repository) emit(event subscriptions.Event) {
+	if r.eventEmitter != nil {
+		r.eventEmitter(event)
+	}
 }
 
 // Config holds Neo4j connection configuration
@@ -168,6 +183,18 @@ func (r *Repository) CreateNode(ctx context.Context, node *core.Node) error {
 		return nil, err
 	})
 
+	// Emit event on successful creation
+	if err == nil {
+		r.emit(subscriptions.Event{
+			ID:        uuid.New().String(),
+			Type:      subscriptions.EventNodeCreated,
+			Timestamp: time.Now(),
+			NodeID:    node.ID,
+			NodeType:  node.Type,
+			Meta:      node.Meta,
+		})
+	}
+
 	return err
 }
 
@@ -211,7 +238,7 @@ func (r *Repository) UpdateNodeMeta(ctx context.Context, id string, meta map[str
 	session := r.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
 	defer session.Close(ctx)
 
-	_, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+	result, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
 		// First get existing properties
 		getQuery := `
 			MATCH (n:Node {id: $id})
@@ -259,8 +286,27 @@ func (r *Repository) UpdateNodeMeta(ctx context.Context, id string, meta map[str
 			"id":         id,
 			"properties": string(metaJSON),
 		})
-		return nil, err
+		return existingMeta, err
 	})
+
+	// Emit event on successful update
+	if err == nil {
+		// Get node type from existing meta or default
+		nodeType := ""
+		if meta, ok := result.(map[string]any); ok {
+			if t, ok := meta["type"].(string); ok {
+				nodeType = t
+			}
+		}
+		r.emit(subscriptions.Event{
+			ID:        uuid.New().String(),
+			Type:      subscriptions.EventNodeUpdated,
+			Timestamp: time.Now(),
+			NodeID:    id,
+			NodeType:  nodeType,
+			Meta:      meta,
+		})
+	}
 
 	return err
 }
@@ -303,6 +349,19 @@ func (r *Repository) CreateLink(ctx context.Context, link *core.Link) error {
 		_, err = tx.Run(ctx, query, params)
 		return nil, err
 	})
+
+	// Emit event on successful creation
+	if err == nil {
+		r.emit(subscriptions.Event{
+			ID:         uuid.New().String(),
+			Type:       subscriptions.EventLinkCreated,
+			Timestamp:  time.Now(),
+			LinkSource: link.Source,
+			LinkTarget: link.Target,
+			LinkType:   link.Type,
+			Meta:       link.Meta,
+		})
+	}
 
 	return err
 }
@@ -559,6 +618,16 @@ func (r *Repository) DeleteNode(ctx context.Context, nodeID string, force bool) 
 		}, nil
 	})
 
+	// Emit event on successful deletion
+	if err == nil {
+		r.emit(subscriptions.Event{
+			ID:        uuid.New().String(),
+			Type:      subscriptions.EventNodeDeleted,
+			Timestamp: time.Now(),
+			NodeID:    nodeID,
+		})
+	}
+
 	return err
 }
 
@@ -595,6 +664,18 @@ func (r *Repository) DeleteLink(ctx context.Context, sourceID string, targetID s
 
 		return nil, nil
 	})
+
+	// Emit event on successful deletion
+	if err == nil {
+		r.emit(subscriptions.Event{
+			ID:         uuid.New().String(),
+			Type:       subscriptions.EventLinkDeleted,
+			Timestamp:  time.Now(),
+			LinkSource: sourceID,
+			LinkTarget: targetID,
+			LinkType:   linkType,
+		})
+	}
 
 	return err
 }
@@ -1495,4 +1576,249 @@ func (r *Repository) ExportLens(ctx context.Context, lensID string, includeExtra
 	}
 
 	return result.(*LensExport), nil
+}
+
+// ============== Subscription Repository Methods ==============
+
+// CreateSubscriptionNode persists a subscription as a node in the graph
+func (r *Repository) CreateSubscriptionNode(ctx context.Context, sub *subscriptions.Subscription) error {
+	session := r.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
+	defer session.Close(ctx)
+
+	_, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		patternJSON, err := json.Marshal(sub.Pattern)
+		if err != nil {
+			return nil, fmt.Errorf("marshaling pattern: %w", err)
+		}
+
+		meta := map[string]interface{}{
+			"name":        sub.Name,
+			"description": sub.Description,
+			"pattern":     string(patternJSON),
+			"webhook":     sub.Webhook,
+			"websocket":   sub.WebSocket,
+			"enabled":     sub.Enabled,
+			"fire_count":  sub.FireCount,
+		}
+		metaJSON, err := json.Marshal(meta)
+		if err != nil {
+			return nil, fmt.Errorf("marshaling meta: %w", err)
+		}
+
+		query := `
+			CREATE (n:Node {
+				id: $id,
+				type: 'Subscription',
+				properties: $properties,
+				created: datetime($created),
+				modified: datetime($modified),
+				deleted: false,
+				degree: 0
+			})
+			RETURN n
+		`
+
+		params := map[string]any{
+			"id":         "subscription:" + sub.ID,
+			"properties": string(metaJSON),
+			"created":    sub.Created.Format("2006-01-02T15:04:05Z"),
+			"modified":   sub.Modified.Format("2006-01-02T15:04:05Z"),
+		}
+
+		_, err = tx.Run(ctx, query, params)
+		return nil, err
+	})
+
+	return err
+}
+
+// UpdateSubscriptionNode updates a subscription node in the graph
+func (r *Repository) UpdateSubscriptionNode(ctx context.Context, sub *subscriptions.Subscription) error {
+	session := r.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
+	defer session.Close(ctx)
+
+	_, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		patternJSON, err := json.Marshal(sub.Pattern)
+		if err != nil {
+			return nil, fmt.Errorf("marshaling pattern: %w", err)
+		}
+
+		meta := map[string]interface{}{
+			"name":        sub.Name,
+			"description": sub.Description,
+			"pattern":     string(patternJSON),
+			"webhook":     sub.Webhook,
+			"websocket":   sub.WebSocket,
+			"enabled":     sub.Enabled,
+			"fire_count":  sub.FireCount,
+		}
+		if sub.LastFired != nil {
+			meta["last_fired"] = sub.LastFired.Format(time.RFC3339)
+		}
+		metaJSON, err := json.Marshal(meta)
+		if err != nil {
+			return nil, fmt.Errorf("marshaling meta: %w", err)
+		}
+
+		query := `
+			MATCH (n:Node {id: $id})
+			SET n.properties = $properties, n.modified = datetime()
+			RETURN n
+		`
+
+		params := map[string]any{
+			"id":         "subscription:" + sub.ID,
+			"properties": string(metaJSON),
+		}
+
+		_, err = tx.Run(ctx, query, params)
+		return nil, err
+	})
+
+	return err
+}
+
+// DeleteSubscriptionNode removes a subscription node from the graph
+func (r *Repository) DeleteSubscriptionNode(ctx context.Context, id string) error {
+	session := r.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
+	defer session.Close(ctx)
+
+	_, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		query := `
+			MATCH (n:Node {id: $id})
+			DELETE n
+		`
+		_, err := tx.Run(ctx, query, map[string]any{"id": "subscription:" + id})
+		return nil, err
+	})
+
+	return err
+}
+
+// LoadSubscriptions loads all subscription nodes from the graph
+func (r *Repository) LoadSubscriptions(ctx context.Context) ([]*subscriptions.Subscription, error) {
+	session := r.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
+	defer session.Close(ctx)
+
+	result, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		query := `
+			MATCH (n:Node {type: 'Subscription'})
+			WHERE (n.deleted IS NULL OR n.deleted = false)
+			RETURN n.id as id, n.properties as properties, n.created as created, n.modified as modified
+		`
+
+		result, err := tx.Run(ctx, query, nil)
+		if err != nil {
+			return nil, err
+		}
+
+		var subs []*subscriptions.Subscription
+		for result.Next(ctx) {
+			record := result.Record()
+
+			idVal, _ := record.Get("id")
+			id := idVal.(string)
+			// Remove "subscription:" prefix
+			if len(id) > 13 && id[:13] == "subscription:" {
+				id = id[13:]
+			}
+
+			propsVal, _ := record.Get("properties")
+			propsStr := propsVal.(string)
+
+			var meta map[string]interface{}
+			if err := json.Unmarshal([]byte(propsStr), &meta); err != nil {
+				continue
+			}
+
+			createdVal, _ := record.Get("created")
+			modifiedVal, _ := record.Get("modified")
+
+			var created, modified time.Time
+			if t, ok := createdVal.(time.Time); ok {
+				created = t
+			}
+			if t, ok := modifiedVal.(time.Time); ok {
+				modified = t
+			}
+
+			sub := &subscriptions.Subscription{
+				ID:       id,
+				Created:  created,
+				Modified: modified,
+			}
+
+			if v, ok := meta["name"].(string); ok {
+				sub.Name = v
+			}
+			if v, ok := meta["description"].(string); ok {
+				sub.Description = v
+			}
+			if v, ok := meta["webhook"].(string); ok {
+				sub.Webhook = v
+			}
+			if v, ok := meta["websocket"].(bool); ok {
+				sub.WebSocket = v
+			}
+			if v, ok := meta["enabled"].(bool); ok {
+				sub.Enabled = v
+			}
+			if v, ok := meta["fire_count"].(float64); ok {
+				sub.FireCount = int(v)
+			}
+			if v, ok := meta["last_fired"].(string); ok {
+				if t, err := time.Parse(time.RFC3339, v); err == nil {
+					sub.LastFired = &t
+				}
+			}
+			if v, ok := meta["pattern"].(string); ok {
+				var pattern subscriptions.SubscriptionPattern
+				if err := json.Unmarshal([]byte(v), &pattern); err == nil {
+					sub.Pattern = pattern
+				}
+			}
+
+			subs = append(subs, sub)
+		}
+
+		return subs, nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return result.([]*subscriptions.Subscription), nil
+}
+
+// ExecuteCypherRead executes a read-only Cypher query and returns results
+func (r *Repository) ExecuteCypherRead(ctx context.Context, cypher string, params map[string]interface{}) ([]map[string]interface{}, error) {
+	session := r.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
+	defer session.Close(ctx)
+
+	result, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		result, err := tx.Run(ctx, cypher, params)
+		if err != nil {
+			return nil, err
+		}
+
+		var results []map[string]interface{}
+		for result.Next(ctx) {
+			record := result.Record()
+			row := make(map[string]interface{})
+			for _, key := range record.Keys {
+				val, _ := record.Get(key)
+				row[key] = val
+			}
+			results = append(results, row)
+		}
+
+		return results, nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return result.([]map[string]interface{}), nil
 }

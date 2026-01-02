@@ -12,16 +12,18 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/systemshift/memex/internal/memex/core"
 	"github.com/systemshift/memex/internal/server/graph"
+	"github.com/systemshift/memex/internal/server/subscriptions"
 )
 
 // Server holds the HTTP server dependencies
 type Server struct {
-	repo *graph.Repository
+	repo   *graph.Repository
+	subMgr *subscriptions.Manager
 }
 
 // New creates a new API server
-func New(repo *graph.Repository) *Server {
-	return &Server{repo: repo}
+func New(repo *graph.Repository, subMgr *subscriptions.Manager) *Server {
+	return &Server{repo: repo, subMgr: subMgr}
 }
 
 // CreateNodeRequest is the request body for creating a node
@@ -902,4 +904,104 @@ func (s *Server) ExportLens(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(export)
+}
+
+// ============== Subscription Handlers ==============
+
+// CreateSubscription handles POST /api/subscriptions
+func (s *Server) CreateSubscription(w http.ResponseWriter, r *http.Request) {
+	if s.subMgr == nil {
+		http.Error(w, "subscription manager not initialized", http.StatusServiceUnavailable)
+		return
+	}
+
+	var req subscriptions.CreateSubscriptionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	sub, err := s.subMgr.Register(r.Context(), &req)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(subscriptions.SubscriptionResponse{Subscription: sub})
+}
+
+// ListSubscriptions handles GET /api/subscriptions
+func (s *Server) ListSubscriptions(w http.ResponseWriter, r *http.Request) {
+	if s.subMgr == nil {
+		http.Error(w, "subscription manager not initialized", http.StatusServiceUnavailable)
+		return
+	}
+
+	subs := s.subMgr.List()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(subscriptions.ListSubscriptionsResponse{
+		Subscriptions: subs,
+		Count:         len(subs),
+	})
+}
+
+// GetSubscription handles GET /api/subscriptions/{id}
+func (s *Server) GetSubscription(w http.ResponseWriter, r *http.Request) {
+	if s.subMgr == nil {
+		http.Error(w, "subscription manager not initialized", http.StatusServiceUnavailable)
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+	sub, err := s.subMgr.Get(id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(subscriptions.SubscriptionResponse{Subscription: sub})
+}
+
+// UpdateSubscription handles PATCH /api/subscriptions/{id}
+func (s *Server) UpdateSubscription(w http.ResponseWriter, r *http.Request) {
+	if s.subMgr == nil {
+		http.Error(w, "subscription manager not initialized", http.StatusServiceUnavailable)
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+
+	var req subscriptions.UpdateSubscriptionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	sub, err := s.subMgr.Update(r.Context(), id, &req)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(subscriptions.SubscriptionResponse{Subscription: sub})
+}
+
+// DeleteSubscription handles DELETE /api/subscriptions/{id}
+func (s *Server) DeleteSubscription(w http.ResponseWriter, r *http.Request) {
+	if s.subMgr == nil {
+		http.Error(w, "subscription manager not initialized", http.StatusServiceUnavailable)
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+	if err := s.subMgr.Unregister(r.Context(), id); err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }

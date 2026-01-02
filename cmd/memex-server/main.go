@@ -13,6 +13,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/systemshift/memex/internal/server/api"
 	"github.com/systemshift/memex/internal/server/graph"
+	"github.com/systemshift/memex/internal/server/subscriptions"
 )
 
 func main() {
@@ -44,8 +45,18 @@ func main() {
 		log.Println("Database indexes ensured")
 	}
 
+	// Initialize subscription manager
+	subMgr := subscriptions.NewManager(repo)
+	if err := subMgr.Start(ctx); err != nil {
+		log.Printf("Warning: Failed to start subscription manager: %v", err)
+	}
+	defer subMgr.Stop()
+
+	// Wire up event emission from repository to subscription manager
+	repo.SetEventEmitter(subMgr.GetEmitter())
+
 	// Initialize API server
-	apiServer := api.New(repo)
+	apiServer := api.New(repo, subMgr)
 
 	// Setup HTTP router
 	r := chi.NewRouter()
@@ -93,6 +104,13 @@ func main() {
 		r.Patch("/lenses/{id}", apiServer.UpdateLens)
 		r.Delete("/lenses/{id}", apiServer.DeleteLens)
 		r.Get("/lenses/{id}/entities", apiServer.GetLensEntities)
+
+		// Subscription endpoints
+		r.Post("/subscriptions", apiServer.CreateSubscription)
+		r.Get("/subscriptions", apiServer.ListSubscriptions)
+		r.Get("/subscriptions/{id}", apiServer.GetSubscription)
+		r.Patch("/subscriptions/{id}", apiServer.UpdateSubscription)
+		r.Delete("/subscriptions/{id}", apiServer.DeleteSubscription)
 	})
 
 	// HTTP server
