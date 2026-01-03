@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -71,10 +72,35 @@ func (s *Server) CreateNode(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetNode handles GET /api/nodes/{id}
+// Supports query params: ?version=N for specific version, ?as_of=RFC3339 for point-in-time
 func (s *Server) GetNode(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	query := r.URL.Query()
 
-	node, err := s.repo.GetNode(r.Context(), id)
+	var node *core.Node
+	var err error
+
+	// Check for version parameter
+	if vStr := query.Get("version"); vStr != "" {
+		version, parseErr := strconv.Atoi(vStr)
+		if parseErr != nil {
+			http.Error(w, "invalid version parameter", http.StatusBadRequest)
+			return
+		}
+		node, err = s.repo.GetNodeAtVersion(r.Context(), id, version)
+	} else if asOfStr := query.Get("as_of"); asOfStr != "" {
+		// Check for as_of parameter (point-in-time query)
+		asOf, parseErr := time.Parse(time.RFC3339, asOfStr)
+		if parseErr != nil {
+			http.Error(w, "invalid as_of parameter (use RFC3339 format)", http.StatusBadRequest)
+			return
+		}
+		node, err = s.repo.GetNodeAtTime(r.Context(), id, asOf)
+	} else {
+		// Default: get current version
+		node, err = s.repo.GetNode(r.Context(), id)
+	}
+
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
@@ -84,12 +110,34 @@ func (s *Server) GetNode(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(node)
 }
 
+// GetNodeHistory handles GET /api/nodes/{id}/history
+// Returns all versions of a node ordered by version descending
+func (s *Server) GetNodeHistory(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	history, err := s.repo.GetNodeHistory(r.Context(), id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"node_id":  id,
+		"versions": history,
+		"count":    len(history),
+	})
+}
+
 // UpdateNodeRequest is the request body for updating a node's metadata
 type UpdateNodeRequest struct {
-	Meta map[string]interface{} `json:"meta"`
+	Meta       map[string]interface{} `json:"meta"`
+	ChangeNote string                 `json:"change_note,omitempty"`
+	ChangedBy  string                 `json:"changed_by,omitempty"`
 }
 
 // UpdateNode handles PATCH /api/nodes/{id}
+// Creates a new version of the node with the updated metadata
 func (s *Server) UpdateNode(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
@@ -99,12 +147,24 @@ func (s *Server) UpdateNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.repo.UpdateNodeMeta(r.Context(), id, req.Meta); err != nil {
+	if err := s.repo.UpdateNodeMetaWithNote(r.Context(), id, req.Meta, req.ChangeNote, req.ChangedBy); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
+	// Return the updated node
+	node, err := s.repo.GetNode(r.Context(), id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"id":      id,
+		"version": node.Version,
+		"updated": true,
+	})
 }
 
 // CreateLinkRequest is the request body for creating a link

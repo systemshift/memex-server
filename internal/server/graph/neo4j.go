@@ -75,6 +75,10 @@ func (r *Repository) EnsureIndexes(ctx context.Context) error {
 		"CREATE TEXT INDEX node_properties_text_index IF NOT EXISTS FOR (n:Node) ON (n.properties)",
 		// Index on degree for fast top-connected queries
 		"CREATE INDEX node_degree_index IF NOT EXISTS FOR (n:Node) ON (n.degree)",
+		// Version indexes for temporal queries
+		"CREATE INDEX node_version_id_index IF NOT EXISTS FOR (n:Node) ON (n.version_id)",
+		"CREATE INDEX node_version_index IF NOT EXISTS FOR (n:Node) ON (n.version)",
+		"CREATE INDEX node_is_current_index IF NOT EXISTS FOR (n:Node) ON (n.is_current)",
 	}
 
 	for _, indexQuery := range indexes {
@@ -87,7 +91,45 @@ func (r *Repository) EnsureIndexes(ctx context.Context) error {
 		}
 	}
 
+	// Migrate existing nodes to version 1 if they don't have version info
+	if err := r.migrateNodesToVersioned(ctx); err != nil {
+		return fmt.Errorf("migrating nodes to versioned: %w", err)
+	}
+
 	return nil
+}
+
+// migrateNodesToVersioned adds version fields to existing nodes that don't have them
+func (r *Repository) migrateNodesToVersioned(ctx context.Context) error {
+	session := r.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
+	defer session.Close(ctx)
+
+	_, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		query := `
+			MATCH (n:Node)
+			WHERE n.version IS NULL
+			SET n.version_id = n.id + ':v1',
+			    n.version = 1,
+			    n.is_current = true
+			RETURN count(n) as migrated
+		`
+		result, err := tx.Run(ctx, query, nil)
+		if err != nil {
+			return nil, err
+		}
+
+		if result.Next(ctx) {
+			record := result.Record()
+			if migrated, ok := record.Get("migrated"); ok {
+				if count, ok := migrated.(int64); ok && count > 0 {
+					fmt.Printf("Migrated %d nodes to versioned format\n", count)
+				}
+			}
+		}
+		return nil, nil
+	})
+
+	return err
 }
 
 // parseNodeFromNeo4j is a helper to parse Neo4j node data into core.Node
@@ -132,15 +174,42 @@ func parseNodeFromNeo4j(nodeData neo4j.Node) (*core.Node, error) {
 		}
 	}
 
+	// Parse version fields
+	var versionID string
+	var version int
+	var isCurrent bool
+	var changeNote, changedBy string
+
+	if vid, ok := nodeData.Props["version_id"].(string); ok {
+		versionID = vid
+	}
+	if v, ok := nodeData.Props["version"].(int64); ok {
+		version = int(v)
+	}
+	if ic, ok := nodeData.Props["is_current"].(bool); ok {
+		isCurrent = ic
+	}
+	if cn, ok := nodeData.Props["change_note"].(string); ok {
+		changeNote = cn
+	}
+	if cb, ok := nodeData.Props["changed_by"].(string); ok {
+		changedBy = cb
+	}
+
 	return &core.Node{
-		ID:        nodeData.Props["id"].(string),
-		Type:      nodeData.Props["type"].(string),
-		Content:   content,
-		Meta:      meta,
-		Created:   created,
-		Modified:  modified,
-		Deleted:   deleted,
-		DeletedAt: deletedAt,
+		ID:         nodeData.Props["id"].(string),
+		Type:       nodeData.Props["type"].(string),
+		Content:    content,
+		Meta:       meta,
+		Created:    created,
+		Modified:   modified,
+		Deleted:    deleted,
+		DeletedAt:  deletedAt,
+		VersionID:  versionID,
+		Version:    version,
+		IsCurrent:  isCurrent,
+		ChangeNote: changeNote,
+		ChangedBy:  changedBy,
 	}, nil
 }
 
@@ -148,6 +217,11 @@ func parseNodeFromNeo4j(nodeData neo4j.Node) (*core.Node, error) {
 func (r *Repository) CreateNode(ctx context.Context, node *core.Node) error {
 	session := r.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
 	defer session.Close(ctx)
+
+	// Set version fields for new nodes
+	node.Version = 1
+	node.VersionID = node.ID + ":v1"
+	node.IsCurrent = true
 
 	_, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
 		// Convert meta to JSON string (Neo4j doesn't support nested maps)
@@ -165,7 +239,10 @@ func (r *Repository) CreateNode(ctx context.Context, node *core.Node) error {
 				created: datetime($created),
 				modified: datetime($modified),
 				deleted: false,
-				degree: 0
+				degree: 0,
+				version_id: $version_id,
+				version: $version,
+				is_current: $is_current
 			})
 			RETURN n
 		`
@@ -177,6 +254,9 @@ func (r *Repository) CreateNode(ctx context.Context, node *core.Node) error {
 			"properties": string(metaJSON),
 			"created":    node.Created.Format("2006-01-02T15:04:05Z"),
 			"modified":   node.Modified.Format("2006-01-02T15:04:05Z"),
+			"version_id": node.VersionID,
+			"version":    node.Version,
+			"is_current": node.IsCurrent,
 		}
 
 		_, err = tx.Run(ctx, query, params)
@@ -198,7 +278,7 @@ func (r *Repository) CreateNode(ctx context.Context, node *core.Node) error {
 	return err
 }
 
-// GetNode retrieves a node by ID
+// GetNode retrieves the current version of a node by ID
 func (r *Repository) GetNode(ctx context.Context, id string) (*core.Node, error) {
 	session := r.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
 	defer session.Close(ctx)
@@ -207,6 +287,7 @@ func (r *Repository) GetNode(ctx context.Context, id string) (*core.Node, error)
 		query := `
 			MATCH (n:Node {id: $id})
 			WHERE (n.deleted IS NULL OR n.deleted = false)
+			  AND (n.is_current IS NULL OR n.is_current = true)
 			RETURN n
 		`
 
@@ -233,17 +314,161 @@ func (r *Repository) GetNode(ctx context.Context, id string) (*core.Node, error)
 	return result.(*core.Node), nil
 }
 
-// UpdateNodeMeta updates a node's metadata (merges with existing)
+// GetNodeAtVersion retrieves a specific version of a node
+func (r *Repository) GetNodeAtVersion(ctx context.Context, id string, version int) (*core.Node, error) {
+	session := r.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
+	defer session.Close(ctx)
+
+	result, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		query := `
+			MATCH (n:Node {id: $id, version: $version})
+			RETURN n
+		`
+
+		result, err := tx.Run(ctx, query, map[string]any{"id": id, "version": version})
+		if err != nil {
+			return nil, err
+		}
+
+		if !result.Next(ctx) {
+			return nil, fmt.Errorf("node version not found: %s v%d", id, version)
+		}
+
+		record := result.Record()
+		nodeValue, _ := record.Get("n")
+		nodeData := nodeValue.(neo4j.Node)
+
+		return parseNodeFromNeo4j(nodeData)
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return result.(*core.Node), nil
+}
+
+// GetNodeAtTime retrieves the version of a node that was current at a specific time
+func (r *Repository) GetNodeAtTime(ctx context.Context, id string, asOf time.Time) (*core.Node, error) {
+	session := r.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
+	defer session.Close(ctx)
+
+	result, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		query := `
+			MATCH (n:Node {id: $id})
+			WHERE n.modified <= datetime($as_of)
+			RETURN n
+			ORDER BY n.version DESC
+			LIMIT 1
+		`
+
+		result, err := tx.Run(ctx, query, map[string]any{
+			"id":    id,
+			"as_of": asOf.Format("2006-01-02T15:04:05Z"),
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		if !result.Next(ctx) {
+			return nil, fmt.Errorf("no version found for node %s at %s", id, asOf.Format(time.RFC3339))
+		}
+
+		record := result.Record()
+		nodeValue, _ := record.Get("n")
+		nodeData := nodeValue.(neo4j.Node)
+
+		return parseNodeFromNeo4j(nodeData)
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return result.(*core.Node), nil
+}
+
+// GetNodeHistory returns all versions of a node ordered by version descending
+func (r *Repository) GetNodeHistory(ctx context.Context, id string) ([]core.VersionInfo, error) {
+	session := r.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
+	defer session.Close(ctx)
+
+	result, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		query := `
+			MATCH (n:Node {id: $id})
+			RETURN n.version as version,
+			       n.version_id as version_id,
+			       n.modified as modified,
+			       n.change_note as change_note,
+			       n.changed_by as changed_by,
+			       n.is_current as is_current
+			ORDER BY n.version DESC
+		`
+
+		result, err := tx.Run(ctx, query, map[string]any{"id": id})
+		if err != nil {
+			return nil, err
+		}
+
+		var versions []core.VersionInfo
+		for result.Next(ctx) {
+			record := result.Record()
+
+			var vi core.VersionInfo
+			if v, ok := record.Get("version"); ok && v != nil {
+				vi.Version = int(v.(int64))
+			}
+			if vid, ok := record.Get("version_id"); ok && vid != nil {
+				vi.VersionID = vid.(string)
+			}
+			if m, ok := record.Get("modified"); ok && m != nil {
+				vi.Modified = m.(time.Time)
+			}
+			if cn, ok := record.Get("change_note"); ok && cn != nil {
+				vi.ChangeNote = cn.(string)
+			}
+			if cb, ok := record.Get("changed_by"); ok && cb != nil {
+				vi.ChangedBy = cb.(string)
+			}
+			if ic, ok := record.Get("is_current"); ok && ic != nil {
+				vi.IsCurrent = ic.(bool)
+			}
+
+			versions = append(versions, vi)
+		}
+
+		if len(versions) == 0 {
+			return nil, fmt.Errorf("node not found: %s", id)
+		}
+
+		return versions, nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return result.([]core.VersionInfo), nil
+}
+
+// UpdateNodeMeta creates a new version of a node with updated metadata
+// This is the core versioning operation - instead of overwriting, we create a new version
 func (r *Repository) UpdateNodeMeta(ctx context.Context, id string, meta map[string]any) error {
+	return r.UpdateNodeMetaWithNote(ctx, id, meta, "", "")
+}
+
+// UpdateNodeMetaWithNote creates a new version with a change note
+func (r *Repository) UpdateNodeMetaWithNote(ctx context.Context, id string, meta map[string]any, changeNote, changedBy string) error {
 	session := r.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
 	defer session.Close(ctx)
 
 	result, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
-		// First get existing properties
+		// First get the current version of the node
 		getQuery := `
-			MATCH (n:Node {id: $id})
-			WHERE (n.deleted IS NULL OR n.deleted = false)
-			RETURN n.properties as properties
+			MATCH (current:Node {id: $id})
+			WHERE (current.deleted IS NULL OR current.deleted = false)
+			  AND (current.is_current IS NULL OR current.is_current = true)
+			RETURN current
 		`
 		result, err := tx.Run(ctx, getQuery, map[string]any{"id": id})
 		if err != nil {
@@ -254,14 +479,15 @@ func (r *Repository) UpdateNodeMeta(ctx context.Context, id string, meta map[str
 			return nil, fmt.Errorf("node not found: %s", id)
 		}
 
+		record := result.Record()
+		nodeValue, _ := record.Get("current")
+		currentNode := nodeValue.(neo4j.Node)
+
 		// Parse existing properties
 		existingMeta := make(map[string]any)
-		record := result.Record()
-		if propsVal, ok := record.Get("properties"); ok {
-			if propsStr, ok := propsVal.(string); ok && propsStr != "" {
-				if err := json.Unmarshal([]byte(propsStr), &existingMeta); err != nil {
-					return nil, fmt.Errorf("unmarshaling existing properties: %w", err)
-				}
+		if propsStr, ok := currentNode.Props["properties"].(string); ok && propsStr != "" {
+			if err := json.Unmarshal([]byte(propsStr), &existingMeta); err != nil {
+				return nil, fmt.Errorf("unmarshaling existing properties: %w", err)
 			}
 		}
 
@@ -270,41 +496,125 @@ func (r *Repository) UpdateNodeMeta(ctx context.Context, id string, meta map[str
 			existingMeta[k] = v
 		}
 
-		// Convert back to JSON
+		// Convert to JSON
 		metaJSON, err := json.Marshal(existingMeta)
 		if err != nil {
 			return nil, fmt.Errorf("marshaling meta: %w", err)
 		}
 
-		// Update the node
-		updateQuery := `
-			MATCH (n:Node {id: $id})
-			SET n.properties = $properties, n.modified = datetime()
-			RETURN n
+		// Get current version number
+		currentVersion := 1
+		if v, ok := currentNode.Props["version"].(int64); ok {
+			currentVersion = int(v)
+		}
+		newVersion := currentVersion + 1
+		newVersionID := id + ":v" + fmt.Sprintf("%d", newVersion)
+
+		// Get other properties from current node
+		nodeType := ""
+		if t, ok := currentNode.Props["type"].(string); ok {
+			nodeType = t
+		}
+		content := ""
+		if c, ok := currentNode.Props["content"].(string); ok {
+			content = c
+		}
+		var created time.Time
+		if createdVal, ok := currentNode.Props["created"]; ok {
+			if t, ok := createdVal.(time.Time); ok {
+				created = t
+			}
+		}
+		degree := int64(0)
+		if d, ok := currentNode.Props["degree"].(int64); ok {
+			degree = d
+		}
+
+		// Mark current version as no longer current
+		markOldQuery := `
+			MATCH (current:Node {id: $id, is_current: true})
+			SET current.is_current = false
 		`
-		_, err = tx.Run(ctx, updateQuery, map[string]any{
-			"id":         id,
-			"properties": string(metaJSON),
+		_, err = tx.Run(ctx, markOldQuery, map[string]any{"id": id})
+		if err != nil {
+			return nil, fmt.Errorf("marking old version: %w", err)
+		}
+
+		// Create new version
+		now := time.Now()
+		createQuery := `
+			CREATE (new:Node {
+				id: $id,
+				type: $type,
+				content: $content,
+				properties: $properties,
+				created: datetime($created),
+				modified: datetime($modified),
+				deleted: false,
+				degree: $degree,
+				version_id: $version_id,
+				version: $version,
+				is_current: true,
+				change_note: $change_note,
+				changed_by: $changed_by
+			})
+			RETURN new
+		`
+		_, err = tx.Run(ctx, createQuery, map[string]any{
+			"id":          id,
+			"type":        nodeType,
+			"content":     content,
+			"properties":  string(metaJSON),
+			"created":     created.Format("2006-01-02T15:04:05Z"),
+			"modified":    now.Format("2006-01-02T15:04:05Z"),
+			"degree":      degree,
+			"version_id":  newVersionID,
+			"version":     newVersion,
+			"change_note": changeNote,
+			"changed_by":  changedBy,
 		})
-		return existingMeta, err
+		if err != nil {
+			return nil, fmt.Errorf("creating new version: %w", err)
+		}
+
+		// Create PREVIOUS_VERSION relationship
+		linkQuery := `
+			MATCH (new:Node {id: $id, version: $new_version})
+			MATCH (old:Node {id: $id, version: $old_version})
+			CREATE (new)-[:PREVIOUS_VERSION]->(old)
+		`
+		_, err = tx.Run(ctx, linkQuery, map[string]any{
+			"id":          id,
+			"new_version": newVersion,
+			"old_version": currentVersion,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("creating version link: %w", err)
+		}
+
+		return map[string]any{
+			"node_type":    nodeType,
+			"new_version":  newVersion,
+			"prev_version": currentVersion,
+			"meta":         existingMeta,
+		}, nil
 	})
 
 	// Emit event on successful update
 	if err == nil {
-		// Get node type from existing meta or default
-		nodeType := ""
-		if meta, ok := result.(map[string]any); ok {
-			if t, ok := meta["type"].(string); ok {
-				nodeType = t
-			}
-		}
+		resultMap := result.(map[string]any)
 		r.emit(subscriptions.Event{
 			ID:        uuid.New().String(),
 			Type:      subscriptions.EventNodeUpdated,
 			Timestamp: time.Now(),
 			NodeID:    id,
-			NodeType:  nodeType,
-			Meta:      meta,
+			NodeType:  resultMap["node_type"].(string),
+			Meta: map[string]any{
+				"version":      resultMap["new_version"],
+				"prev_version": resultMap["prev_version"],
+				"change_note":  changeNote,
+				"updated_meta": meta,
+			},
 		})
 	}
 
@@ -568,11 +878,12 @@ func (r *Repository) DeleteNode(ctx context.Context, nodeID string, force bool) 
 	defer session.Close(ctx)
 
 	_, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
-		// Check if node exists and get its type
+		// Check if node exists and get current version
 		checkQuery := `
 			MATCH (n:Node {id: $id})
-			WHERE n.deleted IS NULL OR n.deleted = false
-			RETURN n.type as type
+			WHERE (n.deleted IS NULL OR n.deleted = false)
+			  AND (n.is_current IS NULL OR n.is_current = true)
+			RETURN n
 		`
 		checkResult, err := tx.Run(ctx, checkQuery, map[string]any{"id": nodeID})
 		if err != nil {
@@ -584,37 +895,110 @@ func (r *Repository) DeleteNode(ctx context.Context, nodeID string, force bool) 
 		}
 
 		record := checkResult.Record()
-		nodeType, _ := record.Get("type")
-		nodeTypeStr := nodeType.(string)
+		nodeValue, _ := record.Get("n")
+		currentNode := nodeValue.(neo4j.Node)
+
+		nodeTypeStr := ""
+		if t, ok := currentNode.Props["type"].(string); ok {
+			nodeTypeStr = t
+		}
 
 		// Protect Source layer (content-addressed nodes) unless force=true
 		if !force && len(nodeID) > 7 && nodeID[:7] == "sha256:" {
 			return nil, fmt.Errorf("cannot delete Source layer node (content-addressed): %s. Source nodes are immutable to maintain DAG integrity. Use force=true to override (not recommended)", nodeID)
 		}
 
-		// Tombstone the node (soft delete)
-		updateQuery := `
-			MATCH (n:Node {id: $id})
-			SET n.deleted = true,
-				n.deleted_at = datetime($deleted_at)
-			RETURN n
-		`
-
-		result, err := tx.Run(ctx, updateQuery, map[string]any{
-			"id":         nodeID,
-			"deleted_at": time.Now().Format("2006-01-02T15:04:05Z"),
-		})
-		if err != nil {
-			return nil, err
+		if force {
+			// Hard delete: remove all versions of this node
+			hardDeleteQuery := `
+				MATCH (n:Node {id: $id})
+				DETACH DELETE n
+			`
+			_, err := tx.Run(ctx, hardDeleteQuery, map[string]any{"id": nodeID})
+			return map[string]any{
+				"hard_deleted": true,
+				"type":         nodeTypeStr,
+			}, err
 		}
 
-		if !result.Next(ctx) {
-			return nil, fmt.Errorf("failed to tombstone node: %s", nodeID)
+		// Soft delete: create a tombstone version
+		currentVersion := 1
+		if v, ok := currentNode.Props["version"].(int64); ok {
+			currentVersion = int(v)
+		}
+		newVersion := currentVersion + 1
+		newVersionID := nodeID + ":v" + fmt.Sprintf("%d", newVersion)
+
+		var created time.Time
+		if createdVal, ok := currentNode.Props["created"]; ok {
+			if t, ok := createdVal.(time.Time); ok {
+				created = t
+			}
+		}
+
+		// Mark current version as no longer current
+		markOldQuery := `
+			MATCH (current:Node {id: $id, is_current: true})
+			SET current.is_current = false
+		`
+		_, err = tx.Run(ctx, markOldQuery, map[string]any{"id": nodeID})
+		if err != nil {
+			return nil, fmt.Errorf("marking old version: %w", err)
+		}
+
+		// Create tombstone version
+		now := time.Now()
+		tombstoneQuery := `
+			CREATE (tomb:Node {
+				id: $id,
+				type: $type,
+				content: '',
+				properties: '{}',
+				created: datetime($created),
+				modified: datetime($modified),
+				deleted: true,
+				deleted_at: datetime($deleted_at),
+				degree: 0,
+				version_id: $version_id,
+				version: $version,
+				is_current: true,
+				change_note: 'Deleted'
+			})
+			RETURN tomb
+		`
+		_, err = tx.Run(ctx, tombstoneQuery, map[string]any{
+			"id":         nodeID,
+			"type":       nodeTypeStr,
+			"created":    created.Format("2006-01-02T15:04:05Z"),
+			"modified":   now.Format("2006-01-02T15:04:05Z"),
+			"deleted_at": now.Format("2006-01-02T15:04:05Z"),
+			"version_id": newVersionID,
+			"version":    newVersion,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("creating tombstone version: %w", err)
+		}
+
+		// Create PREVIOUS_VERSION relationship
+		linkQuery := `
+			MATCH (new:Node {id: $id, version: $new_version})
+			MATCH (old:Node {id: $id, version: $old_version})
+			CREATE (new)-[:PREVIOUS_VERSION]->(old)
+		`
+		_, err = tx.Run(ctx, linkQuery, map[string]any{
+			"id":          nodeID,
+			"new_version": newVersion,
+			"old_version": currentVersion,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("creating version link: %w", err)
 		}
 
 		return map[string]any{
-			"tombstoned": true,
-			"type":       nodeTypeStr,
+			"tombstoned":   true,
+			"type":         nodeTypeStr,
+			"new_version":  newVersion,
+			"prev_version": currentVersion,
 		}, nil
 	})
 

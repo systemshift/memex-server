@@ -14,6 +14,23 @@ type Node struct {
 	Modified  time.Time
 	Deleted   bool      // Tombstone flag
 	DeletedAt time.Time // When node was deleted
+
+	// Version tracking
+	VersionID  string // Unique per version (e.g., "person:alice:v3")
+	Version    int    // Sequential version number (1, 2, 3...)
+	IsCurrent  bool   // Only one version is current
+	ChangeNote string // Why this version was created
+	ChangedBy  string // Who made the change
+}
+
+// VersionInfo provides metadata about a specific version
+type VersionInfo struct {
+	Version    int       `json:"version"`
+	VersionID  string    `json:"version_id"`
+	Modified   time.Time `json:"modified"`
+	ChangeNote string    `json:"change_note,omitempty"`
+	ChangedBy  string    `json:"changed_by,omitempty"`
+	IsCurrent  bool      `json:"is_current"`
 }
 
 // Link represents a relationship between nodes
