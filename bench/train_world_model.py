@@ -51,6 +51,7 @@ class MemexDataset(Dataset):
         num_entities: int = 1000,
         num_negatives: int = 64,
         samples_per_epoch: int = 1000,
+        synthetic_data_path: str = None,
     ):
         self.integration = integration
         self.num_entities = num_entities
@@ -61,12 +62,48 @@ class MemexDataset(Dataset):
         self.entity_ids, self.entity_types, self.edge_weights = \
             integration.get_attention_dag_as_tensor(num_entities)
 
-        # Get positive pairs from attention edges
-        self.positive_pairs = integration.get_positive_pairs(min_weight=0.3)
-        print(f"Loaded {len(self.positive_pairs)} positive pairs from attention DAG")
+        # Try to load positive pairs from synthetic data file first
+        self.positive_pairs = []
+        if synthetic_data_path:
+            self.positive_pairs = self._load_pairs_from_file(synthetic_data_path, integration)
+
+        # Fall back to integration if no synthetic data
+        if not self.positive_pairs:
+            self.positive_pairs = integration.get_positive_pairs(min_weight=0.3)
+
+        print(f"Loaded {len(self.positive_pairs)} positive pairs")
 
         # Create set of positive pairs for negative sampling
         self.positive_set = {(p[0], p[1]) for p in self.positive_pairs}
+
+    def _load_pairs_from_file(self, path: str, integration: AttentionDAGIntegration) -> List[Tuple[int, int, float]]:
+        """Load positive pairs from synthetic data JSON file."""
+        pairs = []
+        try:
+            import json
+            with open(path) as f:
+                data = json.load(f)
+
+            for link in data.get("links", []):
+                src = link.get("source")
+                tgt = link.get("target")
+                src_idx = integration.entity_to_idx.get(src)
+                tgt_idx = integration.entity_to_idx.get(tgt)
+                if src_idx is not None and tgt_idx is not None:
+                    pairs.append((src_idx, tgt_idx, 1.0))
+
+            # Also add attention edges
+            for edge in data.get("attention_edges", []):
+                src = edge.get("source")
+                tgt = edge.get("target")
+                weight = edge.get("weight", 0.5)
+                src_idx = integration.entity_to_idx.get(src)
+                tgt_idx = integration.entity_to_idx.get(tgt)
+                if src_idx is not None and tgt_idx is not None:
+                    pairs.append((src_idx, tgt_idx, weight))
+        except Exception as e:
+            print(f"Error loading synthetic data: {e}")
+        return pairs
 
     def __len__(self):
         return self.samples_per_epoch
@@ -129,6 +166,39 @@ def collate_fn(batch: List[dict]) -> TrainingBatch:
     )
 
 
+def load_entities_from_file(integration: AttentionDAGIntegration, path: str) -> int:
+    """Load entities directly from synthetic data JSON file."""
+    try:
+        import json
+        with open(path) as f:
+            data = json.load(f)
+
+        i = 0
+        entities = data.get("entities", {})
+
+        # Load all entity types
+        for entity_type, entity_list in entities.items():
+            type_name = entity_type.rstrip("s").title()  # people -> Person
+            for entity in entity_list:
+                entity_id = entity.get("id")
+                if entity_id:
+                    integration.entity_to_idx[entity_id] = i
+                    integration.idx_to_entity[i] = entity_id
+                    integration.entity_types[entity_id] = type_name
+
+                    if type_name not in integration.type_to_idx:
+                        type_idx = len(integration.type_to_idx)
+                        integration.type_to_idx[type_name] = type_idx
+                        integration.idx_to_type[type_idx] = type_name
+                    i += 1
+
+        print(f"Loaded {i} entities, {len(integration.type_to_idx)} types from file")
+        return i
+    except Exception as e:
+        print(f"Error loading from file: {e}")
+        return 0
+
+
 def set_seed(seed: int):
     """Set random seeds for reproducibility."""
     random.seed(seed)
@@ -168,6 +238,8 @@ def main():
     # Other
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--device", type=str, default="cuda", help="Device (cuda/cpu)")
+    parser.add_argument("--synthetic-data", type=str, default="bench/synthetic_org_data.json",
+                        help="Path to synthetic data JSON file")
 
     args = parser.parse_args()
 
@@ -207,11 +279,14 @@ def main():
     memex_client = MemexClient(config.memex_api)
     integration = AttentionDAGIntegration(model, config, memex_client)
 
-    # Load entities
-    num_loaded = integration.load_entities(limit=args.num_entities)
+    # Load entities from synthetic data file directly (faster than API)
+    print(f"\nLoading entities from {args.synthetic_data}...")
+    num_loaded = load_entities_from_file(integration, args.synthetic_data)
     if num_loaded == 0:
-        print("Warning: No entities loaded from memex. Is the server running?")
-        print("Try: curl http://localhost:8080/api/nodes")
+        # Fall back to API
+        num_loaded = integration.load_entities(limit=args.num_entities)
+    if num_loaded == 0:
+        print("Warning: No entities loaded. Is the data available?")
         return
 
     # Evaluation only mode
@@ -247,6 +322,7 @@ def main():
         num_entities=args.num_entities,
         num_negatives=args.num_negatives,
         samples_per_epoch=args.samples_per_epoch,
+        synthetic_data_path=args.synthetic_data,
     )
 
     dataloader = DataLoader(

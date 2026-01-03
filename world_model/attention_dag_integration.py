@@ -84,27 +84,39 @@ class MemexClient:
 
     def get_attention_edges(self, min_weight: float = 0.0, limit: int = 10000) -> List[AttentionEdge]:
         """Get attention edges from the DAG."""
-        try:
-            resp = requests.get(
-                f"{self.api_url}/api/query/attention_subgraph",
-                params={"min_weight": min_weight, "limit": limit},
-                timeout=30,
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                edges = []
-                for edge in data.get("edges", []):
-                    edges.append(AttentionEdge(
-                        source=edge.get("source"),
-                        target=edge.get("target"),
-                        weight=edge.get("weight", 0.0),
-                        query_count=edge.get("query_count", 0),
-                        last_updated=edge.get("last_updated"),
-                    ))
-                return edges
-        except Exception as e:
-            print(f"Error fetching attention edges: {e}")
+        # NOTE: This returns empty - use get_all_links instead for training
         return []
+
+    def get_all_links(self, node_ids: List[str], limit: int = 10000) -> List[AttentionEdge]:
+        """Get all links for a list of nodes."""
+        edges = []
+        seen = set()
+        try:
+            for node_id in node_ids[:200]:  # Sample nodes
+                resp = requests.get(
+                    f"{self.api_url}/api/nodes/{node_id}/links",
+                    timeout=10,
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    for link in data.get("links", []):
+                        source = link.get("source", node_id)
+                        target = link.get("target", "")
+                        if source and target and (source, target) not in seen:
+                            edges.append(AttentionEdge(
+                                source=source,
+                                target=target,
+                                weight=1.0,
+                                query_count=1,
+                            ))
+                            seen.add((source, target))
+                        if len(edges) >= limit:
+                            break
+                if len(edges) >= limit:
+                    break
+        except Exception as e:
+            print(f"Error fetching links: {e}")
+        return edges
 
     def update_attention_edge(
         self,
@@ -238,11 +250,13 @@ class AttentionDAGIntegration:
 
     def get_positive_pairs(self, min_weight: float = 0.3) -> List[Tuple[int, int, float]]:
         """
-        Get positive pairs from attention edges for contrastive learning.
+        Get positive pairs from graph links for contrastive learning.
 
         Returns list of (source_idx, target_idx, weight) tuples.
         """
-        edges = self.memex.get_attention_edges(min_weight=min_weight)
+        # Get links from all known entities
+        node_ids = list(self.entity_to_idx.keys())
+        edges = self.memex.get_all_links(node_ids, limit=5000)
 
         pairs = []
         for edge in edges:

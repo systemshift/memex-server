@@ -243,23 +243,43 @@ class WorldModelTrainer:
 
             # 2. Link prediction loss
             if batch.link_pairs is not None and batch.link_labels is not None:
-                link_pairs = batch.link_pairs.to(self.device)
-                link_labels = batch.link_labels.to(self.device)
+                link_pairs = batch.link_pairs.to(self.device)  # [batch, num_pairs, 2]
+                link_labels = batch.link_labels.to(self.device)  # [batch, num_pairs]
                 link_weights = batch.link_weights.to(self.device) if batch.link_weights is not None else None
 
                 # Get entity embeddings
                 entity_embeds = self.model.encoder.entity_encoder(
                     entity_ids, entity_types, content_embeds
-                )
+                )  # [batch, num_entities, hidden]
 
-                batch_indices = torch.arange(entity_ids.shape[0], device=self.device)
-                entity_i = entity_embeds[batch_indices, link_pairs[:, 0]]
-                entity_j = entity_embeds[batch_indices, link_pairs[:, 1]]
+                # Flatten batch and pairs for link prediction
+                batch_size, num_pairs = link_pairs.shape[0], link_pairs.shape[1]
 
-                link_pred = self.model.predict_link(z_t, entity_i, entity_j)
-                loss_link = self.link_loss(link_pred, link_labels, link_weights)
-                losses["link_prediction"] = loss_link.item()
-                total_loss = total_loss + self.config.link_prediction_weight * loss_link
+                # For each (batch, pair), get the entity embeddings
+                all_preds = []
+                all_labels = []
+                all_weights = []
+
+                for b in range(batch_size):
+                    for p in range(num_pairs):
+                        i, j = link_pairs[b, p, 0].item(), link_pairs[b, p, 1].item()
+                        if i < entity_embeds.shape[1] and j < entity_embeds.shape[1]:
+                            ei = entity_embeds[b, i].unsqueeze(0)
+                            ej = entity_embeds[b, j].unsqueeze(0)
+                            z = z_t[b].unsqueeze(0)
+                            pred = self.model.predict_link(z, ei, ej)
+                            all_preds.append(pred)
+                            all_labels.append(link_labels[b, p])
+                            if link_weights is not None:
+                                all_weights.append(link_weights[b, p])
+
+                if all_preds:
+                    link_pred = torch.cat(all_preds)
+                    link_lbl = torch.stack(all_labels)
+                    link_wgt = torch.stack(all_weights) if all_weights else None
+                    loss_link = self.link_loss(link_pred, link_lbl, link_wgt)
+                    losses["link_prediction"] = loss_link.item()
+                    total_loss = total_loss + self.config.link_prediction_weight * loss_link
 
             # 3. Temporal prediction loss
             if batch.next_entity_ids is not None:
