@@ -61,13 +61,16 @@ def evaluate_skill_clusters(
         sims = []
         for i, e1 in enumerate(entities):
             for e2 in entities[i+1:]:
-                related = inference.find_related_entities(e1, top_k=50, min_similarity=0.0)
-                sim = 0.0
-                for r in related:
-                    if r.entity_id == e2:
-                        sim = r.score
-                        break
-                sims.append(sim)
+                try:
+                    related = inference.find_related_entities(e1, top_k=50, min_similarity=0.0)
+                    sim = 0.0
+                    for r in related:
+                        if r.entity_id == e2:
+                            sim = r.score
+                            break
+                    sims.append(sim)
+                except (IndexError, KeyError):
+                    continue  # Skip entities not in model
 
         if sims:
             avg_sim = np.mean(sims)
@@ -123,7 +126,10 @@ def evaluate_project_dependencies(
         p1, p2 = projects[0], projects[1]
 
         # Get link prediction
-        prob = inference.predict_link_probability(p1, p2)
+        try:
+            prob = inference.predict_link_probability(p1, p2)
+        except (IndexError, KeyError):
+            continue
         total_prob += prob
 
         detected = prob >= threshold
@@ -226,14 +232,17 @@ def evaluate_topic_affinity(
         # Get pairwise similarities
         sims = []
         for i, e1 in enumerate(entities[:5]):  # Sample
-            related = inference.find_related_entities(e1, top_k=20, min_similarity=0.0)
-            for e2 in entities[i+1:5]:
-                sim = 0.0
-                for r in related:
-                    if r.entity_id == e2:
-                        sim = r.score
-                        break
-                sims.append(sim)
+            try:
+                related = inference.find_related_entities(e1, top_k=20, min_similarity=0.0)
+                for e2 in entities[i+1:5]:
+                    sim = 0.0
+                    for r in related:
+                        if r.entity_id == e2:
+                            sim = r.score
+                            break
+                    sims.append(sim)
+            except (IndexError, KeyError):
+                continue
 
         if sims:
             avg_sim = np.mean(sims)
@@ -274,6 +283,32 @@ def run_baseline_comparison(data: Dict) -> Dict[str, Any]:
     }
 
 
+def load_entities_from_file(integration, path: str) -> int:
+    """Load entities directly from synthetic data JSON file."""
+    with open(path) as f:
+        file_data = json.load(f)
+
+    i = 0
+    entities = file_data.get("entities", {})
+
+    for entity_type, entity_list in entities.items():
+        type_name = entity_type.rstrip("s").title()
+        for entity in entity_list:
+            entity_id = entity.get("id")
+            if entity_id:
+                integration.entity_to_idx[entity_id] = i
+                integration.idx_to_entity[i] = entity_id
+                integration.entity_types[entity_id] = type_name
+
+                if type_name not in integration.type_to_idx:
+                    type_idx = len(integration.type_to_idx)
+                    integration.type_to_idx[type_name] = type_idx
+                    integration.idx_to_type[type_idx] = type_name
+                i += 1
+
+    return i
+
+
 def main():
     print("=" * 60)
     print("WORLD MODEL EVALUATION: Hidden Pattern Discovery")
@@ -304,16 +339,30 @@ def main():
         print("  Using untrained model (random baseline)")
         inference = WorldModelInference(model, config)
 
-    # Refresh state from memex
-    print("\nRefreshing state from Memex...")
+    # Load entities from synthetic data file (same as training)
+    print("\nLoading entities from synthetic data file...")
     try:
-        inference.refresh_state()
-        state_summary = inference.get_state_summary()
-        print(f"  Loaded {state_summary['num_entities']} entities")
+        load_entities_from_file(inference.integration, "bench/synthetic_org_data.json")
+
+        # Re-encode state with loaded entities
+        entity_ids, entity_types, edge_weights = inference.integration.get_attention_dag_as_tensor(1000)
+        inference._current_z = inference.model.encode(
+            entity_ids.unsqueeze(0).to(inference.device),
+            entity_types.unsqueeze(0).to(inference.device),
+            edge_weights.unsqueeze(0).to(inference.device),
+        )
+        inference._entity_embeds = inference.model.encoder.entity_encoder(
+            entity_ids.unsqueeze(0).to(inference.device),
+            entity_types.unsqueeze(0).to(inference.device),
+        ).squeeze(0)
+
+        print(f"  Loaded {len(inference.integration.entity_to_idx)} entities")
     except Exception as e:
-        print(f"  Error connecting to Memex: {e}")
-        print("  Make sure Memex is running and data is loaded")
+        print(f"  Error loading entities: {e}")
+        import traceback
+        traceback.print_exc()
         return
+
 
     # Run evaluations
     print("\n" + "=" * 60)
