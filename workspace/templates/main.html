@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+
+{% block title %}Memex Workspace{% endblock %}
+
+{% block body %}
+<div class="workspace">
+    <!-- Header -->
+    <header class="header">
+        <div class="logo">
+            <span class="logo-icon">M</span>
+            <span class="logo-text">Workspace</span>
+        </div>
+        <div class="header-actions">
+            <button class="btn-icon" title="Search">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="11" cy="11" r="8"></circle>
+                    <path d="m21 21-4.35-4.35"></path>
+                </svg>
+            </button>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="main">
+        <!-- Input Area -->
+        <div class="input-area">
+            <div class="input-container">
+                <input
+                    type="text"
+                    id="main-input"
+                    class="main-input"
+                    placeholder="Describe what you need..."
+                    autofocus
+                >
+                <button id="submit-btn" class="submit-btn">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M5 12h14M12 5l7 7-7 7"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="quick-actions">
+                <button class="quick-action" data-input="Submit an expense report">Expense</button>
+                <button class="quick-action" data-input="Draft a document">Document</button>
+                <button class="quick-action" data-input="Search for information">Query</button>
+                <button class="quick-action" data-input="Show data as table">Table</button>
+                <button class="quick-action" data-input="Send a message">Message</button>
+            </div>
+        </div>
+
+        <!-- Generated Content Area -->
+        <div class="content-area" id="content-area">
+            <div class="welcome" id="welcome">
+                <h2>What do you need?</h2>
+                <p>Describe your task in natural language. The interface will adapt to help you.</p>
+
+                <div class="examples">
+                    <div class="example" data-input="I need to expense a client dinner at Marea for $247">
+                        <div class="example-icon">$</div>
+                        <div class="example-text">
+                            <div class="example-title">Expense Report</div>
+                            <div class="example-desc">Submit expenses with auto-filled context</div>
+                        </div>
+                    </div>
+                    <div class="example" data-input="Draft a proposal for the Q2 marketing campaign">
+                        <div class="example-icon">D</div>
+                        <div class="example-text">
+                            <div class="example-title">Write Document</div>
+                            <div class="example-desc">Create and edit rich text content</div>
+                        </div>
+                    </div>
+                    <div class="example" data-input="What projects are we working on?">
+                        <div class="example-icon">?</div>
+                        <div class="example-text">
+                            <div class="example-title">Ask Questions</div>
+                            <div class="example-desc">Search organizational memory</div>
+                        </div>
+                    </div>
+                    <div class="example" data-input="Show all pending approvals as a table">
+                        <div class="example-icon">T</div>
+                        <div class="example-text">
+                            <div class="example-title">View Data</div>
+                            <div class="example-desc">Structured data views and tables</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Generated Form/Content goes here -->
+            <div class="generated-content" id="generated-content" style="display: none;">
+                <div class="content-header" id="content-header"></div>
+                <form id="generated-form" class="generated-form">
+                    <div id="form-fields"></div>
+                </form>
+            </div>
+
+            <!-- Loading State -->
+            <div class="loading" id="loading" style="display: none;">
+                <div class="loading-spinner"></div>
+                <div class="loading-text">Generating interface...</div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Status Bar -->
+    <footer class="status-bar">
+        <div class="status-item">
+            <span class="status-dot online"></span>
+            <span>Connected to Memex</span>
+        </div>
+        <div class="status-item" id="session-info"></div>
+    </footer>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Initialize workspace
+document.addEventListener('DOMContentLoaded', initWorkspace);
+</script>
+{% endblock %}
