@@ -228,6 +228,217 @@ class MemexClient:
 
         return node_id
 
+    # ============================================
+    # Lens and Anchor Methods (Phase 2)
+    # ============================================
+
+    def _patch(self, path: str, data: Dict) -> Optional[Dict]:
+        """Make PATCH request to Memex"""
+        try:
+            resp = requests.patch(f"{self.base_url}{path}", json=data, timeout=5)
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as e:
+            print(f"Memex PATCH error: {e}")
+            return None
+
+    def create_lens(self, lens_data: Dict[str, Any]) -> Optional[str]:
+        """Create a lens in Memex"""
+        result = self._post("/api/lenses", lens_data)
+        return lens_data.get("id") if result else None
+
+    def get_lens(self, lens_id: str) -> Optional[Dict[str, Any]]:
+        """Get a lens definition by ID"""
+        # Ensure proper ID format
+        if not lens_id.startswith("lens:"):
+            lens_id = f"lens:{lens_id}"
+        return self._get(f"/api/lenses/{lens_id}")
+
+    def list_lenses(self) -> List[Dict[str, Any]]:
+        """List all available lenses"""
+        result = self._get("/api/lenses")
+        if result and "lenses" in result:
+            return result["lenses"]
+        return []
+
+    def ingest_content(self, content: str) -> Optional[str]:
+        """
+        Ingest content into Memex and get content-addressed ID.
+        Returns the SHA256-based source ID.
+        """
+        import hashlib
+        # Calculate SHA256 for the content
+        content_hash = hashlib.sha256(content.encode()).hexdigest()
+        source_id = f"sha256:{content_hash}"
+
+        # Try to create as a Source node
+        result = self._post("/api/ingest", {
+            "content": content,
+            "format": "text"
+        })
+
+        if result:
+            return result.get("source_id", source_id)
+
+        # Fallback: create as regular node
+        self.create_node(
+            node_type="Source",
+            meta={"content": content, "format": "text"},
+            node_id=source_id
+        )
+        return source_id
+
+    def query_by_lens(
+        self,
+        lens_id: str,
+        pattern: Optional[str] = None,
+        limit: int = 50
+    ) -> List[MemexNode]:
+        """
+        Query entities that were interpreted through a specific lens.
+        Optionally filter by pattern.
+        """
+        if not lens_id.startswith("lens:"):
+            lens_id = f"lens:{lens_id}"
+
+        params = {"lens_id": lens_id, "limit": limit}
+        if pattern:
+            params["pattern"] = pattern
+
+        result = self._get("/api/query/by_lens", params)
+        if not result:
+            return []
+
+        nodes = result.get("entities", result.get("nodes", []))
+        return [
+            MemexNode(
+                id=node.get("ID", ""),
+                type=node.get("Type", ""),
+                meta=node.get("Meta", {}),
+                score=node.get("Score", 0.0)
+            )
+            for node in nodes
+        ]
+
+    def get_node_links(self, node_id: str) -> List[Dict[str, Any]]:
+        """Get all links for a node"""
+        result = self._get(f"/api/nodes/{node_id}/links")
+        if result:
+            return result.get("links", [])
+        return []
+
+    def get_subgraph(
+        self,
+        start_id: str,
+        depth: int = 2,
+        rel_types: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
+        """
+        Get a subgraph starting from a node.
+        Used for dashboard visualization.
+        """
+        params = {"start": start_id, "depth": depth}
+        if rel_types:
+            params["rel_types"] = ",".join(rel_types)
+
+        result = self._get("/api/query/subgraph", params)
+        return result or {"nodes": [], "edges": []}
+
+    def get_deal_flow_graph(self) -> Dict[str, Any]:
+        """
+        Get the deal flow subgraph for dashboard.
+        Returns nodes and edges related to deals/work items.
+        """
+        # Search for work items
+        work_items = self.search("WorkItem", limit=50, types=["WorkItem"])
+
+        # Search for deals
+        deals = self.search("Deal", limit=50, types=["Deal"])
+
+        # Search for companies
+        companies = self.search("Company", limit=20, types=["Company"])
+
+        # Build graph structure
+        nodes = []
+        edges = []
+        seen_ids = set()
+
+        for item in work_items + deals:
+            if item.id not in seen_ids:
+                nodes.append({
+                    "id": item.id,
+                    "type": item.type,
+                    "label": item.meta.get("title", item.meta.get("name", item.id)),
+                    "status": item.meta.get("status", "unknown"),
+                    "stage": item.meta.get("stage", ""),
+                    "assigned_to": item.meta.get("assigned_to", "")
+                })
+                seen_ids.add(item.id)
+
+                # Get links for this node
+                links = self.get_node_links(item.id)
+                for link in links:
+                    edges.append({
+                        "source": link.get("source", item.id),
+                        "target": link.get("target", ""),
+                        "type": link.get("type", "RELATES_TO")
+                    })
+
+        for company in companies:
+            if company.id not in seen_ids:
+                nodes.append({
+                    "id": company.id,
+                    "type": "Company",
+                    "label": company.meta.get("name", company.id),
+                    "industry": company.meta.get("industry", "")
+                })
+                seen_ids.add(company.id)
+
+        return {"nodes": nodes, "edges": edges}
+
+    def get_similar_work(
+        self,
+        query: str,
+        limit: int = 5
+    ) -> List[Dict[str, Any]]:
+        """
+        Find similar past work for context.
+        Returns context cards with relevant history.
+        """
+        context = []
+
+        # Search implementations
+        impls = self.search(query, limit=limit, types=["Implementation"])
+        for impl in impls:
+            meta = impl.meta
+            context.append({
+                "type": "implementation",
+                "title": meta.get("title", "Past Implementation"),
+                "content": meta.get("tips_for_next_time", meta.get("notes", "")),
+                "duration": meta.get("duration_days"),
+                "issues": meta.get("issues", []),
+                "lessons": meta.get("lessons_learned", []),
+                "source_id": impl.id,
+                "relevance": impl.score
+            })
+
+        # Search patterns
+        patterns = self.search(query, limit=3, types=["Pattern"])
+        for pattern in patterns:
+            meta = pattern.meta
+            context.append({
+                "type": "pattern",
+                "title": meta.get("title", "Pattern"),
+                "content": meta.get("content", ""),
+                "confidence": meta.get("confidence", 0.5),
+                "source_id": pattern.id,
+                "relevance": pattern.score
+            })
+
+        # Sort by relevance
+        context.sort(key=lambda x: x.get("relevance", 0), reverse=True)
+        return context[:limit]
+
 
 # Global client instance
 memex = MemexClient()

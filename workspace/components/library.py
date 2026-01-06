@@ -259,6 +259,211 @@ COMPONENT_TOOLS: List[Dict[str, Any]] = [
                 }
             }
         }
+    },
+    # ============================================
+    # Multi-User Workflow Components
+    # ============================================
+    {
+        "type": "function",
+        "function": {
+            "name": "checklist",
+            "description": "Create a checklist with multiple items that can be checked off",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Checklist identifier"},
+                    "label": {"type": "string", "description": "Checklist title"},
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "id": {"type": "string"},
+                                "text": {"type": "string"},
+                                "checked": {"type": "boolean"},
+                                "required": {"type": "boolean"}
+                            }
+                        },
+                        "description": "List of checklist items"
+                    }
+                },
+                "required": ["name", "label", "items"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "handoff_form",
+            "description": "Create a form to forward/handoff work to another person",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "Form title (e.g., 'Forward to Team')"},
+                    "available_users": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "id": {"type": "string"},
+                                "name": {"type": "string"},
+                                "role": {"type": "string"},
+                                "title": {"type": "string"}
+                            }
+                        },
+                        "description": "Users that can receive the handoff"
+                    },
+                    "message_hint": {"type": "string", "description": "Placeholder for message field"},
+                    "context_summary": {"type": "string", "description": "Summary of context being handed off"}
+                },
+                "required": ["title", "available_users"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "handoff_chain",
+            "description": "Display the chain of handoffs showing how work flowed between people",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "chain": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "user_name": {"type": "string"},
+                                "user_role": {"type": "string"},
+                                "stage": {"type": "string"},
+                                "timestamp": {"type": "string"},
+                                "message": {"type": "string"}
+                            }
+                        },
+                        "description": "Ordered list of handoffs"
+                    },
+                    "title": {"type": "string", "description": "Title for the chain display"}
+                },
+                "required": ["chain"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "notification_badge",
+            "description": "Display a notification badge with count",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "count": {"type": "integer", "description": "Number of notifications"},
+                    "type": {
+                        "type": "string",
+                        "enum": ["info", "warning", "success", "error"],
+                        "description": "Badge type/color"
+                    }
+                },
+                "required": ["count"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "user_avatar",
+            "description": "Display a user avatar with name and role",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "User's name"},
+                    "role": {"type": "string", "description": "User's role"},
+                    "size": {
+                        "type": "string",
+                        "enum": ["small", "medium", "large"],
+                        "description": "Avatar size"
+                    }
+                },
+                "required": ["name"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "status_badge",
+            "description": "Display a status indicator badge",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "status": {
+                        "type": "string",
+                        "enum": ["pending", "in_progress", "blocked", "complete", "cancelled"],
+                        "description": "Current status"
+                    },
+                    "label": {"type": "string", "description": "Optional custom label"}
+                },
+                "required": ["status"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "activity_item",
+            "description": "Display a single activity/event item",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "user_name": {"type": "string", "description": "Who performed the action"},
+                    "action": {"type": "string", "description": "What was done"},
+                    "target": {"type": "string", "description": "What it was done to"},
+                    "timestamp": {"type": "string", "description": "When it happened"},
+                    "icon": {"type": "string", "description": "Icon identifier"}
+                },
+                "required": ["user_name", "action", "timestamp"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "anchor_highlight",
+            "description": "Display extracted anchor/entity with highlighting",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string", "description": "The anchor text"},
+                    "type": {"type": "string", "description": "Anchor type (company, amount, etc.)"},
+                    "confidence": {"type": "number", "description": "Extraction confidence 0-1"},
+                    "properties": {
+                        "type": "object",
+                        "description": "Additional extracted properties"
+                    }
+                },
+                "required": ["text", "type"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "stats_card",
+            "description": "Display a statistics card with number and label",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "value": {"type": "string", "description": "The stat value (number or text)"},
+                    "label": {"type": "string", "description": "What the stat represents"},
+                    "change": {"type": "string", "description": "Change indicator (e.g., +5%, -2)"},
+                    "trend": {
+                        "type": "string",
+                        "enum": ["up", "down", "neutral"],
+                        "description": "Trend direction"
+                    }
+                },
+                "required": ["value", "label"]
+            }
+        }
     }
 ]
 

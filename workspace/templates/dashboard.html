@@ -1,0 +1,197 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - Memex Workspace{% endblock %}
+
+{% block head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}">
+<script src="https://d3js.org/d3.v7.min.js"></script>
+{% endblock %}
+
+{% block body %}
+<div class="dashboard">
+    <!-- Header -->
+    <header class="dashboard-header">
+        <div class="header-left">
+            <a href="/" class="back-link">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M19 12H5M12 19l-7-7 7-7"/>
+                </svg>
+                Workspace
+            </a>
+            <div class="logo">
+                <span class="logo-icon">M</span>
+                <span class="logo-text">Dashboard</span>
+            </div>
+        </div>
+        <div class="header-right">
+            <div class="user-info">
+                <div class="user-avatar manager">M</div>
+                <span>Morgan - VP Operations</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="dashboard-main">
+        <!-- Stats Row -->
+        <div class="stats-row">
+            <div class="stat-card">
+                <div class="stat-value" id="stat-total">0</div>
+                <div class="stat-label">Total Work Items</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="stat-pending">0</div>
+                <div class="stat-label">Pending</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="stat-in-progress">0</div>
+                <div class="stat-label">In Progress</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="stat-complete">0</div>
+                <div class="stat-label">Complete</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="stat-handoffs">0</div>
+                <div class="stat-label">Handoffs</div>
+            </div>
+        </div>
+
+        <!-- Main Grid -->
+        <div class="dashboard-grid">
+            <!-- Graph Visualization -->
+            <div class="panel graph-panel">
+                <div class="panel-header">
+                    <h3>Deal Flow Graph</h3>
+                    <div class="panel-actions">
+                        <button class="panel-btn" id="refresh-graph" title="Refresh">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6M21 12a9 9 0 0 1-15 6.7L3 16"/>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+                <div class="panel-content">
+                    <div id="graph-container"></div>
+                </div>
+                <div class="graph-legend">
+                    <div class="legend-item">
+                        <span class="legend-dot" style="background: #10b981;"></span>
+                        <span>Deal</span>
+                    </div>
+                    <div class="legend-item">
+                        <span class="legend-dot" style="background: #6366f1;"></span>
+                        <span>Work Item</span>
+                    </div>
+                    <div class="legend-item">
+                        <span class="legend-dot" style="background: #f59e0b;"></span>
+                        <span>Company</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Activity Feed -->
+            <div class="panel activity-panel">
+                <div class="panel-header">
+                    <h3>Activity Feed</h3>
+                    <div class="live-indicator">
+                        <span class="live-dot"></span>
+                        Live
+                    </div>
+                </div>
+                <div class="panel-content">
+                    <div class="activity-list" id="activity-list">
+                        <div class="activity-empty">No recent activity</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Team Status -->
+            <div class="panel team-panel">
+                <div class="panel-header">
+                    <h3>Team</h3>
+                </div>
+                <div class="panel-content">
+                    <div class="team-list" id="team-list">
+                        <div class="team-member">
+                            <div class="user-avatar sales">A</div>
+                            <div class="member-info">
+                                <div class="member-name">Alex</div>
+                                <div class="member-role">Sales Rep</div>
+                            </div>
+                            <div class="member-stats">
+                                <span class="member-count" id="alex-count">0</span>
+                                <span>items</span>
+                            </div>
+                        </div>
+                        <div class="team-member">
+                            <div class="user-avatar cs">J</div>
+                            <div class="member-info">
+                                <div class="member-name">Jordan</div>
+                                <div class="member-role">Customer Success</div>
+                            </div>
+                            <div class="member-stats">
+                                <span class="member-count" id="jordan-count">0</span>
+                                <span>items</span>
+                            </div>
+                        </div>
+                        <div class="team-member">
+                            <div class="user-avatar engineering">S</div>
+                            <div class="member-info">
+                                <div class="member-name">Sam</div>
+                                <div class="member-role">Solutions Engineer</div>
+                            </div>
+                            <div class="member-stats">
+                                <span class="member-count" id="sam-count">0</span>
+                                <span>items</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Work Items List -->
+            <div class="panel items-panel">
+                <div class="panel-header">
+                    <h3>Work Items</h3>
+                    <div class="filter-buttons">
+                        <button class="filter-btn active" data-filter="all">All</button>
+                        <button class="filter-btn" data-filter="pending">Pending</button>
+                        <button class="filter-btn" data-filter="in_progress">In Progress</button>
+                        <button class="filter-btn" data-filter="complete">Complete</button>
+                    </div>
+                </div>
+                <div class="panel-content">
+                    <div class="items-list" id="items-list">
+                        <div class="items-empty">No work items</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Node Detail Modal -->
+    <div class="modal" id="node-modal" style="display: none;">
+        <div class="modal-backdrop"></div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="modal-title">Node Details</h3>
+                <button class="modal-close" id="modal-close">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M18 6L6 18M6 6l12 12"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body" id="modal-body">
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+<script>
+document.addEventListener('DOMContentLoaded', initDashboard);
+</script>
+{% endblock %}

@@ -307,6 +307,192 @@ class ComponentRenderer:
         """Render auto-filled indicator"""
         return '<span class="auto-filled-badge">auto-filled (click to edit)</span>'
 
+    # ============================================
+    # Multi-User Workflow Components
+    # ============================================
+
+    def render_checklist(self, args: Dict[str, Any]) -> str:
+        """Render a checklist with checkable items"""
+        name = escape(args.get("name", ""))
+        label = escape(args.get("label", ""))
+        items = args.get("items", [])
+
+        items_html = ""
+        for item in items:
+            item_id = escape(item.get("id", ""))
+            item_text = escape(item.get("text", ""))
+            checked = item.get("checked", False)
+            required = item.get("required", False)
+
+            items_html += f'''
+            <div class="checklist-item">
+                <label class="checkbox-label">
+                    <input
+                        type="checkbox"
+                        name="{name}[]"
+                        value="{item_id}"
+                        {'checked' if checked else ''}
+                    >
+                    <span class="{'required' if required else ''}">{item_text}</span>
+                </label>
+            </div>
+            '''
+
+        html = f'''
+        <div class="checklist-group">
+            <div class="checklist-header">{label}</div>
+            <div class="checklist-items">{items_html}</div>
+        </div>
+        '''
+        return html
+
+    def render_handoff_form(self, args: Dict[str, Any]) -> str:
+        """Render handoff form (handled client-side mostly)"""
+        title = escape(args.get("title", "Forward to Team"))
+        context_summary = escape(args.get("context_summary", ""))
+
+        html = f'''
+        <div class="handoff-section">
+            <h4 class="handoff-title">{title}</h4>
+            {f'<p class="handoff-context">{context_summary}</p>' if context_summary else ''}
+            <div class="handoff-form-placeholder" data-available-users='{args.get("available_users", [])}'>
+                <!-- Client-side rendered -->
+            </div>
+        </div>
+        '''
+        return html
+
+    def render_handoff_chain(self, args: Dict[str, Any]) -> str:
+        """Render handoff chain visualization"""
+        chain = args.get("chain", [])
+        title = args.get("title", "Work History")
+
+        if not chain:
+            return ""
+
+        steps_html = ""
+        for i, step in enumerate(chain):
+            user_name = escape(step.get("user_name", "Unknown"))
+            user_role = escape(step.get("user_role", ""))
+            stage = escape(step.get("stage", ""))
+            timestamp = escape(step.get("timestamp", ""))
+
+            steps_html += f'''
+            <div class="chain-step">
+                <div class="chain-user">
+                    <div class="chain-avatar">{user_name[0]}</div>
+                    <div class="chain-info">
+                        <span class="chain-name">{user_name}</span>
+                        <span class="chain-role">{user_role}</span>
+                    </div>
+                </div>
+                {f'<div class="chain-arrow">→</div>' if i < len(chain) - 1 else ''}
+            </div>
+            '''
+
+        html = f'''
+        <div class="handoff-chain-display">
+            <div class="chain-title">{escape(title)}</div>
+            <div class="chain-steps">{steps_html}</div>
+        </div>
+        '''
+        return html
+
+    def render_notification_badge(self, args: Dict[str, Any]) -> str:
+        """Render notification badge"""
+        count = args.get("count", 0)
+        badge_type = args.get("type", "info")
+
+        if count == 0:
+            return ""
+
+        html = f'''
+        <span class="notification-badge badge-{badge_type}">{count}</span>
+        '''
+        return html
+
+    def render_user_avatar(self, args: Dict[str, Any]) -> str:
+        """Render user avatar"""
+        name = escape(args.get("name", ""))
+        role = escape(args.get("role", ""))
+        size = args.get("size", "medium")
+
+        html = f'''
+        <div class="user-avatar avatar-{size} {role}">
+            <span class="avatar-letter">{name[0] if name else '?'}</span>
+            <span class="avatar-name">{name}</span>
+        </div>
+        '''
+        return html
+
+    def render_status_badge(self, args: Dict[str, Any]) -> str:
+        """Render status badge"""
+        status = escape(args.get("status", "pending"))
+        label = escape(args.get("label", status.replace("_", " ").title()))
+
+        html = f'''
+        <span class="status-badge status-{status}">{label}</span>
+        '''
+        return html
+
+    def render_activity_item(self, args: Dict[str, Any]) -> str:
+        """Render activity item"""
+        user_name = escape(args.get("user_name", ""))
+        action = escape(args.get("action", ""))
+        target = escape(args.get("target", ""))
+        timestamp = escape(args.get("timestamp", ""))
+
+        html = f'''
+        <div class="activity-item">
+            <div class="activity-user">{user_name}</div>
+            <div class="activity-action">{action}</div>
+            {f'<div class="activity-target">{target}</div>' if target else ''}
+            <div class="activity-time">{timestamp}</div>
+        </div>
+        '''
+        return html
+
+    def render_anchor_highlight(self, args: Dict[str, Any]) -> str:
+        """Render anchor/entity highlight"""
+        text = escape(args.get("text", ""))
+        anchor_type = escape(args.get("type", ""))
+        confidence = args.get("confidence", 1.0)
+        properties = args.get("properties", {})
+
+        props_html = ""
+        for key, value in properties.items():
+            props_html += f'<span class="anchor-prop">{escape(key)}: {escape(str(value))}</span>'
+
+        html = f'''
+        <span class="anchor-highlight anchor-{anchor_type}" title="Confidence: {confidence:.0%}">
+            <span class="anchor-text">{text}</span>
+            <span class="anchor-type">{anchor_type}</span>
+            {f'<div class="anchor-props">{props_html}</div>' if props_html else ''}
+        </span>
+        '''
+        return html
+
+    def render_stats_card(self, args: Dict[str, Any]) -> str:
+        """Render stats card"""
+        value = escape(str(args.get("value", "")))
+        label = escape(args.get("label", ""))
+        change = args.get("change", "")
+        trend = args.get("trend", "neutral")
+
+        change_html = ""
+        if change:
+            trend_class = f"trend-{trend}"
+            change_html = f'<span class="stat-change {trend_class}">{escape(change)}</span>'
+
+        html = f'''
+        <div class="stats-card">
+            <div class="stat-value">{value}</div>
+            <div class="stat-label">{label}</div>
+            {change_html}
+        </div>
+        '''
+        return html
+
 
 # Global renderer instance
 renderer = ComponentRenderer()
