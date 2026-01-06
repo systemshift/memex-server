@@ -96,44 +96,103 @@ def fetch_context_from_memex(user_message: str, current_state: Dict) -> List[Dic
     """
     Query memex for relevant context based on the message and current state.
     Returns context cards to display to user.
+
+    This is the KEY function for multi-user context spillover:
+    - Finds similar workflows from other users
+    - Surfaces policies and patterns that emerged
+    - Links related entities (people, companies, vendors)
     """
     context_cards = []
-
-    # Extract search terms from message and state
-    search_terms = []
-
-    # From message
-    words = user_message.split()
-    for word in words:
-        if len(word) > 3 and word[0].isupper():  # Likely a name/company
-            search_terms.append(word)
-
-    # From filled fields
-    for field_name, field_data in current_state.get("fields", {}).items():
-        if field_data.get("done") and field_data.get("value"):
-            value = str(field_data["value"])
-            if len(value) > 2:
-                search_terms.append(value)
-
-    # Search memex for each term
     seen_ids = set()
-    for term in search_terms[:5]:  # Limit searches
-        result = memex_get(f"/api/query/search?q={term}&limit=3")
-        if result and result.get("results"):
-            for node in result["results"]:
-                node_id = node.get("ID")
-                if node_id and node_id not in seen_ids:
-                    seen_ids.add(node_id)
+
+    # 1. Search for similar WORKFLOWS first (most valuable context)
+    workflow_title = current_state.get("title", "")
+    if workflow_title:
+        result = memex_get(f"/api/query/search?q={workflow_title}&limit=5")
+        if result and result.get("nodes"):
+            for node in result["nodes"]:
+                if node.get("Type") == "Workflow" and node.get("ID") not in seen_ids:
+                    seen_ids.add(node["ID"])
                     meta = node.get("Meta", {})
+                    # Show what fields others used
+                    final_state = meta.get("final_state", {})
+                    field_names = list(final_state.get("fields", {}).keys())[:3]
                     context_cards.append({
-                        "id": node_id,
-                        "title": meta.get("name", node.get("Type", "Related")),
-                        "content": meta.get("summary", meta.get("description", f"Found: {term}")),
-                        "type": node.get("Type", "Entity"),
+                        "id": node["ID"],
+                        "title": f"Similar: {meta.get('title', 'Workflow')}",
+                        "content": f"Previous workflow with fields: {', '.join(field_names) if field_names else 'various'}",
+                        "type": "Workflow",
                         "source": "memex"
                     })
 
-    return context_cards[:5]  # Limit total context cards
+    # 2. Extract search terms from message
+    search_terms = []
+    words = user_message.split()
+    for word in words:
+        # Names, companies, places (capitalized words)
+        if len(word) > 3 and word[0].isupper():
+            search_terms.append(word)
+        # Dollar amounts
+        if "$" in word or word.replace(",", "").replace(".", "").isdigit():
+            search_terms.append(word)
+
+    # 3. From filled fields (for related context)
+    for field_name, field_data in current_state.get("fields", {}).items():
+        if field_data.get("done") and field_data.get("value"):
+            value = str(field_data["value"])
+            if len(value) > 2 and not value.isdigit():
+                search_terms.append(value)
+
+    # 4. Search memex for each term
+    for term in search_terms[:5]:
+        result = memex_get(f"/api/query/search?q={term}&limit=3")
+        if result and result.get("nodes"):
+            for node in result["nodes"]:
+                node_id = node.get("ID")
+                node_type = node.get("Type", "")
+                if node_id and node_id not in seen_ids:
+                    seen_ids.add(node_id)
+                    meta = node.get("Meta", {})
+
+                    # Format based on type
+                    if node_type == "Workflow":
+                        title = f"Related workflow"
+                        content = meta.get("title", term)
+                    elif node_type == "WorkflowTurn":
+                        # Show the conversation context
+                        title = "Previous conversation"
+                        content = meta.get("content", "")[:80] + "..."
+                    else:
+                        title = meta.get("name", node_type or "Related")
+                        content = meta.get("summary", meta.get("description", f"Matched: {term}"))
+
+                    context_cards.append({
+                        "id": node_id,
+                        "title": title,
+                        "content": content,
+                        "type": node_type,
+                        "source": "memex"
+                    })
+
+    # 5. Search for workflow-type-specific patterns
+    # Look for common keywords that indicate workflow type
+    message_lower = user_message.lower()
+    if any(w in message_lower for w in ["expense", "reimburse", "receipt", "dinner", "lunch"]):
+        result = memex_get("/api/query/search?q=expense&limit=3")
+        if result and result.get("nodes"):
+            for node in result["nodes"]:
+                if node.get("Type") == "Workflow" and node.get("ID") not in seen_ids:
+                    seen_ids.add(node["ID"])
+                    meta = node.get("Meta", {})
+                    context_cards.append({
+                        "id": node["ID"],
+                        "title": "Recent expense workflow",
+                        "content": f"Similar request: {meta.get('title', 'expense')}",
+                        "type": "Workflow",
+                        "source": "memex"
+                    })
+
+    return context_cards[:6]  # Limit total context cards
 
 
 def save_workflow_to_memex(session: Dict) -> Optional[str]:
