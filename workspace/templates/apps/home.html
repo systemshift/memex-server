@@ -1,0 +1,475 @@
+{% extends "base.html" %}
+
+{% block title %}Memex - Knowledge Graph{% endblock %}
+
+{% block head %}
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<style>
+/* App Shell */
+.app-shell {
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+    background: var(--bg);
+}
+
+/* Navigation */
+.app-nav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 24px;
+    height: 56px;
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border);
+}
+
+.nav-brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.nav-logo {
+    width: 32px;
+    height: 32px;
+    background: var(--accent);
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 16px;
+    color: white;
+}
+
+.nav-title {
+    font-weight: 600;
+    font-size: 18px;
+    color: var(--text);
+}
+
+.nav-links {
+    display: flex;
+    gap: 4px;
+}
+
+.nav-link {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    color: var(--text-dim);
+    text-decoration: none;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 500;
+    transition: all 0.2s;
+}
+
+.nav-link:hover {
+    background: var(--bg-tertiary);
+    color: var(--text);
+}
+
+.nav-link.active {
+    background: var(--accent-light);
+    color: var(--accent);
+}
+
+.nav-link svg {
+    width: 18px;
+    height: 18px;
+}
+
+.nav-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.nav-search {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    width: 280px;
+}
+
+.nav-search input {
+    flex: 1;
+    background: none;
+    border: none;
+    color: var(--text);
+    font-size: 14px;
+    outline: none;
+}
+
+.nav-search input::placeholder {
+    color: var(--text-muted);
+}
+
+.nav-search svg {
+    color: var(--text-muted);
+    width: 16px;
+    height: 16px;
+}
+
+/* Main Content */
+.app-content {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+}
+
+/* Graph Panel */
+.graph-panel {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+}
+
+#graph-canvas {
+    width: 100%;
+    height: 100%;
+    background: var(--bg);
+}
+
+.graph-node {
+    cursor: pointer;
+}
+
+.graph-node circle {
+    stroke-width: 2;
+    transition: all 0.2s;
+}
+
+.graph-node:hover circle {
+    stroke-width: 3;
+}
+
+.graph-node text {
+    font-size: 11px;
+    fill: var(--text);
+    pointer-events: none;
+}
+
+.graph-link {
+    stroke: var(--border);
+    stroke-opacity: 0.6;
+    fill: none;
+}
+
+/* Node colors by type */
+.node-document { fill: #3b82f6; stroke: #60a5fa; }
+.node-data { fill: #22c55e; stroke: #4ade80; }
+.node-person { fill: #f59e0b; stroke: #fbbf24; }
+.node-project { fill: #8b5cf6; stroke: #a78bfa; }
+.node-task { fill: #ef4444; stroke: #f87171; }
+
+/* Side Panel */
+.side-panel {
+    width: 360px;
+    background: var(--bg-secondary);
+    border-left: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.panel-header {
+    padding: 20px;
+    border-bottom: 1px solid var(--border);
+}
+
+.panel-header h2 {
+    font-size: 16px;
+    font-weight: 600;
+    margin: 0 0 16px 0;
+}
+
+/* Create Buttons */
+.create-buttons {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px;
+}
+
+.create-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-decoration: none;
+}
+
+.create-btn:hover {
+    background: var(--accent-light);
+    border-color: var(--accent);
+}
+
+.create-btn svg {
+    width: 18px;
+    height: 18px;
+    color: var(--text-dim);
+}
+
+.create-btn:hover svg {
+    color: var(--accent);
+}
+
+/* Node List */
+.panel-section {
+    padding: 20px;
+    border-bottom: 1px solid var(--border);
+}
+
+.panel-section h3 {
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-dim);
+    margin: 0 0 12px 0;
+}
+
+.node-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    flex: 1;
+    overflow-y: auto;
+    padding: 0 20px 20px;
+}
+
+.node-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px;
+    background: var(--bg-tertiary);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-decoration: none;
+    color: var(--text);
+}
+
+.node-item:hover {
+    background: var(--accent-light);
+}
+
+.node-icon {
+    width: 32px;
+    height: 32px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+}
+
+.node-icon.document { background: rgba(59, 130, 246, 0.2); color: #3b82f6; }
+.node-icon.data { background: rgba(34, 197, 94, 0.2); color: #22c55e; }
+.node-icon.person { background: rgba(245, 158, 11, 0.2); color: #f59e0b; }
+.node-icon.project { background: rgba(139, 92, 246, 0.2); color: #8b5cf6; }
+
+.node-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.node-title {
+    font-weight: 500;
+    font-size: 14px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.node-meta {
+    font-size: 12px;
+    color: var(--text-dim);
+}
+
+/* Empty State */
+.empty-state {
+    text-align: center;
+    padding: 40px 20px;
+    color: var(--text-dim);
+}
+
+.empty-state svg {
+    width: 48px;
+    height: 48px;
+    margin-bottom: 16px;
+    opacity: 0.5;
+}
+
+.empty-state p {
+    font-size: 14px;
+}
+
+/* Graph Controls */
+.graph-controls {
+    position: absolute;
+    bottom: 20px;
+    left: 20px;
+    display: flex;
+    gap: 8px;
+}
+
+.graph-control-btn {
+    width: 36px;
+    height: 36px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text-dim);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+}
+
+.graph-control-btn:hover {
+    background: var(--bg-tertiary);
+    color: var(--text);
+}
+</style>
+{% endblock %}
+
+{% block body %}
+<div class="app-shell">
+    <!-- Navigation -->
+    <nav class="app-nav">
+        <div class="nav-brand">
+            <div class="nav-logo">M</div>
+            <span class="nav-title">Memex</span>
+        </div>
+
+        <div class="nav-links">
+            <a href="/home" class="nav-link active">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="3"/>
+                    <path d="M12 2v4m0 12v4M2 12h4m12 0h4"/>
+                    <circle cx="12" cy="12" r="9" stroke-dasharray="4 2"/>
+                </svg>
+                Graph
+            </a>
+            <a href="/docs" class="nav-link">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                    <path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/>
+                </svg>
+                Docs
+            </a>
+            <a href="/sheets" class="nav-link">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="3" y="3" width="18" height="18" rx="2"/>
+                    <path d="M3 9h18M3 15h18M9 3v18M15 3v18"/>
+                </svg>
+                Sheets
+            </a>
+        </div>
+
+        <div class="nav-actions">
+            <div class="nav-search">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="11" cy="11" r="8"/>
+                    <path d="m21 21-4.35-4.35"/>
+                </svg>
+                <input type="text" id="search-input" placeholder="Search nodes...">
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <div class="app-content">
+        <!-- Graph Canvas -->
+        <div class="graph-panel">
+            <svg id="graph-canvas"></svg>
+            <div class="graph-controls">
+                <button class="graph-control-btn" id="zoom-in" title="Zoom In">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="11" cy="11" r="8"/>
+                        <path d="M21 21l-4.35-4.35M11 8v6M8 11h6"/>
+                    </svg>
+                </button>
+                <button class="graph-control-btn" id="zoom-out" title="Zoom Out">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="11" cy="11" r="8"/>
+                        <path d="M21 21l-4.35-4.35M8 11h6"/>
+                    </svg>
+                </button>
+                <button class="graph-control-btn" id="reset-zoom" title="Reset View">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+                        <path d="M3 3v5h5"/>
+                    </svg>
+                </button>
+            </div>
+        </div>
+
+        <!-- Side Panel -->
+        <div class="side-panel">
+            <div class="panel-header">
+                <h2>Knowledge Graph</h2>
+                <div class="create-buttons">
+                    <a href="/docs" class="create-btn">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                            <path d="M14 2v6h6M12 18v-6M9 15h6"/>
+                        </svg>
+                        New Doc
+                    </a>
+                    <a href="/sheets" class="create-btn">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="3" y="3" width="18" height="18" rx="2"/>
+                            <path d="M12 8v8M8 12h8"/>
+                        </svg>
+                        New Sheet
+                    </a>
+                </div>
+            </div>
+
+            <div class="panel-section">
+                <h3>Recent Nodes</h3>
+            </div>
+
+            <div class="node-list" id="node-list">
+                <!-- Nodes populated by JS -->
+                <div class="empty-state" id="empty-state">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <circle cx="12" cy="12" r="10"/>
+                        <path d="M12 6v6l4 2"/>
+                    </svg>
+                    <p>No nodes yet. Create a document or spreadsheet to get started.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/graph.js') }}"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    initGraph();
+    loadNodes();
+});
+</script>
+{% endblock %}

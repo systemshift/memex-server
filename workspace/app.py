@@ -60,14 +60,275 @@ def get_session(session_id: str, user_id: str = None) -> WorkspaceSession:
 
 @app.route('/')
 def index():
-    """Main workspace UI"""
-    return render_template('main.html')
+    """Redirect to Graph Home - the main entry point"""
+    from flask import redirect
+    return redirect('/home')
 
 
 @app.route('/dashboard')
 def dashboard():
     """Boss view dashboard"""
     return render_template('dashboard.html')
+
+
+# ============== Memex-Native Productivity Suite Routes ==============
+
+@app.route('/home')
+def graph_home():
+    """Graph Home - Knowledge graph visualization and navigation"""
+    return render_template('apps/home.html')
+
+
+@app.route('/docs')
+def docs_new():
+    """Create a new document"""
+    return render_template('apps/docs.html', doc_id=None)
+
+
+@app.route('/docs/<doc_id>')
+def docs_edit(doc_id):
+    """Edit an existing document"""
+    return render_template('apps/docs.html', doc_id=doc_id)
+
+
+@app.route('/sheets')
+def sheets_new():
+    """Create a new spreadsheet"""
+    return render_template('apps/sheets.html', sheet_id=None)
+
+
+@app.route('/sheets/<sheet_id>')
+def sheets_edit(sheet_id):
+    """Edit an existing spreadsheet"""
+    return render_template('apps/sheets.html', sheet_id=sheet_id)
+
+
+# ============== Node API Endpoints ==============
+
+@app.route('/api/nodes', methods=['GET'])
+def get_nodes():
+    """Get all nodes for the knowledge graph"""
+    try:
+        all_nodes = []
+        all_links = []
+        seen_ids = set()
+
+        # Search for different types of content
+        # Use broader search terms to find more nodes
+        search_queries = [
+            ("*", ["Document"]),
+            ("*", ["Data"]),
+            ("*", ["Project"]),
+            ("*", ["Person"]),
+            ("document", None),
+            ("sheet", None),
+            ("project", None),
+        ]
+
+        for query, types in search_queries:
+            try:
+                results = memex.search(query, limit=50, types=types)
+                for node in results:
+                    if node.id not in seen_ids:
+                        seen_ids.add(node.id)
+                        all_nodes.append({
+                            "id": node.id,
+                            "type": node.type,
+                            "title": node.meta.get("title") or node.meta.get("name", "Untitled"),
+                            "created": node.meta.get("created"),
+                            "updated": node.meta.get("updated")
+                        })
+            except Exception as e:
+                print(f"[get_nodes] Search error for {query}: {e}")
+
+        # Get links between nodes
+        for node in all_nodes:
+            try:
+                node_links = memex.get_node_links(node["id"])
+                for link in node_links:
+                    all_links.append({
+                        "source": link.get("source"),
+                        "target": link.get("target"),
+                        "type": link.get("type")
+                    })
+            except Exception as e:
+                pass  # Skip link errors silently
+
+        return jsonify({
+            "nodes": all_nodes,
+            "links": all_links
+        })
+    except Exception as e:
+        print(f"[get_nodes] Error: {e}")
+        return jsonify({"nodes": [], "links": []})
+
+
+@app.route('/api/docs', methods=['POST'])
+def create_doc():
+    """Create a new document node"""
+    data = request.json or {}
+    title = data.get("title", "Untitled Document")
+    content = data.get("content", {})
+
+    try:
+        doc_id = memex.create_node(
+            node_type="Document",
+            meta={
+                "title": title,
+                "content": content,
+                "content_type": "doc",
+                "owner": data.get("owner", "anonymous")
+            }
+        )
+        return jsonify({"id": doc_id, "title": title})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/docs/<doc_id>', methods=['GET'])
+def get_doc(doc_id):
+    """Get a document by ID"""
+    try:
+        doc = memex.get_node(doc_id)
+        if doc:
+            return jsonify({
+                "id": doc.id,
+                "title": doc.meta.get("title", "Untitled"),
+                "content": doc.meta.get("content", {}),
+                "links": memex.get_node_links(doc_id),
+                "created": doc.meta.get("created"),
+                "updated": doc.meta.get("updated")
+            })
+        return jsonify({"error": "Document not found"}), 404
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/docs/<doc_id>', methods=['PUT'])
+def update_doc(doc_id):
+    """Update a document"""
+    data = request.json or {}
+
+    try:
+        memex._patch(f"/api/nodes/{doc_id}", {
+            "meta": {
+                "title": data.get("title"),
+                "content": data.get("content")
+            }
+        })
+        return jsonify({"success": True, "id": doc_id})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/sheets', methods=['POST'])
+def create_sheet():
+    """Create a new spreadsheet node"""
+    data = request.json or {}
+    title = data.get("title", "Untitled Spreadsheet")
+    sheet_data = data.get("data", {"columns": [], "rows": []})
+
+    try:
+        sheet_id = memex.create_node(
+            node_type="Data",
+            meta={
+                "title": title,
+                "data": sheet_data,
+                "content_type": "sheet",
+                "owner": data.get("owner", "anonymous")
+            }
+        )
+        return jsonify({"id": sheet_id, "title": title})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/sheets/<sheet_id>', methods=['GET'])
+def get_sheet(sheet_id):
+    """Get a spreadsheet by ID"""
+    try:
+        sheet = memex.get_node(sheet_id)
+        if sheet:
+            return jsonify({
+                "id": sheet.id,
+                "title": sheet.meta.get("title", "Untitled"),
+                "data": sheet.meta.get("data", {"columns": [], "rows": []}),
+                "links": memex.get_node_links(sheet_id),
+                "created": sheet.meta.get("created"),
+                "updated": sheet.meta.get("updated")
+            })
+        return jsonify({"error": "Spreadsheet not found"}), 404
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/sheets/<sheet_id>', methods=['PUT'])
+def update_sheet(sheet_id):
+    """Update a spreadsheet"""
+    data = request.json or {}
+
+    try:
+        memex._patch(f"/api/nodes/{sheet_id}", {
+            "meta": {
+                "title": data.get("title"),
+                "data": data.get("data")
+            }
+        })
+        return jsonify({"success": True, "id": sheet_id})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/links', methods=['POST'])
+def create_link():
+    """Create a link between nodes"""
+    data = request.json or {}
+    source = data.get("source")
+    target = data.get("target")
+    link_type = data.get("type", "REFERENCES")
+
+    if not source or not target:
+        return jsonify({"error": "source and target required"}), 400
+
+    try:
+        link_id = memex.create_link(
+            source=source,
+            target=target,
+            link_type=link_type,
+            meta=data.get("meta", {})
+        )
+        return jsonify({"id": link_id})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/context/<node_id>', methods=['GET'])
+def get_node_context(node_id):
+    """Get context for a node - linked nodes and related content"""
+    try:
+        context = memex.get_context_for_input(node_id)
+        links = memex.get_node_links(node_id)
+
+        # Get linked node details
+        linked_nodes = []
+        for link in links:
+            target_id = link.get("target") if link.get("source") == node_id else link.get("source")
+            target_node = memex.get_node(target_id)
+            if target_node:
+                linked_nodes.append({
+                    "id": target_id,
+                    "type": target_node.type,
+                    "title": target_node.meta.get("title") or target_node.meta.get("name"),
+                    "link_type": link.get("type")
+                })
+
+        return jsonify({
+            "context": context,
+            "linked_nodes": linked_nodes,
+            "links": links
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route('/api/session', methods=['POST'])
