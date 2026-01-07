@@ -60,9 +60,15 @@ def get_session(session_id: str, user_id: str = None) -> WorkspaceSession:
 
 @app.route('/')
 def index():
-    """Redirect to Graph Home - the main entry point"""
+    """Redirect to Journal - the main entry point"""
     from flask import redirect
-    return redirect('/home')
+    return redirect('/journal')
+
+
+@app.route('/journal')
+def journal():
+    """Journal - Write prose, build knowledge graph automatically"""
+    return render_template('apps/journal.html')
 
 
 @app.route('/dashboard')
@@ -329,6 +335,236 @@ def get_node_context(node_id):
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+# ============== Journal API Endpoints ==============
+
+# In-memory storage for journal entries (use DB in production)
+_journal_entries = []
+
+
+@app.route('/api/journal/extract', methods=['POST'])
+def journal_extract():
+    """Extract entities from prose text using pattern matching"""
+    import re
+    data = request.json or {}
+    text = data.get("text", "")
+
+    if not text:
+        return jsonify({"entities": []})
+
+    entities = []
+    seen_values = set()
+
+    # Skip common words that aren't entities
+    skip_words = {'I', 'We', 'They', 'He', 'She', 'It', 'The', 'This', 'That',
+                  'Today', 'Tomorrow', 'Yesterday', 'Monday', 'Tuesday',
+                  'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'}
+
+    def add_entity(etype, value):
+        value = value.strip()
+        if value and len(value) > 2 and value not in seen_values and value not in skip_words:
+            seen_values.add(value)
+            entities.append({"type": etype, "value": value})
+
+    # Companies: Names followed by Corp, Inc, Ltd, or common business suffixes
+    company_patterns = [
+        r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+(?:Corp|Inc|Ltd|LLC|Co)\.?\b',
+        r'\b([A-Z][A-Za-z]+)\s+(?:deal|project|account|client)\b',
+    ]
+    for pattern in company_patterns:
+        matches = re.findall(pattern, text)
+        for match in matches:
+            add_entity("company", match)
+
+    # People: Names that appear with context clues (but not company names)
+    person_patterns = [
+        r'\bwith\s+([A-Z][a-z]+)\b(?!\s+(?:Corp|Inc|Ltd|LLC|Co|deal|project))',
+        r'\b([A-Z][a-z]+)\s+(?:said|mentioned|asked|told|needs|wants|is|was)\b',
+        r'\b(?:loop(?:ing)?\s+in|cc|contact|reach out to|email|call)\s+([A-Z][a-z]+)\b',
+        r'\b(?:from|to|by)\s+([A-Z][a-z]+)\b(?!\s+(?:Corp|Inc|Ltd|LLC|Co))',
+    ]
+    for pattern in person_patterns:
+        matches = re.findall(pattern, text)
+        for match in matches:
+            # Don't add if already a company
+            if match not in [e['value'] for e in entities if e['type'] == 'company']:
+                add_entity("person", match)
+
+    # Money amounts
+    money_pattern = r'\$[\d,]+(?:\.\d{2})?k?|\b\d+k\b'
+    money_matches = re.findall(money_pattern, text, re.IGNORECASE)
+    for match in money_matches:
+        add_entity("money", match)
+
+    # Dates: Various date formats and relative dates
+    date_patterns = [
+        r'\bby\s+(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\b',
+        r'\bby\s+(tomorrow|next week|end of (?:day|week|month))\b',
+        r'\bon\s+(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\b',
+        r'\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2}(?:st|nd|rd|th)?\b',
+    ]
+    for pattern in date_patterns:
+        matches = re.findall(pattern, text, re.IGNORECASE)
+        for match in matches:
+            add_entity("date", match)
+
+    # Tasks: Action items and to-dos
+    task_patterns = [
+        r'\bneed to\s+([^.!?,]+)',
+        r'\bwill\s+([^.!?,]+)',
+        r'\bshould\s+([^.!?,]+)',
+    ]
+    for pattern in task_patterns:
+        matches = re.findall(pattern, text, re.IGNORECASE)
+        for match in matches:
+            task = match.strip()[:50]
+            if len(task) > 5 and not any(task == e['value'] for e in entities):
+                add_entity("task", task)
+                break
+
+    return jsonify({"entities": entities[:12]})
+
+
+@app.route('/api/journal/save', methods=['POST'])
+def journal_save():
+    """Save journal entry and create nodes/links in Memex"""
+    data = request.json or {}
+    text = data.get("text", "")
+    entities = data.get("entities", [])
+
+    if not text:
+        return jsonify({"error": "No text provided"}), 400
+
+    entry_id = str(uuid.uuid4().hex[:12])
+    now = datetime.now().isoformat()
+
+    # Create the journal entry node in Memex
+    try:
+        journal_node_id = memex.create_node(
+            node_type="Journal",
+            meta={
+                "title": text[:50] + "..." if len(text) > 50 else text,
+                "content": text,
+                "entities": entities,
+                "created": now
+            }
+        )
+    except Exception as e:
+        print(f"[journal_save] Error creating journal node: {e}")
+        journal_node_id = entry_id
+
+    nodes_created = 1  # The journal entry itself
+    links_created = 0
+
+    # Create nodes for extracted entities and link them
+    entity_nodes = {}
+    for entity in entities:
+        etype = entity.get("type")
+        value = entity.get("value")
+
+        if not value:
+            continue
+
+        # Map entity types to Memex node types
+        node_type_map = {
+            "person": "Person",
+            "company": "Company",
+            "task": "Task",
+            "project": "Project",
+            "date": "Event",
+            "money": "Amount"
+        }
+
+        memex_type = node_type_map.get(etype, "Entity")
+
+        # Check if entity already exists
+        try:
+            existing = memex.search(value, limit=1, types=[memex_type])
+            if existing and len(existing) > 0:
+                entity_node_id = existing[0].id
+            else:
+                # Create new entity node
+                entity_node_id = memex.create_node(
+                    node_type=memex_type,
+                    meta={
+                        "name": value,
+                        "title": value,
+                        "created": now
+                    }
+                )
+                nodes_created += 1
+        except Exception as e:
+            print(f"[journal_save] Error with entity {value}: {e}")
+            entity_node_id = None
+
+        if entity_node_id:
+            entity_nodes[value] = entity_node_id
+
+            # Create link from journal entry to entity
+            try:
+                link_type_map = {
+                    "person": "MENTIONS",
+                    "company": "ABOUT",
+                    "task": "CONTAINS_TASK",
+                    "project": "RELATED_TO",
+                    "date": "SCHEDULED",
+                    "money": "HAS_AMOUNT"
+                }
+                link_type = link_type_map.get(etype, "REFERENCES")
+
+                memex.create_link(
+                    source=journal_node_id,
+                    target=entity_node_id,
+                    link_type=link_type,
+                    meta={"extracted_from": "journal", "created": now}
+                )
+                links_created += 1
+            except Exception as e:
+                print(f"[journal_save] Error creating link: {e}")
+
+    # Store entry in memory for timeline
+    entry = {
+        "id": entry_id,
+        "node_id": journal_node_id,
+        "text": text,
+        "entities": entities,
+        "created": now
+    }
+    _journal_entries.insert(0, entry)
+
+    return jsonify({
+        "success": True,
+        "entry_id": entry_id,
+        "node_id": journal_node_id,
+        "nodes_created": nodes_created,
+        "links_created": links_created
+    })
+
+
+@app.route('/api/journal/entries', methods=['GET'])
+def journal_entries():
+    """Get past journal entries"""
+    limit = int(request.args.get("limit", 20))
+
+    # First try to get from Memex
+    try:
+        results = memex.search("*", limit=limit, types=["Journal"])
+        entries = []
+        for node in results:
+            entries.append({
+                "id": node.id,
+                "text": node.meta.get("content", node.meta.get("title", "")),
+                "entities": node.meta.get("entities", []),
+                "created": node.meta.get("created")
+            })
+        if entries:
+            return jsonify({"entries": entries})
+    except Exception as e:
+        print(f"[journal_entries] Memex search error: {e}")
+
+    # Fall back to in-memory entries
+    return jsonify({"entries": _journal_entries[:limit]})
 
 
 @app.route('/api/session', methods=['POST'])
