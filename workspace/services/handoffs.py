@@ -155,7 +155,6 @@ def create_handoff(
     # Get the source work item
     source_item = get_work_item(work_item_id)
     if not source_item:
-        print(f"Work item not found: {work_item_id}")
         return None
 
     # Get user info
@@ -163,7 +162,6 @@ def create_handoff(
     to_user = get_user(to_user_id)
 
     if not from_user or not to_user:
-        print(f"User not found: from={from_user_id}, to={to_user_id}")
         return None
 
     # Determine new stage based on recipient's role

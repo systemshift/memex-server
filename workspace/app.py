@@ -305,6 +305,29 @@ def health():
     return jsonify({"status": "ok"})
 
 
+@app.route('/api/reset', methods=['POST'])
+def reset_demo():
+    """
+    Reset the demo state.
+    Clears all work items, handoffs, and notifications from memory.
+    Does NOT delete seed data from Memex.
+    """
+    from services.handoffs import _handoffs, _work_items
+    from core.notifications import notifications
+
+    # Clear in-memory state
+    _handoffs.clear()
+    _work_items.clear()
+    notifications._notifications.clear()
+    notifications._activity_log.clear()
+    sessions.clear()
+
+    return jsonify({
+        "status": "reset",
+        "message": "Demo state cleared. Work items, handoffs, and notifications reset."
+    })
+
+
 # ============================================
 # Multi-User Workflow Endpoints
 # ============================================

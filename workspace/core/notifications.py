@@ -9,7 +9,7 @@ import json
 import time
 from datetime import datetime
 from typing import Dict, List, Optional, Generator
-from threading import Lock
+from threading import RLock
 from dataclasses import dataclass, field
 
 from core.types import Notification, NotificationType
@@ -24,7 +24,7 @@ class NotificationManager:
     def __init__(self):
         # In-memory storage: user_id -> list of notifications
         self._notifications: Dict[str, List[Notification]] = {}
-        self._lock = Lock()
+        self._lock = RLock()  # RLock allows reentrant locking (notify -> _log_activity)
 
         # Activity log for dashboard
         self._activity_log: List[Dict] = []

@@ -18,6 +18,16 @@ class DemoUser:
     title: str
     email: str
 
+    def to_dict(self) -> Dict:
+        """Convert user to dictionary"""
+        return {
+            "id": self.id,
+            "name": self.name,
+            "role": self.role,
+            "title": self.title,
+            "email": self.email
+        }
+
 
 # Demo users for the VC presentation
 DEMO_USERS: Dict[str, DemoUser] = {
