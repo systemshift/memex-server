@@ -63,4 +63,5 @@ __pycache__/
 
 # Python venvs
 *_venv/
+venv/
 memex-cli

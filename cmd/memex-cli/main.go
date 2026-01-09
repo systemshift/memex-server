@@ -4,14 +4,15 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/systemshift/memex/cmd/memex-cli/agent"
-	"github.com/systemshift/memex/cmd/memex-cli/client"
 )
 
 var (
@@ -31,31 +32,6 @@ var (
 )
 
 func main() {
-	// Get configuration from environment
-	memexURL := os.Getenv("MEMEX_URL")
-	if memexURL == "" {
-		memexURL = "http://localhost:8080"
-	}
-
-	openaiKey := os.Getenv("OPENAI_API_KEY")
-	if openaiKey == "" {
-		fmt.Fprintln(os.Stderr, errorStyle.Render("Error: OPENAI_API_KEY environment variable is required"))
-		os.Exit(1)
-	}
-
-	// Create clients
-	memexClient := client.NewMemexClient(memexURL)
-	llmClient := client.NewOpenAIClient(openaiKey, "")
-
-	// Check Memex connection
-	if err := memexClient.Health(); err != nil {
-		fmt.Fprintln(os.Stderr, errorStyle.Render(fmt.Sprintf("Warning: Cannot connect to Memex at %s: %v", memexURL, err)))
-		fmt.Fprintln(os.Stderr, dimStyle.Render("Some features may not work."))
-	}
-
-	// Create agent
-	ag := agent.NewAgent(llmClient, memexClient, os.Stdout)
-
 	// Setup context with cancellation
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -73,7 +49,7 @@ func main() {
 	// Check for command line argument (one-shot mode)
 	if len(os.Args) > 1 {
 		query := strings.Join(os.Args[1:], " ")
-		runQuery(ctx, ag, query)
+		runQuery(ctx, query)
 		return
 	}
 
@@ -88,31 +64,109 @@ func main() {
 			input.WriteString("\n")
 		}
 		if input.Len() > 0 {
-			runQuery(ctx, ag, strings.TrimSpace(input.String()))
+			runQuery(ctx, strings.TrimSpace(input.String()))
 		}
 		return
 	}
 
 	// Interactive REPL mode
-	runREPL(ctx, ag)
+	runREPL(ctx)
 }
 
-func runQuery(ctx context.Context, ag *agent.Agent, query string) {
-	if err := ag.Run(ctx, query); err != nil {
-		if ctx.Err() != nil {
-			return // Context cancelled, exit quietly
+// findBridgePath locates the Python bridge script
+func findBridgePath() string {
+	// Try relative to executable
+	execPath, err := os.Executable()
+	if err == nil {
+		bridgePath := filepath.Join(filepath.Dir(execPath), "..", "..", "bridge", "query.py")
+		if _, err := os.Stat(bridgePath); err == nil {
+			return bridgePath
 		}
+	}
+
+	// Try relative to working directory
+	cwd, err := os.Getwd()
+	if err == nil {
+		bridgePath := filepath.Join(cwd, "bridge", "query.py")
+		if _, err := os.Stat(bridgePath); err == nil {
+			return bridgePath
+		}
+		// Try parent directories
+		for i := 0; i < 3; i++ {
+			cwd = filepath.Dir(cwd)
+			bridgePath = filepath.Join(cwd, "bridge", "query.py")
+			if _, err := os.Stat(bridgePath); err == nil {
+				return bridgePath
+			}
+		}
+	}
+
+	// Default: assume bridge is in memex repo
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, "memex", "bridge", "query.py")
+}
+
+// findPython locates the Python interpreter (prefer venv)
+func findPython(bridgePath string) string {
+	bridgeDir := filepath.Dir(bridgePath)
+
+	// Check for venv in bridge directory
+	venvPython := filepath.Join(bridgeDir, "venv", "bin", "python")
+	if _, err := os.Stat(venvPython); err == nil {
+		return venvPython
+	}
+
+	// Fallback to system python
+	return "python3"
+}
+
+func runQuery(ctx context.Context, query string) {
+	bridgePath := findBridgePath()
+	pythonPath := findPython(bridgePath)
+
+	cmd := exec.CommandContext(ctx, pythonPath, bridgePath, query)
+	cmd.Env = os.Environ()
+
+	// Stream stdout
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
 		fmt.Fprintln(os.Stderr, errorStyle.Render(fmt.Sprintf("Error: %v", err)))
 		os.Exit(1)
 	}
+
+	// Stream stderr
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, errorStyle.Render(fmt.Sprintf("Error: %v", err)))
+		os.Exit(1)
+	}
+
+	if err := cmd.Start(); err != nil {
+		fmt.Fprintln(os.Stderr, errorStyle.Render(fmt.Sprintf("Error starting bridge: %v", err)))
+		os.Exit(1)
+	}
+
+	// Stream output in real-time
+	go io.Copy(os.Stdout, stdout)
+	go io.Copy(os.Stderr, stderr)
+
+	if err := cmd.Wait(); err != nil {
+		if ctx.Err() != nil {
+			return // Context cancelled, exit quietly
+		}
+		// Don't print error if it's just a non-zero exit
+		if _, ok := err.(*exec.ExitError); !ok {
+			fmt.Fprintln(os.Stderr, errorStyle.Render(fmt.Sprintf("Error: %v", err)))
+		}
+	}
 }
 
-func runREPL(ctx context.Context, ag *agent.Agent) {
+func runREPL(ctx context.Context) {
 	// Print banner
 	fmt.Println()
 	fmt.Println(titleStyle.Render("MEMEX"))
 	fmt.Println(dimStyle.Render("Ask anything about your knowledge graph"))
-	fmt.Println(dimStyle.Render("Type 'exit' or Ctrl+C to quit, 'clear' to reset context"))
+	fmt.Println(dimStyle.Render("Type 'exit' or Ctrl+C to quit"))
 	fmt.Println()
 
 	scanner := bufio.NewScanner(os.Stdin)
@@ -135,23 +189,14 @@ func runREPL(ctx context.Context, ag *agent.Agent) {
 		case "exit", "quit", "q":
 			fmt.Println(dimStyle.Render("Goodbye!"))
 			return
-		case "clear", "reset":
-			ag.Reset()
-			fmt.Println(dimStyle.Render("Context cleared."))
-			continue
 		case "help":
 			printHelp()
 			continue
 		}
 
-		// Run query
+		// Run query via Python bridge
 		fmt.Println()
-		if err := ag.Run(ctx, input); err != nil {
-			if ctx.Err() != nil {
-				return
-			}
-			fmt.Fprintln(os.Stderr, errorStyle.Render(fmt.Sprintf("Error: %v", err)))
-		}
+		runQuery(ctx, input)
 		fmt.Println()
 	}
 }
@@ -160,14 +205,12 @@ func printHelp() {
 	fmt.Println()
 	fmt.Println(titleStyle.Render("Commands:"))
 	fmt.Println("  exit, quit, q  - Exit the program")
-	fmt.Println("  clear, reset   - Clear conversation context")
 	fmt.Println("  help           - Show this help")
 	fmt.Println()
 	fmt.Println(titleStyle.Render("Example queries:"))
 	fmt.Println("  who knows about kubernetes")
-	fmt.Println("  what documents mention the Acme project")
-	fmt.Println("  find all people in the company")
-	fmt.Println("  tell me about [person name]")
-	fmt.Println("  what's connected to [node id]")
+	fmt.Println("  list all people")
+	fmt.Println("  what is person:000 connected to")
+	fmt.Println("  search for documents about the Acme project")
 	fmt.Println()
 }
