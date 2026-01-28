@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Email - Memex</title>
+    <link rel="stylesheet" href="/static/css/inbox.css">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0a0a0a;
+            color: #e5e5e5;
+            min-height: 100vh;
+        }
+
+        /* Layout */
+        .app {
+            display: flex;
+            height: 100vh;
+        }
+
+        /* Sidebar - same as inbox */
+        .sidebar {
+            width: 220px;
+            background: #111;
+            border-right: 1px solid #222;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .sidebar-header {
+            padding: 20px;
+            border-bottom: 1px solid #222;
+        }
+
+        .logo {
+            font-size: 20px;
+            font-weight: 600;
+            color: #fff;
+        }
+
+        .nav-links {
+            padding: 16px 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .nav-link {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 10px 12px;
+            color: #888;
+            text-decoration: none;
+            border-radius: 8px;
+            transition: all 0.2s;
+        }
+
+        .nav-link:hover {
+            background: #1a1a1a;
+            color: #fff;
+        }
+
+        .nav-link.active {
+            background: #1a1a1a;
+            color: #fff;
+        }
+
+        /* Main content - split view */
+        .main-content {
+            flex: 1;
+            display: flex;
+            overflow: hidden;
+        }
+
+        /* Email viewer */
+        .email-viewer {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            border-right: 1px solid #222;
+            min-width: 0;
+        }
+
+        /* Email header */
+        .email-header {
+            padding: 20px;
+            border-bottom: 1px solid #222;
+            background: #111;
+        }
+
+        .email-header-row {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 12px;
+        }
+
+        .back-btn {
+            padding: 8px 12px;
+            background: transparent;
+            border: 1px solid #333;
+            border-radius: 6px;
+            color: #888;
+            cursor: pointer;
+            font-size: 14px;
+            text-decoration: none;
+        }
+
+        .back-btn:hover {
+            border-color: #555;
+            color: #fff;
+        }
+
+        .email-actions {
+            display: flex;
+            gap: 8px;
+            margin-left: auto;
+        }
+
+        .action-btn {
+            padding: 8px 12px;
+            background: transparent;
+            border: 1px solid #333;
+            border-radius: 6px;
+            color: #888;
+            cursor: pointer;
+            font-size: 13px;
+        }
+
+        .action-btn:hover {
+            border-color: #555;
+            color: #fff;
+        }
+
+        .email-subject {
+            font-size: 20px;
+            font-weight: 600;
+            margin-bottom: 16px;
+        }
+
+        .email-meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 16px;
+            font-size: 14px;
+        }
+
+        .meta-item {
+            display: flex;
+            gap: 8px;
+        }
+
+        .meta-label {
+            color: #666;
+        }
+
+        .meta-value {
+            color: #e5e5e5;
+        }
+
+        /* Email body */
+        .email-body {
+            flex: 1;
+            padding: 24px;
+            overflow-y: auto;
+            line-height: 1.7;
+            font-size: 15px;
+        }
+
+        .email-body p {
+            margin-bottom: 1em;
+        }
+
+        /* Graph panel */
+        .graph-panel {
+            width: 360px;
+            display: flex;
+            flex-direction: column;
+            background: #0d0d0d;
+        }
+
+        .panel-header {
+            padding: 16px 20px;
+            border-bottom: 1px solid #222;
+            background: #111;
+        }
+
+        .panel-title {
+            font-size: 14px;
+            font-weight: 500;
+            margin-bottom: 4px;
+        }
+
+        .panel-subtitle {
+            font-size: 12px;
+            color: #666;
+        }
+
+        /* Anchor list */
+        .anchor-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 12px;
+        }
+
+        .anchor-item {
+            padding: 12px;
+            background: #111;
+            border: 1px solid #222;
+            border-radius: 8px;
+            margin-bottom: 8px;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+
+        .anchor-item:hover {
+            border-color: #333;
+            background: #1a1a1a;
+        }
+
+        .anchor-item.selected {
+            border-color: #3b82f6;
+            background: #1a2332;
+        }
+
+        .anchor-type {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 10px;
+            text-transform: uppercase;
+            font-weight: 500;
+            margin-bottom: 6px;
+        }
+
+        .anchor-type.person { background: rgba(245, 158, 11, 0.2); color: #f59e0b; }
+        .anchor-type.organization { background: rgba(59, 130, 246, 0.2); color: #3b82f6; }
+        .anchor-type.action_item { background: rgba(34, 197, 94, 0.2); color: #22c55e; }
+        .anchor-type.decision { background: rgba(249, 115, 22, 0.2); color: #f97316; }
+        .anchor-type.date { background: rgba(139, 92, 246, 0.2); color: #8b5cf6; }
+        .anchor-type.topic { background: rgba(6, 182, 212, 0.2); color: #06b6d4; }
+
+        .anchor-text {
+            font-size: 14px;
+            margin-bottom: 4px;
+        }
+
+        .anchor-patterns {
+            font-size: 11px;
+            color: #666;
+        }
+
+        /* Mini graph visualization */
+        .graph-viz {
+            height: 200px;
+            border-bottom: 1px solid #222;
+            position: relative;
+        }
+
+        .graph-viz svg {
+            width: 100%;
+            height: 100%;
+        }
+
+        .graph-node {
+            cursor: pointer;
+        }
+
+        .graph-node circle {
+            fill: #3b82f6;
+            stroke: #1d4ed8;
+            stroke-width: 2;
+        }
+
+        .graph-node.selected circle {
+            fill: #60a5fa;
+            stroke: #3b82f6;
+            stroke-width: 3;
+        }
+
+        .graph-node text {
+            fill: #e5e5e5;
+            font-size: 10px;
+            text-anchor: middle;
+            dominant-baseline: middle;
+        }
+
+        .graph-link {
+            stroke: #333;
+            stroke-opacity: 0.6;
+        }
+
+        /* Connections panel */
+        .connections-section {
+            padding: 16px;
+            border-top: 1px solid #222;
+        }
+
+        .connections-title {
+            font-size: 12px;
+            color: #666;
+            text-transform: uppercase;
+            margin-bottom: 12px;
+        }
+
+        .connection-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px;
+            background: #111;
+            border-radius: 6px;
+            margin-bottom: 6px;
+            font-size: 13px;
+        }
+
+        .connection-type {
+            color: #666;
+            font-size: 11px;
+        }
+
+        /* Loading */
+        .loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 40px;
+        }
+
+        .loading-spinner {
+            width: 32px;
+            height: 32px;
+            border: 3px solid #222;
+            border-top-color: #3b82f6;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* No selection state */
+        .no-selection {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 40px;
+            text-align: center;
+            color: #666;
+        }
+
+        .no-selection-icon {
+            font-size: 32px;
+            margin-bottom: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="app">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">Memex</div>
+            </div>
+            <nav class="nav-links">
+                <a href="/inbox" class="nav-link active">
+                    <span class="icon">&#9993;</span>
+                    Inbox
+                </a>
+                <a href="/journal" class="nav-link">
+                    <span class="icon">&#128221;</span>
+                    Journal
+                </a>
+                <a href="/home" class="nav-link">
+                    <span class="icon">&#128200;</span>
+                    Graph
+                </a>
+            </nav>
+        </aside>
+
+        <!-- Main content -->
+        <main class="main-content">
+            <!-- Email viewer -->
+            <div class="email-viewer">
+                <div class="email-header">
+                    <div class="email-header-row">
+                        <a href="/inbox" class="back-btn">&larr; Back</a>
+                        <div class="email-actions">
+                            <button class="action-btn" id="reprocess-btn">Re-extract</button>
+                        </div>
+                    </div>
+                    <h1 class="email-subject" id="email-subject">Loading...</h1>
+                    <div class="email-meta">
+                        <div class="meta-item">
+                            <span class="meta-label">From:</span>
+                            <span class="meta-value" id="email-from">-</span>
+                        </div>
+                        <div class="meta-item">
+                            <span class="meta-label">To:</span>
+                            <span class="meta-value" id="email-to">-</span>
+                        </div>
+                        <div class="meta-item">
+                            <span class="meta-label">Date:</span>
+                            <span class="meta-value" id="email-date">-</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="email-body" id="email-body">
+                    <div class="loading">
+                        <div class="loading-spinner"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Graph panel -->
+            <aside class="graph-panel">
+                <div class="panel-header">
+                    <div class="panel-title">Extracted Anchors</div>
+                    <div class="panel-subtitle" id="anchor-count">0 anchors found</div>
+                </div>
+
+                <div class="graph-viz" id="graph-viz">
+                    <svg id="graph-svg"></svg>
+                </div>
+
+                <div class="anchor-list" id="anchor-list">
+                    <div class="no-selection">
+                        <div class="no-selection-icon">&#128269;</div>
+                        <div>Click an anchor to see connections</div>
+                    </div>
+                </div>
+
+                <div class="connections-section" id="connections-section" style="display: none;">
+                    <div class="connections-title">Related in Graph</div>
+                    <div id="connections-list"></div>
+                </div>
+            </aside>
+        </main>
+    </div>
+
+    <script src="/static/js/email-viewer.js"></script>
+    <script src="/static/js/graph-panel.js"></script>
+    <script>
+        // Get email ID from URL
+        const emailId = window.location.pathname.split('/').pop();
+
+        // Initialize viewers
+        document.addEventListener('DOMContentLoaded', () => {
+            initEmailViewer(emailId);
+            initGraphPanel();
+        });
+    </script>
+</body>
+</html>

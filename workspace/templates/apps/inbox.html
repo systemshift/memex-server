@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Inbox - Memex</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0a0a0a;
+            color: #e5e5e5;
+            min-height: 100vh;
+        }
+
+        /* Layout */
+        .app {
+            display: flex;
+            height: 100vh;
+        }
+
+        /* Sidebar */
+        .sidebar {
+            width: 220px;
+            background: #111;
+            border-right: 1px solid #222;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .sidebar-header {
+            padding: 20px;
+            border-bottom: 1px solid #222;
+        }
+
+        .logo {
+            font-size: 20px;
+            font-weight: 600;
+            color: #fff;
+        }
+
+        .nav-links {
+            padding: 16px 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .nav-link {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 10px 12px;
+            color: #888;
+            text-decoration: none;
+            border-radius: 8px;
+            transition: all 0.2s;
+        }
+
+        .nav-link:hover {
+            background: #1a1a1a;
+            color: #fff;
+        }
+
+        .nav-link.active {
+            background: #1a1a1a;
+            color: #fff;
+        }
+
+        .nav-link .icon {
+            font-size: 16px;
+        }
+
+        .nav-link .badge {
+            margin-left: auto;
+            background: #3b82f6;
+            color: #fff;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 11px;
+        }
+
+        /* Main content */
+        .main-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        /* Toolbar */
+        .toolbar {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            padding: 12px 20px;
+            border-bottom: 1px solid #222;
+            background: #111;
+        }
+
+        .search-box {
+            flex: 1;
+            max-width: 400px;
+            position: relative;
+        }
+
+        .search-input {
+            width: 100%;
+            padding: 8px 12px 8px 36px;
+            background: #1a1a1a;
+            border: 1px solid #333;
+            border-radius: 8px;
+            color: #fff;
+            font-size: 14px;
+            outline: none;
+        }
+
+        .search-input:focus {
+            border-color: #3b82f6;
+        }
+
+        .search-icon {
+            position: absolute;
+            left: 12px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: #666;
+        }
+
+        .toolbar-actions {
+            display: flex;
+            gap: 8px;
+            margin-left: auto;
+        }
+
+        .toolbar-btn {
+            padding: 8px 12px;
+            background: transparent;
+            border: 1px solid #333;
+            border-radius: 6px;
+            color: #888;
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.2s;
+        }
+
+        .toolbar-btn:hover {
+            border-color: #555;
+            color: #fff;
+        }
+
+        /* Email list */
+        .email-list {
+            flex: 1;
+            overflow-y: auto;
+        }
+
+        .email-item {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            padding: 14px 20px;
+            border-bottom: 1px solid #1a1a1a;
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+
+        .email-item:hover {
+            background: #111;
+        }
+
+        .email-item.unread {
+            background: #0d1117;
+        }
+
+        .email-item.unread .email-subject {
+            font-weight: 600;
+        }
+
+        .email-item.selected {
+            background: #1a2332;
+        }
+
+        .email-checkbox {
+            width: 18px;
+            height: 18px;
+            accent-color: #3b82f6;
+        }
+
+        .email-sender {
+            width: 180px;
+            flex-shrink: 0;
+        }
+
+        .sender-name {
+            font-size: 14px;
+            color: #e5e5e5;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .email-content {
+            flex: 1;
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .email-subject-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .email-subject {
+            font-size: 14px;
+            color: #e5e5e5;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .email-preview {
+            font-size: 13px;
+            color: #666;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .email-meta {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-shrink: 0;
+        }
+
+        .anchor-badges {
+            display: flex;
+            gap: 4px;
+        }
+
+        .anchor-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 2px 8px;
+            background: #1a1a1a;
+            border-radius: 12px;
+            font-size: 11px;
+            color: #888;
+            border: 1px solid #333;
+        }
+
+        .anchor-badge.person { border-color: #f59e0b33; color: #f59e0b; }
+        .anchor-badge.action_item { border-color: #22c55e33; color: #22c55e; }
+        .anchor-badge.date { border-color: #8b5cf633; color: #8b5cf6; }
+        .anchor-badge.organization { border-color: #3b82f633; color: #3b82f6; }
+        .anchor-badge.decision { border-color: #f97316; color: #f97316; }
+        .anchor-badge.topic { border-color: #06b6d433; color: #06b6d4; }
+
+        .email-date {
+            font-size: 12px;
+            color: #666;
+            white-space: nowrap;
+        }
+
+        /* Empty state */
+        .empty-state {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 60px 20px;
+            text-align: center;
+        }
+
+        .empty-icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+        }
+
+        .empty-title {
+            font-size: 18px;
+            font-weight: 500;
+            margin-bottom: 8px;
+        }
+
+        .empty-text {
+            color: #666;
+            max-width: 300px;
+        }
+
+        /* Loading */
+        .loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 40px;
+        }
+
+        .loading-spinner {
+            width: 32px;
+            height: 32px;
+            border: 3px solid #222;
+            border-top-color: #3b82f6;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Pagination */
+        .pagination {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            padding: 16px;
+            border-top: 1px solid #222;
+            background: #111;
+        }
+
+        .pagination-btn {
+            padding: 8px 16px;
+            background: transparent;
+            border: 1px solid #333;
+            border-radius: 6px;
+            color: #888;
+            cursor: pointer;
+            font-size: 13px;
+        }
+
+        .pagination-btn:hover:not(:disabled) {
+            border-color: #555;
+            color: #fff;
+        }
+
+        .pagination-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .pagination-info {
+            color: #666;
+            font-size: 13px;
+        }
+
+        /* Status message */
+        .status-message {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 12px 20px;
+            background: #22c55e;
+            color: #000;
+            border-radius: 8px;
+            font-size: 14px;
+            transform: translateX(120%);
+            transition: transform 0.3s ease;
+            z-index: 100;
+        }
+
+        .status-message.visible {
+            transform: translateX(0);
+        }
+
+        .status-message.error {
+            background: #ef4444;
+            color: #fff;
+        }
+    </style>
+</head>
+<body>
+    <div class="app">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">Memex</div>
+            </div>
+            <nav class="nav-links">
+                <a href="/inbox" class="nav-link active">
+                    <span class="icon">&#9993;</span>
+                    Inbox
+                    <span class="badge" id="inbox-count">0</span>
+                </a>
+                <a href="/journal" class="nav-link">
+                    <span class="icon">&#128221;</span>
+                    Journal
+                </a>
+                <a href="/home" class="nav-link">
+                    <span class="icon">&#128200;</span>
+                    Graph
+                </a>
+            </nav>
+        </aside>
+
+        <!-- Main content -->
+        <main class="main-content">
+            <!-- Toolbar -->
+            <div class="toolbar">
+                <div class="search-box">
+                    <span class="search-icon">&#128269;</span>
+                    <input type="text" class="search-input" id="search-input" placeholder="Search emails...">
+                </div>
+                <div class="toolbar-actions">
+                    <button class="toolbar-btn" id="refresh-btn">Refresh</button>
+                    <button class="toolbar-btn" id="filter-btn">Filter</button>
+                </div>
+            </div>
+
+            <!-- Email list -->
+            <div class="email-list" id="email-list">
+                <div class="loading" id="loading">
+                    <div class="loading-spinner"></div>
+                </div>
+            </div>
+
+            <!-- Pagination -->
+            <div class="pagination" id="pagination" style="display: none;">
+                <button class="pagination-btn" id="prev-btn" disabled>&larr; Prev</button>
+                <span class="pagination-info" id="pagination-info">1-20 of 100</span>
+                <button class="pagination-btn" id="next-btn">Next &rarr;</button>
+            </div>
+        </main>
+    </div>
+
+    <div class="status-message" id="status-message"></div>
+
+    <script src="/static/js/inbox.js"></script>
+</body>
+</html>

@@ -1217,6 +1217,214 @@ def get_lens(lens_id):
     return jsonify(lens)
 
 
+# ============================================
+# Email Inbox Endpoints
+# ============================================
+
+@app.route('/inbox')
+def inbox():
+    """Inbox - Email list view"""
+    return render_template('apps/inbox.html')
+
+
+@app.route('/inbox/<email_id>')
+def email_detail(email_id):
+    """Email detail view with anchors"""
+    return render_template('apps/email.html', email_id=email_id)
+
+
+@app.route('/api/emails', methods=['GET'])
+def list_emails():
+    """List emails with pagination and search"""
+    page = int(request.args.get("page", 1))
+    limit = int(request.args.get("limit", 20))
+    query = request.args.get("q", "")
+
+    try:
+        # Search for Email nodes in Memex
+        if query:
+            results = memex.search(query, limit=limit * 2, types=["Email"])
+        else:
+            results = memex.search("*", limit=limit * 2, types=["Email"])
+
+        # Sort by date descending
+        emails = []
+        for node in results:
+            meta = node.meta
+            emails.append({
+                "id": node.id,
+                "subject": meta.get("subject", "(No subject)"),
+                "from_name": meta.get("from_name", ""),
+                "from_email": meta.get("from_email", ""),
+                "to": meta.get("to", []),
+                "date": meta.get("date"),
+                "body_preview": meta.get("body_preview", "")[:200],
+                "thread_id": meta.get("thread_id"),
+                "processed": meta.get("processed", False),
+                "anchor_count": meta.get("anchor_count", 0),
+                "unread": not meta.get("read", False)
+            })
+
+        # Sort by date
+        emails.sort(key=lambda e: e.get("date") or "", reverse=True)
+
+        # Paginate
+        start = (page - 1) * limit
+        end = start + limit
+        paginated = emails[start:end]
+
+        return jsonify({
+            "emails": paginated,
+            "total": len(emails),
+            "page": page,
+            "limit": limit
+        })
+
+    except Exception as e:
+        print(f"[list_emails] Error: {e}")
+        return jsonify({"emails": [], "total": 0, "error": str(e)})
+
+
+@app.route('/api/emails/<email_id>', methods=['GET'])
+def get_email(email_id):
+    """Get a single email with its anchors"""
+    try:
+        # Get email node
+        email_node = memex.get_node(email_id)
+        if not email_node:
+            return jsonify({"error": "Email not found"}), 404
+
+        meta = email_node.meta
+
+        # Get full body from source node if available
+        body = meta.get("body_preview", "")
+        source_id = meta.get("source_id")
+        if source_id:
+            source_node = memex.get_node(source_id)
+            if source_node and source_node.meta.get("content"):
+                content = source_node.meta.get("content", "")
+                if content.startswith("Subject:"):
+                    body = content.split("\n\n", 1)[-1]
+                else:
+                    body = content
+
+        # Get anchors linked to this email
+        anchors = []
+        try:
+            links = memex.get_node_links(email_id)
+            for link in links:
+                if link.get("type") == "EXTRACTED_FROM":
+                    anchor_id = link.get("source")
+                    if anchor_id and anchor_id != email_id:
+                        anchor_node = memex.get_node(anchor_id)
+                        if anchor_node:
+                            anchors.append({
+                                "id": anchor_node.id,
+                                "type": anchor_node.type.lower(),
+                                "text": anchor_node.meta.get("text", ""),
+                                "start": anchor_node.meta.get("start", 0),
+                                "end": anchor_node.meta.get("end", 0),
+                                "zone": anchor_node.meta.get("zone", "body"),
+                                "properties": anchor_node.meta.get("properties", {}),
+                                "matched_patterns": anchor_node.meta.get("matched_patterns", []),
+                                "confidence": anchor_node.meta.get("confidence", 0.8)
+                            })
+        except Exception as e:
+            print(f"[get_email] Error getting anchors: {e}")
+
+        email_data = {
+            "id": email_id,
+            "subject": meta.get("subject", "(No subject)"),
+            "from": {
+                "name": meta.get("from_name", ""),
+                "address": meta.get("from_email", "")
+            },
+            "to": meta.get("to", []),
+            "cc": meta.get("cc", []),
+            "date": meta.get("date"),
+            "body": body,
+            "body_preview": meta.get("body_preview", ""),
+            "thread_id": meta.get("thread_id"),
+            "in_reply_to": meta.get("in_reply_to"),
+            "processed": meta.get("processed", False)
+        }
+
+        return jsonify({
+            "email": email_data,
+            "anchors": anchors
+        })
+
+    except Exception as e:
+        print(f"[get_email] Error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/emails/<email_id>/reprocess', methods=['POST'])
+def reprocess_email(email_id):
+    """Re-run extraction on an email"""
+    from services.email_extractor import email_extractor
+
+    try:
+        result = email_extractor.reprocess_email(email_id)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/webhooks/extract-email', methods=['POST'])
+def extract_email_webhook():
+    """Webhook endpoint for email extraction subscription"""
+    from services.email_extractor import email_extractor
+
+    data = request.json or {}
+
+    try:
+        result = email_extractor.handle_webhook(data)
+        return jsonify(result)
+    except Exception as e:
+        print(f"[extract_email_webhook] Error: {e}")
+        return jsonify({"status": "error", "reason": str(e)}), 500
+
+
+@app.route('/api/anchors/<anchor_id>/connections', methods=['GET'])
+def get_anchor_connections(anchor_id):
+    """Get related nodes for an anchor"""
+    try:
+        connections = []
+
+        # Get links from the anchor
+        links = memex.get_node_links(anchor_id)
+
+        for link in links:
+            # Get the other node in the link
+            other_id = link.get("target") if link.get("source") == anchor_id else link.get("source")
+            if not other_id:
+                continue
+
+            # Skip the email itself
+            if other_id.startswith("email:") or other_id.startswith("sha256:"):
+                continue
+
+            # Skip lens nodes
+            if other_id.startswith("lens:"):
+                continue
+
+            other_node = memex.get_node(other_id)
+            if other_node:
+                connections.append({
+                    "id": other_id,
+                    "type": other_node.type,
+                    "title": other_node.meta.get("text") or other_node.meta.get("title") or other_node.meta.get("name") or other_id,
+                    "link_type": link.get("type", "RELATED_TO")
+                })
+
+        return jsonify({"connections": connections})
+
+    except Exception as e:
+        print(f"[get_anchor_connections] Error: {e}")
+        return jsonify({"connections": [], "error": str(e)})
+
+
 # --- Role-Aware Input Processing ---
 
 @app.route('/api/input/role-aware', methods=['POST'])
