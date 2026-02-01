@@ -1,6 +1,0 @@
-# Agora dependencies
-aiosmtpd>=1.4.0
-httpx>=0.24.0
-openai>=1.0.0
-click>=8.0.0
-python-dotenv>=1.0.0
