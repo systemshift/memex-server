@@ -18,25 +18,42 @@ import (
 
 func main() {
 	// Load configuration from environment
-	neo4jURI := getEnv("NEO4J_URI", "bolt://localhost:7687")
-	neo4jUser := getEnv("NEO4J_USER", "neo4j")
-	neo4jPassword := getEnv("NEO4J_PASSWORD", "password")
+	backend := getEnv("MEMEX_BACKEND", "sqlite")
 	port := getEnv("PORT", "8080")
 
-	// Initialize Neo4j repository
 	ctx := context.Background()
-	repo, err := graph.New(ctx, graph.Config{
-		URI:      neo4jURI,
-		Username: neo4jUser,
-		Password: neo4jPassword,
-		Database: "neo4j",
-	})
-	if err != nil {
-		log.Fatalf("Failed to connect to Neo4j: %v", err)
+	var repo graph.Repository
+	var err error
+
+	switch backend {
+	case "sqlite":
+		sqlitePath := getEnv("SQLITE_PATH", "./memex.db")
+		log.Printf("Using SQLite backend: %s", sqlitePath)
+		repo, err = graph.NewSQLite(ctx, sqlitePath)
+		if err != nil {
+			log.Fatalf("Failed to open SQLite database: %v", err)
+		}
+	case "neo4j":
+		neo4jURI := getEnv("NEO4J_URI", "bolt://localhost:7687")
+		neo4jUser := getEnv("NEO4J_USER", "neo4j")
+		neo4jPassword := getEnv("NEO4J_PASSWORD", "password")
+
+		log.Printf("Using Neo4j backend: %s", neo4jURI)
+		repo, err = graph.NewNeo4j(ctx, graph.Config{
+			URI:      neo4jURI,
+			Username: neo4jUser,
+			Password: neo4jPassword,
+			Database: "neo4j",
+		})
+		if err != nil {
+			log.Fatalf("Failed to connect to Neo4j: %v", err)
+		}
+	default:
+		log.Fatalf("Unknown backend: %s (use 'sqlite' or 'neo4j')", backend)
 	}
 	defer repo.Close(ctx)
 
-	log.Println("Connected to Neo4j successfully")
+	log.Println("Connected to database successfully")
 
 	// Create indexes for performance
 	if err := repo.EnsureIndexes(ctx); err != nil {

@@ -12,19 +12,19 @@ import (
 	"github.com/systemshift/memex/internal/server/subscriptions"
 )
 
-// Repository wraps Neo4j operations
-type Repository struct {
+// Neo4jRepository wraps Neo4j operations
+type Neo4jRepository struct {
 	driver       neo4j.DriverWithContext
 	eventEmitter func(subscriptions.Event)
 }
 
 // SetEventEmitter sets the callback for emitting events to the subscription manager
-func (r *Repository) SetEventEmitter(emitter func(subscriptions.Event)) {
+func (r *Neo4jRepository) SetEventEmitter(emitter func(subscriptions.Event)) {
 	r.eventEmitter = emitter
 }
 
 // emit sends an event to the subscription manager if one is registered
-func (r *Repository) emit(event subscriptions.Event) {
+func (r *Neo4jRepository) emit(event subscriptions.Event) {
 	if r.eventEmitter != nil {
 		r.eventEmitter(event)
 	}
@@ -38,8 +38,8 @@ type Config struct {
 	Database string
 }
 
-// New creates a new Neo4j repository
-func New(ctx context.Context, cfg Config) (*Repository, error) {
+// NewNeo4j creates a new Neo4j repository
+func NewNeo4j(ctx context.Context, cfg Config) (*Neo4jRepository, error) {
 	driver, err := neo4j.NewDriverWithContext(
 		cfg.URI,
 		neo4j.BasicAuth(cfg.Username, cfg.Password, ""),
@@ -53,16 +53,16 @@ func New(ctx context.Context, cfg Config) (*Repository, error) {
 		return nil, fmt.Errorf("connecting to neo4j: %w", err)
 	}
 
-	return &Repository{driver: driver}, nil
+	return &Neo4jRepository{driver: driver}, nil
 }
 
 // Close closes the Neo4j connection
-func (r *Repository) Close(ctx context.Context) error {
+func (r *Neo4jRepository) Close(ctx context.Context) error {
 	return r.driver.Close(ctx)
 }
 
 // EnsureIndexes creates necessary indexes for performance
-func (r *Repository) EnsureIndexes(ctx context.Context) error {
+func (r *Neo4jRepository) EnsureIndexes(ctx context.Context) error {
 	session := r.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
 	defer session.Close(ctx)
 
@@ -100,7 +100,7 @@ func (r *Repository) EnsureIndexes(ctx context.Context) error {
 }
 
 // migrateNodesToVersioned adds version fields to existing nodes that don't have them
-func (r *Repository) migrateNodesToVersioned(ctx context.Context) error {
+func (r *Neo4jRepository) migrateNodesToVersioned(ctx context.Context) error {
 	session := r.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
 	defer session.Close(ctx)
 
@@ -214,7 +214,7 @@ func parseNodeFromNeo4j(nodeData neo4j.Node) (*core.Node, error) {
 }
 
 // CreateNode creates a new node in the graph
-func (r *Repository) CreateNode(ctx context.Context, node *core.Node) error {
+func (r *Neo4jRepository) CreateNode(ctx context.Context, node *core.Node) error {
 	session := r.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
 	defer session.Close(ctx)
 
@@ -279,7 +279,7 @@ func (r *Repository) CreateNode(ctx context.Context, node *core.Node) error {
 }
 
 // GetNode retrieves the current version of a node by ID
-func (r *Repository) GetNode(ctx context.Context, id string) (*core.Node, error) {
+func (r *Neo4jRepository) GetNode(ctx context.Context, id string) (*core.Node, error) {
 	session := r.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
 	defer session.Close(ctx)
 
@@ -315,7 +315,7 @@ func (r *Repository) GetNode(ctx context.Context, id string) (*core.Node, error)
 }
 
 // GetNodeAtVersion retrieves a specific version of a node
-func (r *Repository) GetNodeAtVersion(ctx context.Context, id string, version int) (*core.Node, error) {
+func (r *Neo4jRepository) GetNodeAtVersion(ctx context.Context, id string, version int) (*core.Node, error) {
 	session := r.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
 	defer session.Close(ctx)
 
@@ -349,7 +349,7 @@ func (r *Repository) GetNodeAtVersion(ctx context.Context, id string, version in
 }
 
 // GetNodeAtTime retrieves the version of a node that was current at a specific time
-func (r *Repository) GetNodeAtTime(ctx context.Context, id string, asOf time.Time) (*core.Node, error) {
+func (r *Neo4jRepository) GetNodeAtTime(ctx context.Context, id string, asOf time.Time) (*core.Node, error) {
 	session := r.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
 	defer session.Close(ctx)
 
@@ -389,7 +389,7 @@ func (r *Repository) GetNodeAtTime(ctx context.Context, id string, asOf time.Tim
 }
 
 // GetNodeHistory returns all versions of a node ordered by version descending
-func (r *Repository) GetNodeHistory(ctx context.Context, id string) ([]core.VersionInfo, error) {
+func (r *Neo4jRepository) GetNodeHistory(ctx context.Context, id string) ([]core.VersionInfo, error) {
 	session := r.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
 	defer session.Close(ctx)
 
@@ -453,12 +453,12 @@ func (r *Repository) GetNodeHistory(ctx context.Context, id string) ([]core.Vers
 
 // UpdateNodeMeta creates a new version of a node with updated metadata
 // This is the core versioning operation - instead of overwriting, we create a new version
-func (r *Repository) UpdateNodeMeta(ctx context.Context, id string, meta map[string]any) error {
+func (r *Neo4jRepository) UpdateNodeMeta(ctx context.Context, id string, meta map[string]any) error {
 	return r.UpdateNodeMetaWithNote(ctx, id, meta, "", "")
 }
 
 // UpdateNodeMetaWithNote creates a new version with a change note
-func (r *Repository) UpdateNodeMetaWithNote(ctx context.Context, id string, meta map[string]any, changeNote, changedBy string) error {
+func (r *Neo4jRepository) UpdateNodeMetaWithNote(ctx context.Context, id string, meta map[string]any, changeNote, changedBy string) error {
 	session := r.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
 	defer session.Close(ctx)
 
@@ -622,7 +622,7 @@ func (r *Repository) UpdateNodeMetaWithNote(ctx context.Context, id string, meta
 }
 
 // CreateLink creates a relationship between two nodes
-func (r *Repository) CreateLink(ctx context.Context, link *core.Link) error {
+func (r *Neo4jRepository) CreateLink(ctx context.Context, link *core.Link) error {
 	session := r.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
 	defer session.Close(ctx)
 
@@ -677,7 +677,7 @@ func (r *Repository) CreateLink(ctx context.Context, link *core.Link) error {
 }
 
 // GetLinks retrieves all links for a node
-func (r *Repository) GetLinks(ctx context.Context, nodeID string) ([]*core.Link, error) {
+func (r *Neo4jRepository) GetLinks(ctx context.Context, nodeID string) ([]*core.Link, error) {
 	session := r.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
 	defer session.Close(ctx)
 
@@ -728,7 +728,7 @@ func (r *Repository) GetLinks(ctx context.Context, nodeID string) ([]*core.Link,
 }
 
 // ListNodes returns all node IDs
-func (r *Repository) ListNodes(ctx context.Context) ([]string, error) {
+func (r *Neo4jRepository) ListNodes(ctx context.Context) ([]string, error) {
 	session := r.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
 	defer session.Close(ctx)
 
@@ -762,7 +762,7 @@ func (r *Repository) ListNodes(ctx context.Context) ([]string, error) {
 }
 
 // FilterNodes returns nodes matching filter criteria
-func (r *Repository) FilterNodes(ctx context.Context, nodeTypes []string, propertyKey string, propertyValue string, limit int, offset int) ([]*core.Node, error) {
+func (r *Neo4jRepository) FilterNodes(ctx context.Context, nodeTypes []string, propertyKey string, propertyValue string, limit int, offset int) ([]*core.Node, error) {
 	session := r.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
 	defer session.Close(ctx)
 
@@ -821,7 +821,7 @@ func (r *Repository) FilterNodes(ctx context.Context, nodeTypes []string, proper
 }
 
 // SearchNodes performs full-text search across node properties
-func (r *Repository) SearchNodes(ctx context.Context, searchTerm string, limit int, offset int) ([]*core.Node, error) {
+func (r *Neo4jRepository) SearchNodes(ctx context.Context, searchTerm string, limit int, offset int) ([]*core.Node, error) {
 	session := r.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
 	defer session.Close(ctx)
 
@@ -873,7 +873,7 @@ func (r *Repository) SearchNodes(ctx context.Context, searchTerm string, limit i
 }
 
 // DeleteNode marks a node as deleted (tombstone) instead of removing it
-func (r *Repository) DeleteNode(ctx context.Context, nodeID string, force bool) error {
+func (r *Neo4jRepository) DeleteNode(ctx context.Context, nodeID string, force bool) error {
 	session := r.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
 	defer session.Close(ctx)
 
@@ -1016,7 +1016,7 @@ func (r *Repository) DeleteNode(ctx context.Context, nodeID string, force bool) 
 }
 
 // DeleteLink deletes a specific relationship between two nodes
-func (r *Repository) DeleteLink(ctx context.Context, sourceID string, targetID string, linkType string) error {
+func (r *Neo4jRepository) DeleteLink(ctx context.Context, sourceID string, targetID string, linkType string) error {
 	session := r.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
 	defer session.Close(ctx)
 
@@ -1065,7 +1065,7 @@ func (r *Repository) DeleteLink(ctx context.Context, sourceID string, targetID s
 }
 
 // TraverseGraph performs graph traversal from a starting node
-func (r *Repository) TraverseGraph(ctx context.Context, startNodeID string, depth int, relationshipTypes []string, limit int, offset int) (map[string]*core.Node, error) {
+func (r *Neo4jRepository) TraverseGraph(ctx context.Context, startNodeID string, depth int, relationshipTypes []string, limit int, offset int) (map[string]*core.Node, error) {
 	session := r.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
 	defer session.Close(ctx)
 
@@ -1145,7 +1145,7 @@ type SubgraphStats struct {
 
 // GetSubgraph extracts a subgraph centered on a start node
 // Returns all nodes within depth hops and ALL edges between those nodes
-func (r *Repository) GetSubgraph(ctx context.Context, startNodeID string, depth int, relationshipTypes []string) (*Subgraph, error) {
+func (r *Neo4jRepository) GetSubgraph(ctx context.Context, startNodeID string, depth int, relationshipTypes []string) (*Subgraph, error) {
 	session := r.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
 	defer session.Close(ctx)
 
@@ -1262,7 +1262,7 @@ func (r *Repository) GetSubgraph(ctx context.Context, startNodeID string, depth 
 
 // UpdateAttentionEdge creates or updates an attention-weighted edge between nodes
 // This allows the DAG to learn which nodes are frequently co-attended across queries
-func (r *Repository) UpdateAttentionEdge(ctx context.Context, source, target, queryID string, weight float64) error {
+func (r *Neo4jRepository) UpdateAttentionEdge(ctx context.Context, source, target, queryID string, weight float64) error {
 	session := r.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
 	defer session.Close(ctx)
 
@@ -1368,7 +1368,7 @@ func (r *Repository) UpdateAttentionEdge(ctx context.Context, source, target, qu
 
 // GetAttentionSubgraph extracts nodes connected by high-weight attention edges
 // This enables sparse, learned attention patterns to guide retrieval
-func (r *Repository) GetAttentionSubgraph(ctx context.Context, startNodeID string, minWeight float64, maxNodes int) (*Subgraph, error) {
+func (r *Neo4jRepository) GetAttentionSubgraph(ctx context.Context, startNodeID string, minWeight float64, maxNodes int) (*Subgraph, error) {
 	session := r.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
 	defer session.Close(ctx)
 
@@ -1506,7 +1506,7 @@ type NodeSummary struct {
 }
 
 // GetGraphMap returns a high-level map of the graph for agent exploration
-func (r *Repository) GetGraphMap(ctx context.Context, sampleSize int) (*GraphMap, error) {
+func (r *Neo4jRepository) GetGraphMap(ctx context.Context, sampleSize int) (*GraphMap, error) {
 	session := r.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
 	defer session.Close(ctx)
 
@@ -1631,7 +1631,7 @@ func (r *Repository) GetGraphMap(ctx context.Context, sampleSize int) (*GraphMap
 
 // PruneWeakAttentionEdges removes attention edges with low weight or query count
 // This maintains DAG quality by removing noise
-func (r *Repository) PruneWeakAttentionEdges(ctx context.Context, minWeight float64, minQueryCount int) (int, error) {
+func (r *Neo4jRepository) PruneWeakAttentionEdges(ctx context.Context, minWeight float64, minQueryCount int) (int, error) {
 	session := r.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
 	defer session.Close(ctx)
 
@@ -1697,7 +1697,7 @@ func (r *Repository) PruneWeakAttentionEdges(ctx context.Context, minWeight floa
 }
 
 // GetEntitiesInterpretedThrough returns all entities linked to a lens via INTERPRETED_THROUGH edges
-func (r *Repository) GetEntitiesInterpretedThrough(ctx context.Context, lensID string) ([]*core.Node, error) {
+func (r *Neo4jRepository) GetEntitiesInterpretedThrough(ctx context.Context, lensID string) ([]*core.Node, error) {
 	session := r.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
 	defer session.Close(ctx)
 
@@ -1752,7 +1752,7 @@ func (r *Repository) GetEntitiesInterpretedThrough(ctx context.Context, lensID s
 }
 
 // CreateInterpretedThroughLink creates an INTERPRETED_THROUGH link between an entity and a lens
-func (r *Repository) CreateInterpretedThroughLink(ctx context.Context, entityID, lensID string, meta map[string]interface{}) error {
+func (r *Neo4jRepository) CreateInterpretedThroughLink(ctx context.Context, entityID, lensID string, meta map[string]interface{}) error {
 	link := &core.Link{
 		Source:   entityID,
 		Target:   lensID,
@@ -1765,7 +1765,7 @@ func (r *Repository) CreateInterpretedThroughLink(ctx context.Context, entityID,
 }
 
 // QueryByLens returns entities interpreted through a lens, optionally filtered by pattern
-func (r *Repository) QueryByLens(ctx context.Context, lensID string, pattern string, limit int, offset int) ([]*core.Node, error) {
+func (r *Neo4jRepository) QueryByLens(ctx context.Context, lensID string, pattern string, limit int, offset int) ([]*core.Node, error) {
 	session := r.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
 	defer session.Close(ctx)
 
@@ -1845,7 +1845,7 @@ type LensExport struct {
 }
 
 // ExportLens returns a complete export of a lens and its interpreted entities
-func (r *Repository) ExportLens(ctx context.Context, lensID string, includeExtractedFrom bool) (*LensExport, error) {
+func (r *Neo4jRepository) ExportLens(ctx context.Context, lensID string, includeExtractedFrom bool) (*LensExport, error) {
 	session := r.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
 	defer session.Close(ctx)
 
@@ -1965,7 +1965,7 @@ func (r *Repository) ExportLens(ctx context.Context, lensID string, includeExtra
 // ============== Subscription Repository Methods ==============
 
 // CreateSubscriptionNode persists a subscription as a node in the graph
-func (r *Repository) CreateSubscriptionNode(ctx context.Context, sub *subscriptions.Subscription) error {
+func (r *Neo4jRepository) CreateSubscriptionNode(ctx context.Context, sub *subscriptions.Subscription) error {
 	session := r.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
 	defer session.Close(ctx)
 
@@ -2017,7 +2017,7 @@ func (r *Repository) CreateSubscriptionNode(ctx context.Context, sub *subscripti
 }
 
 // UpdateSubscriptionNode updates a subscription node in the graph
-func (r *Repository) UpdateSubscriptionNode(ctx context.Context, sub *subscriptions.Subscription) error {
+func (r *Neo4jRepository) UpdateSubscriptionNode(ctx context.Context, sub *subscriptions.Subscription) error {
 	session := r.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
 	defer session.Close(ctx)
 
@@ -2063,7 +2063,7 @@ func (r *Repository) UpdateSubscriptionNode(ctx context.Context, sub *subscripti
 }
 
 // DeleteSubscriptionNode removes a subscription node from the graph
-func (r *Repository) DeleteSubscriptionNode(ctx context.Context, id string) error {
+func (r *Neo4jRepository) DeleteSubscriptionNode(ctx context.Context, id string) error {
 	session := r.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
 	defer session.Close(ctx)
 
@@ -2080,7 +2080,7 @@ func (r *Repository) DeleteSubscriptionNode(ctx context.Context, id string) erro
 }
 
 // LoadSubscriptions loads all subscription nodes from the graph
-func (r *Repository) LoadSubscriptions(ctx context.Context) ([]*subscriptions.Subscription, error) {
+func (r *Neo4jRepository) LoadSubscriptions(ctx context.Context) ([]*subscriptions.Subscription, error) {
 	session := r.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
 	defer session.Close(ctx)
 
@@ -2176,7 +2176,7 @@ func (r *Repository) LoadSubscriptions(ctx context.Context) ([]*subscriptions.Su
 }
 
 // ExecuteCypherRead executes a read-only Cypher query and returns results
-func (r *Repository) ExecuteCypherRead(ctx context.Context, cypher string, params map[string]interface{}) ([]map[string]interface{}, error) {
+func (r *Neo4jRepository) ExecuteCypherRead(ctx context.Context, cypher string, params map[string]interface{}) ([]map[string]interface{}, error) {
 	session := r.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "neo4j"})
 	defer session.Close(ctx)
 

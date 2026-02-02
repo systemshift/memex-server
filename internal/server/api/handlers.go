@@ -18,12 +18,12 @@ import (
 
 // Server holds the HTTP server dependencies
 type Server struct {
-	repo   *graph.Repository
+	repo   graph.Repository
 	subMgr *subscriptions.Manager
 }
 
 // New creates a new API server
-func New(repo *graph.Repository, subMgr *subscriptions.Manager) *Server {
+func New(repo graph.Repository, subMgr *subscriptions.Manager) *Server {
 	return &Server{repo: repo, subMgr: subMgr}
 }
 
