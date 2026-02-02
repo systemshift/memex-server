@@ -5,24 +5,9 @@ before:
     - go mod tidy
 
 builds:
-  - id: memex
-    main: ./cmd/memex
-    binary: memex
-    goos:
-      - linux
-      - darwin
-      - windows
-    goarch:
-      - amd64
-      - arm64
-    env:
-      - CGO_ENABLED=0
-    ldflags:
-      - -s -w -X main.version={{.Version}}
-
-  - id: memexd
-    main: ./cmd/memexd
-    binary: memexd
+  - id: memex-server
+    main: ./cmd/memex-server
+    binary: memex-server
     goos:
       - linux
       - darwin
@@ -36,10 +21,9 @@ builds:
       - -s -w -X main.version={{.Version}}
 
 archives:
-  - id: memex-archive
+  - id: memex-server-archive
     builds:
-      - memex
-      - memexd
+      - memex-server
     name_template: >-
       {{ .ProjectName }}_
       {{- title .Os }}_
@@ -52,7 +36,6 @@ archives:
     files:
       - README.md
       - LICENSE
-      - docs/*
 
 checksum:
   name_template: 'checksums.txt'
