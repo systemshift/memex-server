@@ -519,6 +519,13 @@ func (r *SQLiteRepository) UpdateNodeMetaWithNote(ctx context.Context, id string
 	}
 
 	// Create new version
+	degree := 0
+	if d, ok := current.Meta["degree"]; ok {
+		if dVal, ok := d.(float64); ok {
+			degree = int(dVal)
+		}
+	}
+
 	query := `
 		INSERT INTO nodes (version_id, id, version, is_current, type, content, properties,
 		                   created_at, modified_at, deleted, degree, change_note, changed_by)
@@ -533,7 +540,7 @@ func (r *SQLiteRepository) UpdateNodeMetaWithNote(ctx context.Context, id string
 		string(metaJSON),
 		current.Created.Format(time.RFC3339),
 		now.Format(time.RFC3339),
-		current.Meta["degree"],
+		degree,
 		changeNote,
 		changedBy,
 	)
